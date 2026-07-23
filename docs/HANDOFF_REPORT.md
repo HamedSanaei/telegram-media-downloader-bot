@@ -1,6 +1,6 @@
 # Handoff verification report
 
-Generated: 2026-07-23
+Generated: 2026-07-24
 
 ## Release scope
 
@@ -14,11 +14,17 @@ external extractor remains an independent distribution under `plugins/`.
 
 - Runtime: CPython 3.14.5; pytest 9.1.1; locked yt-dlp 2026.07.04; uv 0.11.28 locally.
 - `uv lock --check` and `uv sync --frozen --group dev`: passed.
-- Architecture boundary and UTF-8/text integrity checks: passed for 130 source files.
+- Architecture boundary and UTF-8/text integrity checks: passed for 131 source files.
 - Ruff lint and format checks: passed for 88 Python files.
 - Strict mypy: passed for 79 source/test files.
-- Root tests: 99 passed; 6 opt-in contract cases deselected.
-- Measured core branch coverage: 87.03%, above the enforced 80% floor.
+- Root tests: 104 passed; 6 opt-in contract cases deselected.
+- Measured core branch coverage: 86.74%, above the enforced 80% floor.
+- YouTube contract smoke test passed against the operator-provided public fixture; the five other
+  source contracts were skipped because their fixture variables were not configured.
+- A real bounded download of that YouTube fixture produced a 40,231,361-byte media file with
+  1,513.421-second duration and both audio and video streams.
+- `doctor` passed locally for Python 3.14.5, yt-dlp 2026.07.04, ffmpeg 8.1.2, ffprobe 8.1.2, and
+  Deno 2.9.3 after the WinGet links directory was placed on the process `PATH`.
 - Plugin SDK: independent lock/sync passed; 1 test passed and 1 contract case was deselected.
 - Secret scan through the committed pre-commit baseline: passed. A second scan including current
   tracked and untracked source files reported no findings.
@@ -37,10 +43,9 @@ external extractor remains an independent distribution under `plugins/`.
 - Bash is not installed, so `bash -n manage.sh` could not be rerun on this Windows host. The
   PowerShell management script parsed and its full `check` workflow passed using process-local
   execution-policy bypass.
-- `doctor` correctly reported missing local ffmpeg, ffprobe, and Deno. These are installed/pinned in
-  the runtime image; yt-dlp and Python checks passed locally.
-- Network contract tests were not enabled because no operator-approved public fixture URLs were
-  provided. They are intentionally excluded from the default suite.
+- The SoundCloud, Instagram, Twitter/X, Pinterest, and TikTok network contracts were not enabled
+  because their operator-approved fixture URLs were not provided. They remain excluded from the
+  default suite.
 
 ## Operational limitations
 

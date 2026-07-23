@@ -6,6 +6,7 @@ import pytest
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.domain.errors import (
     InvalidUrlError,
+    MediaTooLargeError,
     PlaylistNotAllowedError,
     UnsupportedSourceError,
 )
@@ -22,8 +23,16 @@ from telegram_media_bot.domain.models import (
 
 
 class FakeEngine:
-    def __init__(self, kind: MediaKind = MediaKind.VIDEO) -> None:
+    def __init__(
+        self,
+        kind: MediaKind = MediaKind.VIDEO,
+        *,
+        estimated_size_bytes: int | None = None,
+        result_size_bytes: int = 4,
+    ) -> None:
         self.kind = kind
+        self.estimated_size_bytes = estimated_size_bytes
+        self.result_size_bytes = result_size_bytes
 
     def inspect(self, url: str) -> MediaInfo:
         return MediaInfo(
@@ -33,6 +42,7 @@ class FakeEngine:
             kind=self.kind,
             webpage_url=url,
             item_count=1 if self.kind is MediaKind.PLAYLIST else None,
+            estimated_size_bytes=self.estimated_size_bytes,
         )
 
     def download(
@@ -45,7 +55,7 @@ class FakeEngine:
         del progress, is_cancelled
         path = request.output_directory / "result.mp4"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"data")
+        path.write_bytes(b"x" * self.result_size_bytes)
         return DownloadResult(
             job_id=request.job_id,
             media_id="1",
@@ -53,7 +63,7 @@ class FakeEngine:
             source="example",
             kind=MediaKind.VIDEO,
             file_path=path,
-            file_size_bytes=4,
+            file_size_bytes=self.result_size_bytes,
         )
 
     def health(self) -> ComponentHealth:
@@ -107,4 +117,39 @@ def test_download_uses_project_contract(tmp_path: Path) -> None:
         mode=DownloadMode.BEST,
         output_directory=tmp_path / "job-1",
     )
-    assert result.file_path.read_bytes() == b"data"
+    assert result.file_path.read_bytes() == b"xxxx"
+
+
+def test_generic_inspection_size_is_advisory_until_mode_is_selected(tmp_path: Path) -> None:
+    service = DownloadService(
+        FakeEngine(estimated_size_bytes=1_000, result_size_bytes=4),
+        frozenset({"example"}),
+        max_file_size_bytes=10,
+    )
+
+    info = service.inspect("https://example.com/media")
+    result = service.download(
+        job_id=JobId("job-advisory"),
+        url=info.webpage_url,
+        mode=DownloadMode.VIDEO_480,
+        output_directory=tmp_path / "job-advisory",
+    )
+
+    assert info.estimated_size_bytes == 1_000
+    assert result.file_size_bytes == 4
+
+
+def test_rejects_oversized_selected_result(tmp_path: Path) -> None:
+    service = DownloadService(
+        FakeEngine(result_size_bytes=11),
+        frozenset({"example"}),
+        max_file_size_bytes=10,
+    )
+
+    with pytest.raises(MediaTooLargeError):
+        service.download(
+            job_id=JobId("job-too-large"),
+            url="https://example.com/media",
+            mode=DownloadMode.BEST,
+            output_directory=tmp_path / "job-too-large",
+        )

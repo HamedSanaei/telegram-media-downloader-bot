@@ -5,10 +5,10 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram_media_bot.domain.models import DownloadMode, JobId, MediaInfo, SelectionRecord
 
 _MODE_LABELS = {
-    DownloadMode.BEST: "بهترین کیفیت",
-    DownloadMode.VIDEO_1080: "ویدئو 1080p",
-    DownloadMode.VIDEO_720: "ویدئو 720p",
-    DownloadMode.VIDEO_480: "ویدئو 480p",
+    DownloadMode.BEST: "بهترین کیفیت مجاز",
+    DownloadMode.VIDEO_1080: "ویدئو تا 1080p",
+    DownloadMode.VIDEO_720: "ویدئو تا 720p",
+    DownloadMode.VIDEO_480: "ویدئو تا 480p",
     DownloadMode.AUDIO_BEST: "بهترین صدا",
     DownloadMode.AUDIO_MP3: "صدا MP3",
 }

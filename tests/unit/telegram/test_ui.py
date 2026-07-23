@@ -61,6 +61,7 @@ def test_media_and_progress_ui_use_owned_models_only() -> None:
     keyboard = selection_keyboard(selection)
     assert "01:01" in text
     assert "2.0 KiB" in text
+    assert keyboard.inline_keyboard[1][0].text == "ویدئو تا 720p"
     assert keyboard.inline_keyboard[1][0].callback_data == "fmt:opaque-token-123:video_720"
     assert cancellation_keyboard(JobId("job")).inline_keyboard[0][0].callback_data == "cancel:job"
     assert "50٪" in render_progress(50, 512, 1024)

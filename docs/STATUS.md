@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ## Release state
 
@@ -32,6 +32,15 @@ Telegram delivery -> terminal state and cleanup.
 
 The final exact command results and coverage are recorded in `docs/HANDOFF_REPORT.md` after the last
 gate run. External contracts remain opt-in and require operator-maintained public URLs.
+
+## Recent fixes
+
+- 2026-07-24: Generic inspection size estimates are now advisory because upstream may report the
+  best/default format before semantic selection. The selected download and final post-processed file
+  remain strictly bounded by `media.max_file_size_mb`.
+- 2026-07-24: Replaced yt-dlp's per-stream `max_filesize` behavior with bounded complete-format
+  selection. Video modes now preserve both video and audio and degrade quality when necessary rather
+  than uploading a surviving audio-only stream as a successful video.
 
 ## Known limitations
 

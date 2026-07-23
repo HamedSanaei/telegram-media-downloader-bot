@@ -33,7 +33,11 @@ from telegram_media_bot.infrastructure.ytdlp.mapper import (
     map_media_info,
     normalize_source,
 )
-from telegram_media_bot.infrastructure.ytdlp.options import YtDlpOptionsFactory, final_media_files
+from telegram_media_bot.infrastructure.ytdlp.options import (
+    YtDlpOptionsFactory,
+    bounded_format_selector,
+    final_media_files,
+)
 
 
 class YtDlpEngine:
@@ -70,6 +74,8 @@ class YtDlpEngine:
         if request.temp_directory is not None:
             temp_dir = self._safe_temp_directory(request.temp_directory)
             self._reset_job_directory(temp_dir)
+        max_size = self._settings.media.max_file_size_mb * 1024 * 1024
+        observed_downloads: dict[str, int] = {}
 
         def cancellation_check() -> None:
             if is_cancelled is not None and is_cancelled():
@@ -77,6 +83,14 @@ class YtDlpEngine:
 
         def progress_hook(raw_progress: dict[str, Any]) -> None:
             cancellation_check()
+            downloaded = raw_progress.get("downloaded_bytes")
+            if isinstance(downloaded, (int, float)):
+                progress_key = str(
+                    raw_progress.get("filename") or raw_progress.get("tmpfilename") or "current"
+                )
+                observed_downloads[progress_key] = max(0, int(downloaded))
+                if sum(observed_downloads.values()) > max_size:
+                    raise MediaTooLargeError("Downloaded streams exceed configured size limit")
             if progress is not None:
                 progress(self._map_progress(request, raw_progress))
 
@@ -99,6 +113,14 @@ class YtDlpEngine:
                 match_filter=self._match_filter,
             )
             with YoutubeDL(options) as ydl:
+                base_selector = ydl.format_selector
+                if not callable(base_selector):
+                    raise DownloadFailedError("Configured format selector is unavailable")
+                ydl.format_selector = bounded_format_selector(
+                    base_selector,
+                    mode=request.mode,
+                    max_size_bytes=max_size,
+                )
                 raw = ydl.extract_info(request.url, download=True)
                 info = self._sanitize(ydl, raw)
             self._validate_info_urls(info)
@@ -114,7 +136,6 @@ class YtDlpEngine:
                 ]
                 if non_images:
                     files = non_images
-            max_size = self._settings.media.max_file_size_mb * 1024 * 1024
             if sum(path.stat().st_size for path in files) > max_size:
                 raise MediaTooLargeError("Final media exceeds configured size limit")
             final_file = self._bundle_playlist(job_dir, files) if len(files) > 1 else files[0]

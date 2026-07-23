@@ -12,6 +12,10 @@
   health/readiness, Prometheus metrics, controlled upgrades, canary comparison, and plugin SDK.
 - Added fail-fast cross-platform release scripts, secret scanning, and dependency vulnerability
   auditing; upgraded pytest to its fixed 9.x line.
+- Kept generic inspection size estimates advisory while enforcing configured limits on the selected
+  download and final post-processed file.
+- Prevented partial audio-only delivery for oversized video selections by choosing the best complete
+  configured video/audio pair below the aggregate size limit.
 
 ## 0.1.0 - 2026-07-23
 

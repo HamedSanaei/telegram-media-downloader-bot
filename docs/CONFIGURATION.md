@@ -26,6 +26,14 @@ fail startup and `config.yaml` is ignored by Git and Docker build context.
 format IDs. Storage child paths and the SQLite filename cannot escape configured roots. When
 `telegram.local_api_is_local` is true, an absolute HTTP(S) `local_api_base_url` is required.
 
+The size shown during inspection is advisory upstream metadata and may refer to the source's default
+or best format rather than the user's later semantic selection. `media.max_file_size_mb` is enforced
+by selecting the highest-quality complete configured stream combination whose known aggregate size
+fits. The exact final post-processed file is checked again before Telegram delivery. Consequently,
+buttons labeled “up to 1080p/720p/480p” may select a lower resolution when the requested ceiling
+cannot fit without dropping audio or exceeding the configured size. When upstream size metadata is
+missing, cumulative downloaded bytes are bounded during transfer and the final file is still checked.
+
 Cookies should be mounted read-only. A missing cookie file is simply not passed to yt-dlp; `doctor`
 and operator startup review should confirm whether authenticated sources need it. Proxy credentials,
 tokens, cookies, and authorization values are redacted from structured logs.

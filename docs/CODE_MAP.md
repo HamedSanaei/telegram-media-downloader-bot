@@ -4,7 +4,7 @@
 |---|---|
 | `src/telegram_media_bot/domain/` | Stable models, enums, identifiers, and exceptions |
 | `src/telegram_media_bot/application/ports/` | Interfaces required by use cases |
-| `src/telegram_media_bot/application/services/` | Orchestrates inspection and downloading |
+| `src/telegram_media_bot/application/services/` | Orchestrates inspection, policy limits, and selected downloads |
 | `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
 | `src/telegram_media_bot/application/services/progress.py` | Framework-free progress throttling policy |
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic user access and rate policy |
@@ -28,7 +28,7 @@
 ## Upstream compatibility hot spots
 
 - `infrastructure/ytdlp/engine.py`: `YoutubeDL` lifecycle and calls;
-- `infrastructure/ytdlp/options.py`: semantic mode to yt-dlp option mapping;
+- `infrastructure/ytdlp/options.py`: semantic mode mapping and bounded complete-stream selection;
 - `infrastructure/ytdlp/mapper.py`: upstream metadata to `MediaInfo`;
 - `infrastructure/ytdlp/error_mapper.py`: upstream errors to project exceptions.
 

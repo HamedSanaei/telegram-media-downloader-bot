@@ -110,9 +110,3 @@ class DownloadService:
                 raise PlaylistNotAllowedError("Playlist exceeds the configured item limit")
         if info.duration_seconds is not None and info.duration_seconds > self._max_duration_seconds:
             raise MediaTooLargeError("Media duration exceeds the configured limit")
-        if (
-            self._max_file_size_bytes is not None
-            and info.estimated_size_bytes is not None
-            and info.estimated_size_bytes > self._max_file_size_bytes
-        ):
-            raise MediaTooLargeError("Estimated media size exceeds the configured limit")

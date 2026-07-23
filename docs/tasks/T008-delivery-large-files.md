@@ -4,7 +4,10 @@
 
 Delivery is behind a project port and selects audio, video, or document with document fallback.
 Captions and filenames are sanitized, upload limits fail explicitly, and an optional local Bot API
-base URL is supported. Docker pins Deno 2.9.3 and installs ffmpeg; `doctor` reports runtime versions.
+base URL is supported. The adapter selects the best complete configured video/audio combination
+whose known aggregate size fits the media limit; it never treats one surviving stream as a complete
+video. Unknown-size downloads are bounded cumulatively by the progress hook. Docker pins Deno 2.9.3
+and installs ffmpeg; `doctor` reports runtime versions.
 
 ## Deliverables
 

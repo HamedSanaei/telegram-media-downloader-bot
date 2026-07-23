@@ -9,6 +9,7 @@ from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     DownloadFailedError,
     JobCancelledError,
+    MediaTooLargeError,
     RateLimitedError,
     UnsafeUrlError,
 )
@@ -33,9 +34,11 @@ class FakeYoutubeDL:
         "ext": "webm",
     }
     error: ClassVar[Exception | None] = None
+    downloaded_bytes: ClassVar[int] = 5
 
     def __init__(self, options: dict[str, Any]) -> None:
         self.options = options
+        self.format_selector = lambda context: iter(context["formats"][-1:])
 
     def __enter__(self) -> FakeYoutubeDL:
         return self
@@ -51,14 +54,17 @@ class FakeYoutubeDL:
                 hook(
                     {
                         "status": "downloading",
-                        "downloaded_bytes": 5,
+                        "downloaded_bytes": self.downloaded_bytes,
                         "total_bytes": 10,
+                        "filename": "abc.webm",
                         "speed": 2,
                         "eta": 3,
                     }
                 )
             template = self.options["outtmpl"]["default"]
-            output = Path(template.replace("%(id)s", "abc").replace("%(ext)s", "webm"))
+            output = Path(self.options["paths"]["home"]) / template.replace(
+                "%(id)s", "abc"
+            ).replace("%(ext)s", "webm")
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(b"media")
         return dict(self.info)
@@ -148,6 +154,27 @@ def test_extracted_playlist_entry_urls_are_revalidated(settings: Settings) -> No
     engine = engine_module.YtDlpEngine(settings)
     with pytest.raises(UnsafeUrlError):
         engine._validate_info_urls({"entries": [{"url": "http://127.0.0.1/private"}]})
+
+
+def test_progress_guard_aborts_unknown_oversized_download(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class OversizedYoutubeDL(FakeYoutubeDL):
+        downloaded_bytes = 100 * 1024 * 1024
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", OversizedYoutubeDL)
+    settings = _without_dns_checks(settings)
+    engine = engine_module.YtDlpEngine(settings)
+
+    with pytest.raises(MediaTooLargeError):
+        engine.download(
+            DownloadRequest(
+                job_id=JobId("oversized"),
+                url="https://example.test/media",
+                mode=DownloadMode.BEST,
+                output_directory=settings.storage.downloads_path() / "oversized",
+            )
+        )
 
 
 def _without_dns_checks(settings: Settings) -> Settings:
