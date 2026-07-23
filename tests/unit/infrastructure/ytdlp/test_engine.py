@@ -156,11 +156,11 @@ def test_extracted_playlist_entry_urls_are_revalidated(settings: Settings) -> No
         engine._validate_info_urls({"entries": [{"url": "http://127.0.0.1/private"}]})
 
 
-def test_progress_guard_aborts_unknown_oversized_download(
+def test_progress_guard_aborts_unknown_oversized_source_download(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class OversizedYoutubeDL(FakeYoutubeDL):
-        downloaded_bytes = 100 * 1024 * 1024
+        downloaded_bytes = 2 * 1024 * 1024 * 1024
 
     monkeypatch.setattr(engine_module, "YoutubeDL", OversizedYoutubeDL)
     settings = _without_dns_checks(settings)
@@ -175,6 +175,68 @@ def test_progress_guard_aborts_unknown_oversized_download(
                 output_directory=settings.storage.downloads_path() / "oversized",
             )
         )
+
+
+def test_oversized_selected_video_is_transcoded_at_requested_height(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class VideoYoutubeDL(FakeYoutubeDL):
+        info: ClassVar[dict[str, Any]] = {
+            "id": "video",
+            "title": "Video",
+            "extractor_key": "Youtube",
+            "webpage_url": "https://example.test/video",
+            "vcodec": "vp9",
+            "acodec": "opus",
+            "ext": "webm",
+            "height": 720,
+            "duration": 60,
+        }
+
+        def extract_info(self, url: str, *, download: bool) -> dict[str, Any]:
+            info = super().extract_info(url, download=download)
+            if download:
+                output = Path(self.options["paths"]["home"]) / "abc.webm"
+                output.write_bytes(b"x" * (2 * 1024 * 1024))
+            return info
+
+    calls: list[int] = []
+
+    def fake_transcode(
+        source: Path,
+        *,
+        target_height: int,
+        max_size_bytes: int,
+        is_cancelled: object,
+    ) -> Path:
+        calls.append(target_height)
+        output = source.with_name("bounded.mp4")
+        output.write_bytes(b"x" * (max_size_bytes // 2))
+        source.unlink()
+        return output
+
+    raw = settings.model_dump()
+    raw["media"]["max_file_size_mb"] = 1
+    raw["media"]["max_source_size_mb"] = 10
+    configured = _without_dns_checks(Settings.model_validate(raw))
+    monkeypatch.setattr(engine_module, "YoutubeDL", VideoYoutubeDL)
+    monkeypatch.setattr(engine_module, "transcode_video_to_limit", fake_transcode)
+    events: list[ProgressEvent] = []
+
+    result = engine_module.YtDlpEngine(configured).download(
+        DownloadRequest(
+            job_id=JobId("transcode"),
+            url="https://example.test/video",
+            mode=DownloadMode.VIDEO_720,
+            output_directory=configured.storage.downloads_path() / "transcode",
+        ),
+        progress=events.append,
+    )
+
+    assert calls == [720]
+    assert result.file_path.name == "bounded.mp4"
+    assert result.file_size_bytes == 512 * 1024
+    assert any(event.status == "transcoding" for event in events)
 
 
 def _without_dns_checks(settings: Settings) -> Settings:

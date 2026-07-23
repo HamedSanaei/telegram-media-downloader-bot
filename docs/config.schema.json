@@ -147,6 +147,13 @@
           "title": "Max File Size Mb",
           "type": "integer"
         },
+        "max_source_size_mb": {
+          "default": 1024,
+          "maximum": 8192,
+          "minimum": 1,
+          "title": "Max Source Size Mb",
+          "type": "integer"
+        },
         "max_duration_seconds": {
           "default": 14400,
           "minimum": 1,
@@ -407,6 +414,13 @@
           "maximum": 2048,
           "minimum": 1,
           "title": "Max Upload Size Mb",
+          "type": "integer"
+        },
+        "upload_timeout_seconds": {
+          "default": 600,
+          "maximum": 86400,
+          "minimum": 60,
+          "title": "Upload Timeout Seconds",
           "type": "integer"
         },
         "caption_template": {

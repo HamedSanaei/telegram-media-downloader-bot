@@ -12,6 +12,8 @@ def test_example_configuration_is_valid() -> None:
     settings = load_settings(Path("config.example.yaml"), require_token=False)
     assert "youtube" in settings.media.enabled_sources
     assert settings.media.default_mode.value == "best"
+    assert settings.media.max_source_size_mb == 1024
+    assert settings.telegram.upload_timeout_seconds == 600
 
 
 def test_unknown_configuration_key_is_rejected(tmp_path: Path) -> None:
@@ -59,6 +61,21 @@ def test_allowed_and_blocked_user_overlap_is_rejected(settings: Settings) -> Non
 def test_caption_template_rejects_unknown_fields(settings: Settings) -> None:
     raw = settings.model_dump()
     raw["telegram"]["caption_template"] = "{title} {token}"
+    with pytest.raises(ValidationError):
+        Settings.model_validate(raw)
+
+
+def test_upload_timeout_rejects_values_below_session_floor(settings: Settings) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["upload_timeout_seconds"] = 59
+    with pytest.raises(ValidationError):
+        Settings.model_validate(raw)
+
+
+def test_source_limit_must_cover_final_media_limit(settings: Settings) -> None:
+    raw = settings.model_dump()
+    raw["media"]["max_file_size_mb"] = 100
+    raw["media"]["max_source_size_mb"] = 99
     with pytest.raises(ValidationError):
         Settings.model_validate(raw)
 

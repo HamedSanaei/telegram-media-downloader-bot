@@ -37,7 +37,9 @@ from telegram_media_bot.infrastructure.ytdlp.options import (
     YtDlpOptionsFactory,
     bounded_format_selector,
     final_media_files,
+    video_target_height,
 )
+from telegram_media_bot.infrastructure.ytdlp.transcoder import transcode_video_to_limit
 
 
 class YtDlpEngine:
@@ -75,6 +77,9 @@ class YtDlpEngine:
             temp_dir = self._safe_temp_directory(request.temp_directory)
             self._reset_job_directory(temp_dir)
         max_size = self._settings.media.max_file_size_mb * 1024 * 1024
+        source_max_size = self._settings.media.max_source_size_mb * 1024 * 1024
+        target_height = video_target_height(request.mode)
+        transfer_limit = source_max_size if target_height is not None else max_size
         observed_downloads: dict[str, int] = {}
 
         def cancellation_check() -> None:
@@ -89,7 +94,7 @@ class YtDlpEngine:
                     raw_progress.get("filename") or raw_progress.get("tmpfilename") or "current"
                 )
                 observed_downloads[progress_key] = max(0, int(downloaded))
-                if sum(observed_downloads.values()) > max_size:
+                if sum(observed_downloads.values()) > transfer_limit:
                     raise MediaTooLargeError("Downloaded streams exceed configured size limit")
             if progress is not None:
                 progress(self._map_progress(request, raw_progress))
@@ -119,7 +124,7 @@ class YtDlpEngine:
                 ydl.format_selector = bounded_format_selector(
                     base_selector,
                     mode=request.mode,
-                    max_size_bytes=max_size,
+                    max_size_bytes=transfer_limit,
                 )
                 raw = ydl.extract_info(request.url, download=True)
                 info = self._sanitize(ydl, raw)
@@ -136,6 +141,22 @@ class YtDlpEngine:
                 ]
                 if non_images:
                     files = non_images
+            if (
+                len(files) == 1
+                and detected_kind is MediaKind.VIDEO
+                and target_height is not None
+                and files[0].stat().st_size > max_size
+            ):
+                if progress is not None:
+                    progress(ProgressEvent(job_id=request.job_id, status="transcoding"))
+                files = [
+                    transcode_video_to_limit(
+                        files[0],
+                        target_height=target_height,
+                        max_size_bytes=max_size,
+                        is_cancelled=is_cancelled,
+                    )
+                ]
             if sum(path.stat().st_size for path in files) > max_size:
                 raise MediaTooLargeError("Final media exceeds configured size limit")
             final_file = self._bundle_playlist(job_dir, files) if len(files) > 1 else files[0]

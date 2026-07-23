@@ -78,3 +78,13 @@ lock/image/canary process and `doctor` reports the executable version.
 The stable engine contract returns one final file. When playlist policy is enabled and multiple
 files are produced, the adapter verifies aggregate size, creates a ZIP below the job directory,
 deletes the individual files, and returns it as `MediaKind.PLAYLIST`.
+
+## ADR-011: Preserve semantic video resolution with bounded transcoding
+
+**Status:** accepted
+
+For video modes, select the best complete SDR source at or below the semantic target and bound that
+transfer with `media.max_source_size_mb`. If the merged result exceeds the final media
+ceiling, transcode it to H.264/AAC at the selected resolution and a calculated bounded bitrate.
+This avoids deceptively collapsing `1080p`, `720p`, and `480p` to one low native stream while
+remaining compatible with the official Telegram Bot API upload limit.

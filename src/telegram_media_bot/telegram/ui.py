@@ -5,7 +5,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram_media_bot.domain.models import DownloadMode, JobId, MediaInfo, SelectionRecord
 
 _MODE_LABELS = {
-    DownloadMode.BEST: "بهترین کیفیت مجاز",
+    DownloadMode.BEST: "بهترین ویدئو تا 1080p",
     DownloadMode.VIDEO_1080: "ویدئو تا 1080p",
     DownloadMode.VIDEO_720: "ویدئو تا 720p",
     DownloadMode.VIDEO_480: "ویدئو تا 480p",
@@ -51,7 +51,15 @@ def render_media_info(info: MediaInfo) -> str:
     return "\n".join(lines)
 
 
-def render_progress(percent: float | None, downloaded: int, total: int | None) -> str:
+def render_progress(
+    percent: float | None,
+    downloaded: int,
+    total: int | None,
+    *,
+    status: str | None = None,
+) -> str:
+    if status == "transcoding":
+        return "در حال فشرده‌سازی ویدئو در کیفیت انتخابی…"
     percent_text = "؟" if percent is None else f"{percent:.0f}"
     size_text = _size(downloaded)
     if total is not None:

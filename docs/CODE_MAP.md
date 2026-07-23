@@ -13,7 +13,7 @@
 | `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL job, selection, block, and recovery store |
 | `src/telegram_media_bot/infrastructure/security/` | Public URL/DNS validation and Redis rate limiting |
 | `src/telegram_media_bot/infrastructure/observability/` | Health HTTP server and Prometheus metrics registry |
-| `src/telegram_media_bot/telegram/` | Handlers, semantic UI, correlation middleware, and delivery adapter |
+| `src/telegram_media_bot/telegram/` | Handlers, semantic UI, correlation middleware, and bounded-time delivery adapter |
 | `src/telegram_media_bot/workers/` | ARQ worker settings and job functions |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, and composition roots |
 | `tests/unit/` | Fast deterministic tests |
@@ -29,6 +29,7 @@
 
 - `infrastructure/ytdlp/engine.py`: `YoutubeDL` lifecycle and calls;
 - `infrastructure/ytdlp/options.py`: semantic mode mapping and bounded complete-stream selection;
+- `infrastructure/ytdlp/transcoder.py`: cancellable size-bounded H.264/AAC video transcoding;
 - `infrastructure/ytdlp/mapper.py`: upstream metadata to `MediaInfo`;
 - `infrastructure/ytdlp/error_mapper.py`: upstream errors to project exceptions.
 

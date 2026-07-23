@@ -51,6 +51,10 @@ class TelegramDeliveryGateway(DeliveryGateway):
             return _receipt(message, preferred)
         except TelegramAPIError as exc:
             if preferred is DeliveryMethod.DOCUMENT:
+                await logger.awarning(
+                    "telegram_document_delivery_failed",
+                    error_type=type(exc).__name__,
+                )
                 raise DeliveryError("Telegram document delivery failed") from exc
             await logger.awarning(
                 "telegram_media_delivery_fallback",
@@ -61,6 +65,10 @@ class TelegramDeliveryGateway(DeliveryGateway):
                 message = await self._send(DeliveryMethod.DOCUMENT, chat_id, upload, caption)
                 return _receipt(message, DeliveryMethod.DOCUMENT)
             except TelegramAPIError as fallback_exc:
+                await logger.awarning(
+                    "telegram_document_fallback_failed",
+                    error_type=type(fallback_exc).__name__,
+                )
                 raise DeliveryError("Telegram delivery failed") from fallback_exc
 
     async def send_text(self, chat_id: int, text: str) -> int:
@@ -83,16 +91,28 @@ class TelegramDeliveryGateway(DeliveryGateway):
         upload: FSInputFile,
         caption: str,
     ) -> Message:
+        request_timeout = self._settings.telegram.upload_timeout_seconds
         if method is DeliveryMethod.AUDIO:
-            return await self._bot.send_audio(chat_id=chat_id, audio=upload, caption=caption)
+            return await self._bot.send_audio(
+                chat_id=chat_id,
+                audio=upload,
+                caption=caption,
+                request_timeout=request_timeout,
+            )
         if method is DeliveryMethod.VIDEO:
             return await self._bot.send_video(
                 chat_id=chat_id,
                 video=upload,
                 caption=caption,
                 supports_streaming=True,
+                request_timeout=request_timeout,
             )
-        return await self._bot.send_document(chat_id=chat_id, document=upload, caption=caption)
+        return await self._bot.send_document(
+            chat_id=chat_id,
+            document=upload,
+            caption=caption,
+            request_timeout=request_timeout,
+        )
 
     def _preferred_method(self, result: DownloadResult) -> DeliveryMethod:
         if self._settings.telegram.upload_as_document or result.kind is MediaKind.PLAYLIST:

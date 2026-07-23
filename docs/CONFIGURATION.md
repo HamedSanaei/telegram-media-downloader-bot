@@ -7,14 +7,14 @@ fail startup and `config.yaml` is ignored by Git and Docker build context.
 ## Sections
 
 - `app`: environment, structured/console logging, language, and timezone.
-- `telegram`: token/admins, polling, automatic or document-only delivery, upload ceiling, sanitized
-  caption template (`{title}` and `{source}` only), filename length, progress throttling, and optional
-  local Bot API base URL.
+- `telegram`: token/admins, polling, automatic or document-only delivery, upload ceiling and upload
+  request timeout, sanitized caption template (`{title}` and `{source}` only), filename length,
+  progress throttling, and optional local Bot API base URL.
 - `redis`: ARQ/rate-limit Redis DSN and queue name.
 - `queue`: concurrency, timeout, attempts, retry delay, and ARQ result retention.
 - `storage`: contained download/temp/state paths, terminal cleanup, orphan grace, and job retention.
-- `media`: source allowlist, enabled semantic modes, default mode, playlist policy, duration/size
-  ceilings, and operator-owned semantic yt-dlp selectors.
+- `media`: source allowlist, enabled semantic modes, default mode, playlist policy, final/source
+  size ceilings, and operator-owned semantic yt-dlp selectors.
 - `yt_dlp`: cookies/proxy/timeouts/retries, safe filename/media settings, audio conversion, user agent,
   and the selected JavaScript runtime. These are operator settings, never user input.
 - `security`: static allow/block sets, Redis-backed per-user request ceiling, and public-network URL
@@ -25,14 +25,18 @@ fail startup and `config.yaml` is ignored by Git and Docker build context.
 `media.enabled_modes` must contain `best`; callbacks use these semantic values and never raw upstream
 format IDs. Storage child paths and the SQLite filename cannot escape configured roots. When
 `telegram.local_api_is_local` is true, an absolute HTTP(S) `local_api_base_url` is required.
+`telegram.upload_timeout_seconds` applies only to file uploads and defaults to 600 seconds so large
+official Bot API uploads are not cut off by aiogram's shorter session default. Text and polling
+requests retain their normal bounded timeouts.
 
 The size shown during inspection is advisory upstream metadata and may refer to the source's default
-or best format rather than the user's later semantic selection. `media.max_file_size_mb` is enforced
-by selecting the highest-quality complete configured stream combination whose known aggregate size
-fits. The exact final post-processed file is checked again before Telegram delivery. Consequently,
-buttons labeled “up to 1080p/720p/480p” may select a lower resolution when the requested ceiling
-cannot fit without dropping audio or exceeding the configured size. When upstream size metadata is
-missing, cumulative downloaded bytes are bounded during transfer and the final file is still checked.
+or best format rather than the user's later semantic selection. Video modes, including `best`,
+select the highest SDR source at the requested ceiling (`1080p`, `720p`, or `480p`) beneath
+`media.max_source_size_mb`. If the merged source exceeds `media.max_file_size_mb`, the adapter
+transcodes it to H.264/AAC at the selected resolution and a bounded bitrate; an exact final-size
+check still runs before Telegram delivery. This preserves distinct resolutions under the official
+Bot API ceiling, although long high-resolution videos necessarily receive a lower bitrate. Unknown
+source sizes are bounded cumulatively during transfer.
 
 Cookies should be mounted read-only. A missing cookie file is simply not passed to yt-dlp; `doctor`
 and operator startup review should confirm whether authenticated sources need it. Proxy credentials,

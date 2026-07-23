@@ -17,17 +17,23 @@ from telegram_media_bot.telegram.delivery import TelegramDeliveryGateway, render
 class FakeBot:
     fail_video = False
 
-    async def send_audio(self, **_kwargs: object) -> Message:
+    def __init__(self) -> None:
+        self.last_upload: dict[str, object] = {}
+
+    async def send_audio(self, **kwargs: object) -> Message:
+        self.last_upload = kwargs
         return _message("audio")
 
-    async def send_video(self, **_kwargs: object) -> Message:
+    async def send_video(self, **kwargs: object) -> Message:
+        self.last_upload = kwargs
         if self.fail_video:
             raise TelegramBadRequest(
                 method=SendVideo(chat_id=1, video="existing-file-id"), message="unsupported"
             )
         return _message("video")
 
-    async def send_document(self, **_kwargs: object) -> Message:
+    async def send_document(self, **kwargs: object) -> Message:
+        self.last_upload = kwargs
         return _message("document")
 
     async def send_message(self, **_kwargs: object) -> Message:
@@ -45,13 +51,15 @@ async def test_delivery_selects_normalized_media_method(
     settings: Settings, tmp_path: Path, kind: MediaKind, expected: str
 ) -> None:
     configured = _auto_delivery(settings)
-    gateway = TelegramDeliveryGateway(cast(Bot, cast(Any, FakeBot())), configured)
+    bot = FakeBot()
+    gateway = TelegramDeliveryGateway(cast(Bot, cast(Any, bot)), configured)
     result = _result(tmp_path, kind)
     receipt = await gateway.deliver(
         chat_id=1, result=result, caption=render_caption(configured, result)
     )
     assert receipt.method.value == expected
     assert receipt.file_id == "file-id"
+    assert bot.last_upload["request_timeout"] == configured.telegram.upload_timeout_seconds
 
 
 async def test_video_failure_falls_back_to_document(settings: Settings, tmp_path: Path) -> None:

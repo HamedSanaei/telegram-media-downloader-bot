@@ -10,6 +10,12 @@ from telegram_media_bot.domain.errors import MediaTooLargeError
 from telegram_media_bot.domain.models import DownloadMode, DownloadRequest
 
 FormatSelector = Callable[[dict[str, Any]], Iterable[dict[str, Any]]]
+_VIDEO_TARGET_HEIGHTS = {
+    DownloadMode.BEST: 1080,
+    DownloadMode.VIDEO_1080: 1080,
+    DownloadMode.VIDEO_720: 720,
+    DownloadMode.VIDEO_480: 480,
+}
 
 
 class YtDlpOptionsFactory:
@@ -114,6 +120,29 @@ def bounded_format_selector(
 
     def select(context: dict[str, Any]) -> Iterator[dict[str, Any]]:
         formats = [item for item in context.get("formats", []) if isinstance(item, dict)]
+        target_height = video_target_height(mode)
+        if target_height is not None:
+            formats = [
+                item
+                for item in formats
+                if not _is_video(item)
+                or not isinstance(item.get("height"), (int, float))
+                or int(item["height"]) <= target_height
+            ]
+            sdr_heights = {
+                int(item["height"])
+                for item in formats
+                if _is_video(item)
+                and not _is_hdr(item)
+                and isinstance(item.get("height"), (int, float))
+            }
+            formats = [
+                item
+                for item in formats
+                if not _is_hdr(item)
+                or not isinstance(item.get("height"), (int, float))
+                or int(item["height"]) not in sdr_heights
+            ]
         quality_index = {
             str(item.get("format_id")): index
             for index, item in enumerate(formats)
@@ -121,8 +150,8 @@ def bounded_format_selector(
         }
         pending: deque[frozenset[str]] = deque([frozenset()])
         visited: set[frozenset[str]] = set()
-        best: tuple[tuple[int, int], dict[str, Any]] | None = None
-        unknown: tuple[tuple[int, int], dict[str, Any]] | None = None
+        best: tuple[tuple[int, ...], dict[str, Any]] | None = None
+        unknown: tuple[tuple[int, ...], dict[str, Any]] | None = None
 
         while pending and len(visited) < 1024:
             excluded = pending.popleft()
@@ -159,6 +188,14 @@ def bounded_format_selector(
     return select
 
 
+def video_target_height(mode: DownloadMode) -> int | None:
+    return _VIDEO_TARGET_HEIGHTS.get(mode)
+
+
+def _is_video(item: Mapping[str, Any]) -> bool:
+    return item.get("vcodec") not in {None, "none"}
+
+
 def _selected_components(candidate: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
     requested = candidate.get("requested_formats")
     if isinstance(requested, list):
@@ -182,14 +219,22 @@ def _selection_score(
     components: tuple[Mapping[str, Any], ...],
     quality_index: dict[str, int],
     mode: DownloadMode,
-) -> tuple[int, int]:
+) -> tuple[int, ...]:
+    video_components = tuple(item for item in components if _is_video(item))
     video = max(
+        (quality_index.get(str(item.get("format_id")), -1) for item in video_components),
+        default=-1,
+    )
+    video_height = max(
         (
-            quality_index.get(str(item.get("format_id")), -1)
-            for item in components
-            if item.get("vcodec") not in {None, "none"}
+            int(item["height"])
+            for item in video_components
+            if isinstance(item.get("height"), (int, float))
         ),
         default=-1,
+    )
+    standard_dynamic_range = int(
+        bool(video_components) and all(not _is_hdr(item) for item in video_components)
     )
     audio = max(
         (
@@ -200,8 +245,16 @@ def _selection_score(
         default=-1,
     )
     if mode in {DownloadMode.AUDIO_BEST, DownloadMode.AUDIO_MP3}:
-        return audio, video
-    return video, audio
+        return audio, video_height, standard_dynamic_range, video
+    return video_height, standard_dynamic_range, video, audio
+
+
+def _is_hdr(item: Mapping[str, Any]) -> bool:
+    dynamic_range = item.get("dynamic_range")
+    if isinstance(dynamic_range, str) and dynamic_range.casefold() not in {"", "sdr"}:
+        return True
+    format_note = item.get("format_note")
+    return isinstance(format_note, str) and "hdr" in format_note.casefold()
 
 
 def final_media_files(directory: Path) -> list[Path]:

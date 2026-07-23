@@ -10,6 +10,7 @@ from telegram_media_bot.infrastructure.ytdlp.options import (
     YtDlpOptionsFactory,
     bounded_format_selector,
     final_media_files,
+    video_target_height,
 )
 
 
@@ -105,18 +106,59 @@ def test_bounded_selector_rejects_when_no_complete_selection_fits() -> None:
         list(selector({"formats": formats}))
 
 
+def test_best_mode_caps_source_selection_at_1080p() -> None:
+    formats = [
+        _format("audio", size=10, audio=True),
+        _format("video-1080", size=40, video=True, height=1080),
+        _format("video-1440", size=50, video=True, height=1440),
+    ]
+    selector = bounded_format_selector(
+        _best_video_audio_selector,
+        mode=DownloadMode.BEST,
+        max_size_bytes=100,
+    )
+
+    selected = list(selector({"formats": formats}))
+
+    assert selected[0]["requested_formats"][0]["format_id"] == "video-1080"
+    assert video_target_height(DownloadMode.BEST) == 1080
+    assert video_target_height(DownloadMode.AUDIO_MP3) is None
+
+
+def test_bounded_selector_prefers_sdr_at_same_resolution() -> None:
+    formats = [
+        _format("audio", size=10, audio=True),
+        _format("video-sdr", size=40, video=True, height=720),
+        {
+            **_format("video-hdr", size=50, video=True, height=720),
+            "dynamic_range": "HDR10",
+        },
+    ]
+    selector = bounded_format_selector(
+        _best_video_audio_selector,
+        mode=DownloadMode.VIDEO_720,
+        max_size_bytes=100,
+    )
+
+    selected = list(selector({"formats": formats}))
+
+    assert selected[0]["requested_formats"][0]["format_id"] == "video-sdr"
+
+
 def _format(
     format_id: str,
     *,
     size: int,
     video: bool = False,
     audio: bool = False,
+    height: int | None = None,
 ) -> dict[str, Any]:
     return {
         "format_id": format_id,
         "filesize": size,
         "vcodec": "av1" if video else "none",
         "acodec": "opus" if audio else "none",
+        "height": height,
     }
 
 

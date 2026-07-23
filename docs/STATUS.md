@@ -38,9 +38,13 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 - 2026-07-24: Generic inspection size estimates are now advisory because upstream may report the
   best/default format before semantic selection. The selected download and final post-processed file
   remain strictly bounded by `media.max_file_size_mb`.
-- 2026-07-24: Replaced yt-dlp's per-stream `max_filesize` behavior with bounded complete-format
-  selection. Video modes now preserve both video and audio and degrade quality when necessary rather
-  than uploading a surviving audio-only stream as a successful video.
+- 2026-07-24: Replaced yt-dlp's per-stream `max_filesize` behavior with complete-format selection and
+  bounded FFmpeg transcoding. Explicit video modes now preserve both audio and their distinct target
+  resolution instead of collapsing every oversized choice to the same lower native stream.
+- 2026-07-24: Telegram file uploads now use the dedicated configurable
+  `telegram.upload_timeout_seconds` (600 seconds by default), preventing large uploads from being
+  cut off by aiogram's 60-second general session timeout while preserving uncertain-delivery
+  quarantine for genuinely ambiguous transport failures.
 
 ## Known limitations
 

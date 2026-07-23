@@ -43,6 +43,7 @@ class TelegramSection(StrictModel):
     polling_timeout_seconds: int = Field(default=30, ge=5, le=60)
     upload_as_document: bool = True
     max_upload_size_mb: int = Field(default=49, ge=1, le=2048)
+    upload_timeout_seconds: int = Field(default=600, ge=60, le=86400)
     caption_template: str = "{title}\nمنبع: {source}"
     filename_max_length: int = Field(default=96, ge=16, le=180)
     local_api_base_url: str | None = None
@@ -151,6 +152,7 @@ class MediaSection(StrictModel):
     allow_playlists: bool = False
     playlist_max_items: int = Field(default=20, ge=1, le=500)
     max_file_size_mb: int = Field(default=49, ge=1)
+    max_source_size_mb: int = Field(default=1024, ge=1, le=8192)
     max_duration_seconds: int = Field(default=14400, ge=1)
     formats: FormatSection
 
@@ -172,6 +174,12 @@ class MediaSection(StrictModel):
         if DownloadMode.BEST not in values:
             raise ValueError("enabled_modes must include best as a universal fallback")
         return values
+
+    @model_validator(mode="after")
+    def validate_source_size_limit(self) -> MediaSection:
+        if self.max_source_size_mb < self.max_file_size_mb:
+            raise ValueError("max_source_size_mb must be at least max_file_size_mb")
+        return self
 
 
 class YtDlpSection(StrictModel):

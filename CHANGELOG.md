@@ -16,6 +16,10 @@
   download and final post-processed file.
 - Prevented partial audio-only delivery for oversized video selections by choosing the best complete
   configured video/audio pair below the aggregate size limit.
+- Added a dedicated configurable Telegram file-upload timeout instead of the 60-second general
+  aiogram session default.
+- Preserve distinct requested video resolutions with SDR source selection and bounded H.264/AAC
+  transcoding when the native result exceeds Telegram's upload ceiling.
 
 ## 0.1.0 - 2026-07-23
 

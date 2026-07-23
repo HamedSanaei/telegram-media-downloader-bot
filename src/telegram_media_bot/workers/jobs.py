@@ -390,17 +390,21 @@ async def _report_progress(
         min_interval_seconds=settings.telegram.progress_min_interval_seconds,
         min_percent_delta=settings.telegram.progress_min_percent_delta,
     )
+    last_text: str | None = None
     while True:
         event = await queue.get()
         if event is None:
             return
         if throttler.should_emit(event):
-            await _safe_edit(
-                delivery,
-                chat_id,
-                message_id,
-                render_progress(event.percent, event.downloaded_bytes, event.total_bytes),
+            text = render_progress(
+                event.percent,
+                event.downloaded_bytes,
+                event.total_bytes,
+                status=event.status,
             )
+            if text != last_text:
+                await _safe_edit(delivery, chat_id, message_id, text)
+                last_text = text
 
 
 async def _notify_failure(ctx: dict[str, Any], chat_id: int, message_id: int | None) -> None:

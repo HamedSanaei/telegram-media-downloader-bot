@@ -14,15 +14,16 @@ external extractor remains an independent distribution under `plugins/`.
 
 - Runtime: CPython 3.14.5; pytest 9.1.1; locked yt-dlp 2026.07.04; uv 0.11.28 locally.
 - `uv lock --check` and `uv sync --frozen --group dev`: passed.
-- Architecture boundary and UTF-8/text integrity checks: passed for 131 source files.
-- Ruff lint and format checks: passed for 88 Python files.
-- Strict mypy: passed for 79 source/test files.
-- Root tests: 104 passed; 6 opt-in contract cases deselected.
-- Measured core branch coverage: 86.74%, above the enforced 80% floor.
+- Architecture boundary and UTF-8/text integrity checks: passed for 133 source files.
+- Ruff lint and format checks: passed for 90 Python files.
+- Strict mypy: passed for 81 source/test files.
+- Root tests: 113 passed; 6 opt-in contract cases deselected.
+- Measured core branch coverage: 84.56%, above the enforced 80% floor.
 - YouTube contract smoke test passed against the operator-provided public fixture; the five other
   source contracts were skipped because their fixture variables were not configured.
-- A real bounded download of that YouTube fixture produced a 40,231,361-byte media file with
-  1,513.421-second duration and both audio and video streams.
+- Real YouTube quality validation selected the 720p SDR stream instead of the same 480p fallback or
+  the oversized HDR variant. The integrated pipeline produced a 44,609,634-byte H.264 file at
+  1280x720 with the full 579.968-second duration.
 - `doctor` passed locally for Python 3.14.5, yt-dlp 2026.07.04, ffmpeg 8.1.2, ffprobe 8.1.2, and
   Deno 2.9.3 after the WinGet links directory was placed on the process `PATH`.
 - Plugin SDK: independent lock/sync passed; 1 test passed and 1 contract case was deselected.
@@ -34,6 +35,8 @@ external extractor remains an independent distribution under `plugins/`.
 - Configuration validation, JSON-schema generation, Compose YAML parsing, Dockerfile static checks,
   PowerShell syntax parsing, and `git diff --check`: passed.
 - Python source distribution and wheel build: passed for version 1.0.0.
+- Telegram upload calls were verified to receive the configured 600-second request timeout; the
+  installed aiogram general session default is 60 seconds.
 
 ## Checks not executable on this host
 

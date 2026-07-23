@@ -12,6 +12,7 @@ telegram:
   polling_timeout_seconds: 30
   upload_as_document: true
   max_upload_size_mb: 49
+  upload_timeout_seconds: 600
   caption_template: "{title}\nمنبع: {source}"
   filename_max_length: 96
   local_api_base_url: null
@@ -58,6 +59,7 @@ media:
   allow_playlists: false
   playlist_max_items: 20
   max_file_size_mb: 49
+  max_source_size_mb: 1024
   max_duration_seconds: 14400
 
   formats:
