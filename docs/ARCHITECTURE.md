@@ -28,6 +28,9 @@ YtDlpEngine adapter
 yt-dlp + ffmpeg
 ```
 
+SQLite/WAL under `/data/state` is the durable control plane shared by the bot and worker. Redis is
+the transient queue/rate-limit plane and is not the source of truth for completed delivery state.
+
 ## Dependency direction
 
 ```text
@@ -57,8 +60,9 @@ adapter package.
 ### Bot
 
 - long polling initially;
-- validates basic URL and user policy;
-- creates an immutable queue payload;
+- validates public DNS results and static/durable user policy;
+- creates a durable job record before its immutable queue payload;
+- reads owner-bound, expiring selections for callbacks;
 - does not download media;
 - remains responsive while workers are busy.
 
@@ -66,9 +70,11 @@ adapter package.
 
 - owns engine calls and local job directories;
 - executes blocking yt-dlp calls via a thread boundary;
-- uploads the result in the initial implementation;
+- publishes normalized inspection UI and uploads through a `DeliveryGateway` port;
+- persists transitions, attempts, cancellation, and delivery receipts;
+- maps progress through a bounded, throttled presentation channel;
 - cleans temporary files;
-- can be horizontally scaled after idempotency work.
+- is deployed as one worker container until a leased multi-host store is introduced.
 
 ## File isolation
 
@@ -81,6 +87,10 @@ Each job uses:
 
 No user-provided title becomes a directory name. Output paths are resolved and checked beneath the
 configured root.
+
+Interrupted `running` jobs are requeued on startup. Jobs interrupted during `delivering` become
+`delivery_uncertain`; automatic retry is blocked because Telegram has no upload idempotency key.
+This trades a possible manual resend for prevention of an uncontrolled duplicate.
 
 ## Update isolation
 
@@ -101,3 +111,9 @@ A genuine change to the project-owned engine port requires an ADR and coordinate
 - Source-specific custom extraction belongs in an external `yt-dlp` plugin package.
 - Storage can be replaced behind a future storage port.
 - Queue implementation can be replaced without changing Telegram handlers.
+
+## Runtime control plane
+
+The worker exposes internal-only `/health`, `/ready`, and Prometheus `/metrics` endpoints. Readiness
+covers Redis, SQLite, writable storage, Telegram, ffmpeg, and the engine. Compose does not publish
+the port to the host by default; the worker container health check consumes it internally.

@@ -21,8 +21,18 @@ uv sync --frozen --group dev
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src tests
+uv run python scripts/generate_file_manifest.py --check
+uv run pre-commit run detect-secrets --all-files
+uv run pip check
+uv run pip-audit --local --skip-editable --progress-spinner off
 uv run pytest -m "not contract" --cov=telegram_media_bot --cov-report=term-missing
 uv build
+(
+  cd plugins/example_extractor
+  uv lock --check
+  uv sync --frozen --group dev
+  uv run pytest -m "not contract"
+)
 docker build -t telegram-media-downloader-bot:review .
 ```
 

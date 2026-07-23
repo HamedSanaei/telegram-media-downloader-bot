@@ -29,7 +29,8 @@ Actual extraction support is determined by the installed `yt-dlp` version.
 8. Job state is persisted sufficiently for retries and operator inspection.
 9. Temporary files are deleted according to policy.
 
-The current foundation implements a simpler first flow: URL -> default job -> document upload.
+The v1 implementation provides the complete two-step inspection, semantic selection, durable job,
+progress/cancellation, delivery, and cleanup flow described above.
 
 ## Required operational behavior
 

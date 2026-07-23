@@ -2,39 +2,60 @@
 
 Generated: 2026-07-23
 
-## What is implemented
+## Release scope
 
-- Strict, local-only YAML configuration with Pydantic validation.
-- Separate aiogram bot and ARQ worker processes connected through Redis.
-- A project-owned `DownloadEngine` contract.
-- One isolated `YtDlpEngine` adapter; direct `yt_dlp` imports outside its adapter directory are rejected.
-- Semantic download modes and centralized yt-dlp option mapping.
-- Per-job output directories, output-root validation, normalized errors, and cleanup after delivery.
-- Docker Compose runtime, Linux and PowerShell management scripts, CI, pre-commit configuration,
-  task specifications, architecture documentation, and a ready-to-paste Codex prompt.
-- Python 3.14-or-newer project policy, with Python 3.14 selected for local uv and configurable Docker builds.
+Tasks T001 through T012 are implemented for release `1.0.0`. The delivered flow is public URL
+validation, queued inspection, normalized metadata, owner-bound semantic selection, durable
+download, throttled progress and cancellation, typed Telegram delivery, terminal persistence, and
+safe cleanup. The application imports `yt_dlp` only inside `infrastructure/ytdlp/`; the example
+external extractor remains an independent distribution under `plugins/`.
 
-## Verification completed in the artifact environment
+## Verification completed on this host
 
-- 36 unit tests passed; 1 external contract test was deliberately deselected.
-- Core measured coverage: 93.21%, above the configured 80% gate.
-- Python bytecode compilation passed for `src/`, `tests/`, and `scripts/`.
-- Architecture boundary check passed.
-- UTF-8 and mojibake integrity check passed.
-- TOML, YAML, and generated JSON schema parsing passed.
-- `manage.sh` shell syntax check passed.
+- Runtime: CPython 3.14.5; pytest 9.1.1; locked yt-dlp 2026.07.04; uv 0.11.28 locally.
+- `uv lock --check` and `uv sync --frozen --group dev`: passed.
+- Architecture boundary and UTF-8/text integrity checks: passed for 130 source files.
+- Ruff lint and format checks: passed for 88 Python files.
+- Strict mypy: passed for 79 source/test files.
+- Root tests: 99 passed; 6 opt-in contract cases deselected.
+- Measured core branch coverage: 87.03%, above the enforced 80% floor.
+- Plugin SDK: independent lock/sync passed; 1 test passed and 1 contract case was deselected.
+- Secret scan through the committed pre-commit baseline: passed. A second scan including current
+  tracked and untracked source files reported no findings.
+- Dependency integrity: `pip check` passed.
+- Dependency vulnerability audit: `pip-audit 2.10.1` reported no known vulnerabilities after pytest
+  was upgraded to the fixed 9.x line and both lockfiles were regenerated.
+- Configuration validation, JSON-schema generation, Compose YAML parsing, Dockerfile static checks,
+  PowerShell syntax parsing, and `git diff --check`: passed.
+- Python source distribution and wheel build: passed for version 1.0.0.
 
-## Environment limitation
+## Checks not executable on this host
 
-The artifact environment's Python package registry returned HTTP 503 while resolving dependencies.
-For that reason, a generated `uv.lock` is not bundled and the full Ruff and mypy commands could not
-be executed here. This is not hidden: `./manage.sh up`, `./manage.sh lock`, `./manage.ps1 up`, and
-`./manage.ps1 lock` generate the lock file before Docker builds. CI also generates the lock and then
-runs Ruff, mypy, tests, coverage, and the Docker build. The lock file must be reviewed and committed
-before the first release.
+- Docker/Podman/Buildah/nerdctl are not installed, so an actual container image build and Compose
+  startup could not be run locally. CI contains a required `docker build` job, while the Dockerfile
+  and Compose document were statically validated here.
+- Bash is not installed, so `bash -n manage.sh` could not be rerun on this Windows host. The
+  PowerShell management script parsed and its full `check` workflow passed using process-local
+  execution-policy bypass.
+- `doctor` correctly reported missing local ffmpeg, ffprobe, and Deno. These are installed/pinned in
+  the runtime image; yt-dlp and Python checks passed locally.
+- Network contract tests were not enabled because no operator-approved public fixture URLs were
+  provided. They are intentionally excluded from the default suite.
 
-## Recommended Codex entry point
+## Operational limitations
 
-Give Codex the root `PROMPT_FOR_CODEX.md`. It explicitly instructs Codex to read `AGENTS.md`, all
-architecture documents, status, acceptance criteria, and task files before implementing the
-remaining milestones in one coherent pass.
+- The supported v1 topology is one worker container with bounded in-process concurrency. Multi-host
+  workers require a leased/shared durable database adapter instead of the local SQLite/WAL store.
+- Telegram has no upload idempotency key. A crash during upload is quarantined as
+  `delivery_uncertain` for operator review and is never resent automatically.
+- URL and extracted-media validation narrows SSRF exposure, but DNS rebinding between validation and
+  an upstream socket connect requires infrastructure egress filtering for complete defense in depth.
+- A local Telegram Bot API endpoint is supported but is not bundled. Castbox, Spotify, DRM
+  circumvention, and user-controlled yt-dlp settings remain intentionally outside v1 scope.
+
+## Release commands
+
+Run `./manage.sh check` (or `manage.ps1 check`) and a real `docker build` on a Docker-capable release
+host. Enable contract tests only with reviewed public fixtures, deploy a staging canary, apply the
+documented comparison threshold, and retain the prior immutable image plus Git/lockfile revision for
+rollback.

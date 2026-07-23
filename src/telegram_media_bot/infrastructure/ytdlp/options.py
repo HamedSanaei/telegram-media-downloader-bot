@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +23,17 @@ class YtDlpOptionsFactory:
         )
         return options
 
-    def download_options(self, request: DownloadRequest) -> dict[str, Any]:
+    def download_options(
+        self,
+        request: DownloadRequest,
+        *,
+        progress_hook: Callable[[dict[str, Any]], None] | None = None,
+        postprocessor_hook: Callable[[dict[str, Any]], None] | None = None,
+        match_filter: Callable[[dict[str, Any]], str | None] | None = None,
+    ) -> dict[str, Any]:
         request.output_directory.mkdir(parents=True, exist_ok=True)
+        temp_directory = request.temp_directory or request.output_directory / ".tmp"
+        temp_directory.mkdir(parents=True, exist_ok=True)
         output_template = str(request.output_directory / "%(id)s.%(ext)s")
         options = self._base_options()
         options.update(
@@ -32,13 +42,19 @@ class YtDlpOptionsFactory:
                 "outtmpl": {"default": output_template, "thumbnail": output_template},
                 "paths": {
                     "home": str(request.output_directory),
-                    "temp": str(request.output_directory / ".tmp"),
+                    "temp": str(temp_directory),
                 },
                 "max_filesize": self._settings.media.max_file_size_mb * 1024 * 1024,
                 "writethumbnail": self._settings.yt_dlp.write_thumbnail,
                 "postprocessors": self._postprocessors(request.mode),
             }
         )
+        if progress_hook is not None:
+            options["progress_hooks"] = [progress_hook]
+        if postprocessor_hook is not None:
+            options["postprocessor_hooks"] = [postprocessor_hook]
+        if match_filter is not None:
+            options["match_filter"] = match_filter
         return options
 
     def _base_options(self) -> dict[str, Any]:
@@ -58,6 +74,7 @@ class YtDlpOptionsFactory:
             "continuedl": True,
             "nopart": False,
             "windowsfilenames": True,
+            "js_runtimes": {ytdlp.javascript_runtime: {}},
         }
         if ytdlp.cookies_file and ytdlp.cookies_file.exists():
             options["cookiefile"] = str(ytdlp.cookies_file)
@@ -88,7 +105,9 @@ def final_media_files(directory: Path) -> list[Path]:
     ignored_suffixes = {".part", ".ytdl", ".tmp", ".temp", ".json"}
     files = [
         path
-        for path in directory.iterdir()
-        if path.is_file() and path.suffix.casefold() not in ignored_suffixes
+        for path in directory.rglob("*")
+        if path.is_file()
+        and ".tmp" not in path.relative_to(directory).parts
+        and path.suffix.casefold() not in ignored_suffixes
     ]
     return sorted(files, key=lambda path: path.stat().st_mtime_ns, reverse=True)

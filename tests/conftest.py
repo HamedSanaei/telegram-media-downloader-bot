@@ -8,7 +8,6 @@ import yaml
 
 from telegram_media_bot.bootstrap.config import Settings
 
-
 if importlib.util.find_spec("yt_dlp") is None:
     stub = ModuleType("yt_dlp")
 

@@ -1,5 +1,9 @@
 from telegram_media_bot.domain.models import MediaKind
-from telegram_media_bot.infrastructure.ytdlp.mapper import detect_kind, map_media_info, normalize_source
+from telegram_media_bot.infrastructure.ytdlp.mapper import (
+    detect_kind,
+    map_media_info,
+    normalize_source,
+)
 
 
 def test_normalizes_extractor_families_to_source() -> None:

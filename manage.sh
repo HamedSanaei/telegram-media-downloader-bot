@@ -6,11 +6,15 @@ cd "$ROOT_DIR"
 
 UV_LOCK_IMAGE="ghcr.io/astral-sh/uv:0.11.31-python3.14-trixie-slim"
 
-ensure_lock() {
+require_lock() {
   if [[ -f uv.lock ]]; then
     return
   fi
-  echo "uv.lock is missing; generating it once before the build..."
+  echo "uv.lock is missing; run './manage.sh lock', review it, and commit it first." >&2
+  exit 1
+}
+
+generate_lock() {
   if command -v uv >/dev/null 2>&1; then
     uv lock
   else
@@ -48,7 +52,7 @@ case "${1:-help}" in
     fi
     if [[ ! -f .env ]]; then
       cp .env.example .env
-      echo "Created .env with PYTHON_VERSION=3.14 for Docker builds."
+      echo "Created .env with PYTHON_VERSION=3.14.5 for Docker builds."
     fi
     mkdir -p data/downloads data/temp data/state data/cookies
     ;;
@@ -58,7 +62,7 @@ case "${1:-help}" in
     ensure_config
     export APP_UID="${APP_UID:-$(id -u)}"
     export APP_GID="${APP_GID:-$(id -g)}"
-    ensure_lock
+    require_lock
     docker compose up -d --build
     ;;
 
@@ -72,7 +76,7 @@ case "${1:-help}" in
     ensure_config
     export APP_UID="${APP_UID:-$(id -u)}"
     export APP_GID="${APP_GID:-$(id -g)}"
-    ensure_lock
+    require_lock
     docker compose up -d --build --force-recreate
     ;;
 
@@ -93,20 +97,26 @@ case "${1:-help}" in
   lock)
     export APP_UID="${APP_UID:-$(id -u)}"
     export APP_GID="${APP_GID:-$(id -g)}"
-    ensure_lock
+    generate_lock
     ;;
 
   check)
     require_command uv
-    ensure_lock
+    require_lock
     uv lock --check
     uv sync --frozen --group dev
     uv run python scripts/check_architecture.py
     uv run python scripts/check_text_integrity.py
+    uv run python scripts/generate_file_manifest.py --check
+    uv run pre-commit run detect-secrets --all-files
+    uv run pip check
+    uv run pip-audit --local --skip-editable --progress-spinner off
     uv run ruff check .
     uv run ruff format --check .
     uv run mypy src tests
     uv run pytest -m "not contract" --cov=telegram_media_bot --cov-report=term-missing
+    uv build
+    (cd plugins/example_extractor && uv lock --check && uv sync --frozen --group dev && uv run pytest -m "not contract")
     ;;
 
   config-check)
@@ -123,11 +133,17 @@ case "${1:-help}" in
 
   upgrade-ytdlp)
     require_command uv
-    ensure_lock
-    uv lock --upgrade-package yt-dlp
-    uv sync --frozen --group dev
-    uv run pytest tests/unit/infrastructure/ytdlp -m "not contract"
-    echo "yt-dlp lock entry updated and adapter unit tests passed. Review the diff, run './manage.sh check', then rebuild."
+    require_lock
+    uv run python scripts/upgrade_ytdlp.py
+    ;;
+
+  canary-report)
+    require_command uv
+    if [[ -z "${2:-}" || -z "${3:-}" ]]; then
+      echo "Usage: ./manage.sh canary-report BASELINE.json CANARY.json" >&2
+      exit 2
+    fi
+    uv run python scripts/compare_canary.py "$2" "$3"
     ;;
 
   clean)
@@ -152,6 +168,7 @@ Commands:
   config-check     Validate local configuration
   doctor           Check configuration and local runtime dependencies
   upgrade-ytdlp    Update only the yt-dlp lock entry and run adapter tests
+  canary-report    Compare baseline and canary failure-rate snapshots
   clean            Delete local downloaded and temporary files
 EOF
     ;;

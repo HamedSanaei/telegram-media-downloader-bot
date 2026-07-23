@@ -1,6 +1,11 @@
 # T010 - Observability
 
-**Status:** pending
+**Status:** complete (2026-07-23)
+
+Structured logs carry request/job/user/chat/source context and pass through recursive credential
+redaction. The worker exposes `/health`, `/ready`, and Prometheus `/metrics`; readiness covers Redis,
+SQLite, writable storage, Telegram, ffmpeg, and the engine. Admin failure summaries contain only
+opaque job IDs and stable error categories.
 
 ## Deliverables
 

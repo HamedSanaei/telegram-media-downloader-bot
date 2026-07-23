@@ -17,8 +17,9 @@ def test_yt_dlp_import_is_confined_to_adapter() -> None:
                 modules = [node.module or ""]
             else:
                 continue
-            if any(name == "yt_dlp" or name.startswith("yt_dlp.") for name in modules):
-                if not path.is_relative_to(allowed):
-                    violations.append(path)
+            if any(
+                name == "yt_dlp" or name.startswith("yt_dlp.") for name in modules
+            ) and not path.is_relative_to(allowed):
+                violations.append(path)
 
     assert violations == []

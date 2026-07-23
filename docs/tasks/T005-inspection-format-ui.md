@@ -1,6 +1,11 @@
 # T005 - Inspection and format selection
 
-**Status:** pending
+**Status:** complete (2026-07-23)
+
+Inspection runs as an ARQ worker job. Normalized metadata is stored in SQLite behind an opaque,
+owner-bound, expiring selection token. Callback data contains only the token and a configured
+semantic mode; ownership, expiry, mode membership, playlist count, duration, and estimated size are
+validated before a durable download job is enqueued.
 
 ## Deliverables
 

@@ -1,6 +1,8 @@
 class MediaBotError(Exception):
     """Base class for controlled project errors."""
 
+    retryable = False
+
 
 class ConfigurationError(MediaBotError):
     pass
@@ -23,7 +25,7 @@ class GeoRestrictedError(MediaBotError):
 
 
 class RateLimitedError(MediaBotError):
-    pass
+    retryable = True
 
 
 class MediaUnavailableError(MediaBotError):
@@ -39,8 +41,56 @@ class PlaylistNotAllowedError(MediaBotError):
 
 
 class DownloadFailedError(MediaBotError):
-    pass
+    retryable = True
 
 
 class PostProcessingError(MediaBotError):
     pass
+
+
+class AccessDeniedError(MediaBotError):
+    pass
+
+
+class UserRateLimitError(MediaBotError):
+    pass
+
+
+class PolicyBackendError(MediaBotError):
+    retryable = True
+
+
+class UnsafeUrlError(InvalidUrlError):
+    pass
+
+
+class SelectionExpiredError(MediaBotError):
+    pass
+
+
+class SelectionOwnershipError(MediaBotError):
+    pass
+
+
+class JobNotFoundError(MediaBotError):
+    pass
+
+
+class JobCancelledError(MediaBotError):
+    pass
+
+
+class DeliveryError(MediaBotError):
+    retryable = True
+
+
+class DeliveryTooLargeError(MediaBotError):
+    pass
+
+
+class DeliveryUncertainError(MediaBotError):
+    pass
+
+
+class PersistenceError(MediaBotError):
+    retryable = True

@@ -16,3 +16,8 @@
 - [ ] `uv run ruff format --check .`
 - [ ] `uv run mypy src tests`
 - [ ] `uv run pytest -m "not contract" --cov=telegram_media_bot`
+- [ ] `uv run pre-commit run detect-secrets --all-files`
+- [ ] `uv run pip-audit --local --skip-editable --progress-spinner off`
+- [ ] `uv run pip check`
+- [ ] `uv build`
+- [ ] Docker image build

@@ -1,6 +1,10 @@
 # T008 - Telegram delivery and runtime media dependencies
 
-**Status:** pending
+**Status:** complete (2026-07-23)
+
+Delivery is behind a project port and selects audio, video, or document with document fallback.
+Captions and filenames are sanitized, upload limits fail explicitly, and an optional local Bot API
+base URL is supported. Docker pins Deno 2.9.3 and installs ffmpeg; `doctor` reports runtime versions.
 
 ## Deliverables
 

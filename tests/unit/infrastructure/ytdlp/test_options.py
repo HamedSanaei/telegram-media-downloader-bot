@@ -35,7 +35,9 @@ def test_audio_mp3_adds_audio_postprocessor(settings: Settings, tmp_path: Path) 
     assert options["postprocessors"][0]["key"] == "FFmpegExtractAudio"
 
 
-def test_optional_proxy_cookie_and_user_agent_are_applied(settings: Settings, tmp_path: Path) -> None:
+def test_optional_proxy_cookie_and_user_agent_are_applied(
+    settings: Settings, tmp_path: Path
+) -> None:
     cookie = tmp_path / "cookies.txt"
     cookie.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
     raw = settings.model_dump()

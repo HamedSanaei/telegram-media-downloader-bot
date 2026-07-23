@@ -2,7 +2,9 @@ param(
     [Parameter(Position = 0)]
     [string]$Command = "help",
     [Parameter(Position = 1)]
-    [string]$Service = ""
+    [string]$Service = "",
+    [Parameter(Position = 2)]
+    [string]$ThirdArgument = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,15 +13,29 @@ $env:APP_UID = if ($env:APP_UID) { $env:APP_UID } else { "10001" }
 $env:APP_GID = if ($env:APP_GID) { $env:APP_GID } else { "10001" }
 
 
-function Ensure-Lock {
-    if (Test-Path "uv.lock") { return }
-    Write-Host "uv.lock is missing; generating it once before the build..."
+function Assert-LastExitCode {
+    param([string]$Operation)
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Operation failed with exit code $LASTEXITCODE."
+    }
+}
+
+
+function Require-Lock {
+    if (-not (Test-Path "uv.lock")) {
+        throw "uv.lock is missing; run '.\manage.ps1 lock', review it, and commit it first."
+    }
+}
+
+function New-Lock {
     if (Get-Command uv -ErrorAction SilentlyContinue) {
         uv lock
+        Assert-LastExitCode "uv lock"
     } else {
         docker run --rm --user "${env:APP_UID}:${env:APP_GID}" `
             -v "${PSScriptRoot}:/workspace" -w /workspace `
             ghcr.io/astral-sh/uv:0.11.31-python3.14-trixie-slim uv lock
+        Assert-LastExitCode "Dockerized uv lock"
     }
 }
 
@@ -39,51 +55,96 @@ switch ($Command) {
         }
         if (-not (Test-Path ".env")) {
             Copy-Item ".env.example" ".env"
-            Write-Host "Created .env with PYTHON_VERSION=3.14 for Docker builds."
+            Write-Host "Created .env with PYTHON_VERSION=3.14.5 for Docker builds."
         }
         New-Item -ItemType Directory -Force data/downloads, data/temp, data/state, data/cookies | Out-Null
     }
     "up" {
         Ensure-Config
-        Ensure-Lock
+        Require-Lock
         docker compose up -d --build
+        Assert-LastExitCode "docker compose up"
     }
-    "down" { docker compose down }
+    "down" {
+        docker compose down
+        Assert-LastExitCode "docker compose down"
+    }
     "restart" {
         Ensure-Config
-        Ensure-Lock
+        Require-Lock
         docker compose up -d --build --force-recreate
+        Assert-LastExitCode "docker compose restart"
     }
     "logs" {
         if ($Service) { docker compose logs -f $Service } else { docker compose logs -f }
+        Assert-LastExitCode "docker compose logs"
     }
-    "status" { docker compose ps }
-    "lock" { Ensure-Lock }
+    "status" {
+        docker compose ps
+        Assert-LastExitCode "docker compose ps"
+    }
+    "lock" { New-Lock }
     "check" {
-        Ensure-Lock
+        Require-Lock
         uv lock --check
+        Assert-LastExitCode "uv lock --check"
         uv sync --frozen --group dev
+        Assert-LastExitCode "uv sync"
         uv run python scripts/check_architecture.py
+        Assert-LastExitCode "architecture check"
         uv run python scripts/check_text_integrity.py
+        Assert-LastExitCode "text-integrity check"
+        uv run python scripts/generate_file_manifest.py --check
+        Assert-LastExitCode "source-manifest check"
+        uv run pre-commit run detect-secrets --all-files
+        Assert-LastExitCode "secret scan"
+        uv run pip check
+        Assert-LastExitCode "dependency check"
+        uv run pip-audit --local --skip-editable --progress-spinner off
+        Assert-LastExitCode "dependency vulnerability audit"
         uv run ruff check .
+        Assert-LastExitCode "Ruff lint"
         uv run ruff format --check .
+        Assert-LastExitCode "Ruff format"
         uv run mypy src tests
+        Assert-LastExitCode "mypy"
         uv run pytest -m "not contract" --cov=telegram_media_bot --cov-report=term-missing
+        Assert-LastExitCode "pytest"
+        uv build
+        Assert-LastExitCode "package build"
+        Push-Location plugins/example_extractor
+        try {
+            uv lock --check
+            Assert-LastExitCode "plugin uv lock --check"
+            uv sync --frozen --group dev
+            Assert-LastExitCode "plugin uv sync"
+            uv run pytest -m "not contract"
+            Assert-LastExitCode "plugin pytest"
+        } finally {
+            Pop-Location
+        }
     }
     "config-check" {
         Ensure-Config
         uv run telegram-media-bot config-check --config config.yaml
+        Assert-LastExitCode "configuration check"
     }
     "doctor" {
         Ensure-Config
         uv run telegram-media-bot doctor --config config.yaml
+        Assert-LastExitCode "runtime doctor"
     }
     "upgrade-ytdlp" {
-        Ensure-Lock
-        uv lock --upgrade-package yt-dlp
-        uv sync --frozen --group dev
-        uv run pytest tests/unit/infrastructure/ytdlp -m "not contract"
-        Write-Host "yt-dlp lock entry updated and adapter unit tests passed. Review the diff, run '.\manage.ps1 check', then rebuild."
+        Require-Lock
+        uv run python scripts/upgrade_ytdlp.py
+        Assert-LastExitCode "yt-dlp upgrade"
+    }
+    "canary-report" {
+        if (-not $Service -or -not $ThirdArgument) {
+            throw "Usage: .\manage.ps1 canary-report BASELINE.json CANARY.json"
+        }
+        uv run python scripts/compare_canary.py $Service $ThirdArgument
+        Assert-LastExitCode "canary comparison"
     }
     "clean" {
         New-Item -ItemType Directory -Force data/downloads, data/temp | Out-Null
@@ -95,7 +156,7 @@ switch ($Command) {
 Usage: .\manage.ps1 COMMAND
 
 Commands: init, lock, up, down, restart, logs, status, check, config-check, doctor,
-          upgrade-ytdlp, clean
+          upgrade-ytdlp, canary-report, clean
 "@
     }
 }

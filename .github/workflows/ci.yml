@@ -17,15 +17,25 @@ jobs:
         with:
           version: "0.11.31"
           enable-cache: true
-      - run: uv python install 3.14
-      - run: uv lock
+      - run: uv python install 3.14.5
       - run: uv lock --check
       - run: uv sync --frozen --group dev
       - run: uv run python scripts/check_architecture.py
       - run: uv run python scripts/check_text_integrity.py
+      - run: uv run python scripts/generate_file_manifest.py --check
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy src tests
+      - run: uv run pre-commit run detect-secrets --all-files
+      - run: uv run pip check
+      - run: uv run pip-audit --local --skip-editable --progress-spinner off
+      - run: uv build
+      - name: Verify external extractor SDK
+        working-directory: plugins/example_extractor
+        run: |
+          uv lock --check
+          uv sync --frozen --group dev
+          uv run pytest -m "not contract"
       - run: uv run pytest -m "not contract" --cov=telegram_media_bot --cov-report=term-missing --cov-report=xml
       - uses: actions/upload-artifact@v4
         with:
@@ -39,5 +49,5 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.11.31"
-      - run: uv lock
-      - run: docker build --build-arg PYTHON_VERSION=3.14 -t telegram-media-downloader-bot:test .
+      - run: uv lock --check
+      - run: docker build --build-arg PYTHON_VERSION=3.14.5 -t telegram-media-downloader-bot:test .

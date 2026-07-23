@@ -110,6 +110,21 @@
           "type": "array",
           "uniqueItems": true
         },
+        "enabled_modes": {
+          "default": [
+            "best",
+            "video_1080",
+            "video_720",
+            "video_480",
+            "audio_best",
+            "audio_mp3"
+          ],
+          "items": {
+            "$ref": "#/$defs/DownloadMode"
+          },
+          "title": "Enabled Modes",
+          "type": "array"
+        },
         "default_mode": {
           "$ref": "#/$defs/DownloadMode",
           "default": "best"
@@ -149,6 +164,61 @@
       "title": "MediaSection",
       "type": "object"
     },
+    "ObservabilitySection": {
+      "additionalProperties": false,
+      "properties": {
+        "health_host": {
+          "default": "0.0.0.0",
+          "title": "Health Host",
+          "type": "string"
+        },
+        "health_port": {
+          "default": 8080,
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Health Port",
+          "type": "integer"
+        },
+        "telegram_readiness_check": {
+          "default": true,
+          "title": "Telegram Readiness Check",
+          "type": "boolean"
+        },
+        "metrics_enabled": {
+          "default": true,
+          "title": "Metrics Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "ObservabilitySection",
+      "type": "object"
+    },
+    "PersistenceSection": {
+      "additionalProperties": false,
+      "properties": {
+        "database_filename": {
+          "default": "jobs.sqlite3",
+          "title": "Database Filename",
+          "type": "string"
+        },
+        "selection_ttl_seconds": {
+          "default": 600,
+          "maximum": 86400,
+          "minimum": 60,
+          "title": "Selection Ttl Seconds",
+          "type": "integer"
+        },
+        "cleanup_interval_seconds": {
+          "default": 60,
+          "maximum": 86400,
+          "minimum": 30,
+          "title": "Cleanup Interval Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "PersistenceSection",
+      "type": "object"
+    },
     "QueueSection": {
       "additionalProperties": false,
       "properties": {
@@ -176,6 +246,13 @@
           "default": 3600,
           "minimum": 0,
           "title": "Keep Result Seconds",
+          "type": "integer"
+        },
+        "retry_delay_seconds": {
+          "default": 15,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Retry Delay Seconds",
           "type": "integer"
         }
       },
@@ -267,6 +344,19 @@
           "default": true,
           "title": "Delete After Upload",
           "type": "boolean"
+        },
+        "orphan_grace_seconds": {
+          "default": 300,
+          "minimum": 30,
+          "title": "Orphan Grace Seconds",
+          "type": "integer"
+        },
+        "job_retention_days": {
+          "default": 30,
+          "maximum": 3650,
+          "minimum": 1,
+          "title": "Job Retention Days",
+          "type": "integer"
         }
       },
       "title": "StorageSection",
@@ -311,6 +401,56 @@
           "default": true,
           "title": "Upload As Document",
           "type": "boolean"
+        },
+        "max_upload_size_mb": {
+          "default": 49,
+          "maximum": 2048,
+          "minimum": 1,
+          "title": "Max Upload Size Mb",
+          "type": "integer"
+        },
+        "caption_template": {
+          "default": "{title}\nمنبع: {source}",
+          "title": "Caption Template",
+          "type": "string"
+        },
+        "filename_max_length": {
+          "default": 96,
+          "maximum": 180,
+          "minimum": 16,
+          "title": "Filename Max Length",
+          "type": "integer"
+        },
+        "local_api_base_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Local Api Base Url"
+        },
+        "local_api_is_local": {
+          "default": false,
+          "title": "Local Api Is Local",
+          "type": "boolean"
+        },
+        "progress_min_interval_seconds": {
+          "default": 3.0,
+          "maximum": 60.0,
+          "minimum": 1.0,
+          "title": "Progress Min Interval Seconds",
+          "type": "number"
+        },
+        "progress_min_percent_delta": {
+          "default": 5.0,
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "title": "Progress Min Percent Delta",
+          "type": "number"
         }
       },
       "required": [
@@ -419,6 +559,17 @@
           ],
           "default": null,
           "title": "User Agent"
+        },
+        "javascript_runtime": {
+          "default": "deno",
+          "enum": [
+            "deno",
+            "node",
+            "bun",
+            "quickjs"
+          ],
+          "title": "Javascript Runtime",
+          "type": "string"
         }
       },
       "title": "YtDlpSection",
@@ -450,6 +601,12 @@
     },
     "security": {
       "$ref": "#/$defs/SecuritySection"
+    },
+    "persistence": {
+      "$ref": "#/$defs/PersistenceSection"
+    },
+    "observability": {
+      "$ref": "#/$defs/ObservabilitySection"
     }
   },
   "required": [
@@ -460,7 +617,9 @@
     "storage",
     "media",
     "yt_dlp",
-    "security"
+    "security",
+    "persistence",
+    "observability"
   ],
   "title": "Settings",
   "type": "object"

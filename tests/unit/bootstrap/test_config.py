@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.domain.errors import ConfigurationError
@@ -51,5 +52,26 @@ def test_allowed_and_blocked_user_overlap_is_rejected(settings: Settings) -> Non
     raw = settings.model_dump()
     raw["security"]["allowed_user_ids"] = [1]
     raw["security"]["blocked_user_ids"] = [1]
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
+        Settings.model_validate(raw)
+
+
+def test_caption_template_rejects_unknown_fields(settings: Settings) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["caption_template"] = "{title} {token}"
+    with pytest.raises(ValidationError):
+        Settings.model_validate(raw)
+
+
+def test_database_filename_cannot_escape_state_directory(settings: Settings) -> None:
+    raw = settings.model_dump()
+    raw["persistence"]["database_filename"] = "../jobs.sqlite3"
+    with pytest.raises(ValidationError):
+        Settings.model_validate(raw)
+
+
+def test_enabled_modes_require_best_fallback(settings: Settings) -> None:
+    raw = settings.model_dump()
+    raw["media"]["enabled_modes"] = ["audio_mp3"]
+    with pytest.raises(ValidationError):
         Settings.model_validate(raw)

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0 - 2026-07-23
+
+- Added queued metadata inspection and owner-bound expiring semantic format selection.
+- Added progress throttling, cancellation, active-job deduplication, classified retries, and safe
+  uncertain-delivery handling.
+- Added public-network URL/DNS enforcement, Redis rate limiting, durable blocks, and admin commands.
+- Added typed audio/video/document delivery with fallback, sanitization, upload limits, local Bot API
+  support, bounded playlist ZIPs, ffmpeg, and pinned Deno.
+- Added SQLite/WAL job persistence, restart recovery, scheduled cleanup, structured redacted logs,
+  health/readiness, Prometheus metrics, controlled upgrades, canary comparison, and plugin SDK.
+- Added fail-fast cross-platform release scripts, secret scanning, and dependency vulnerability
+  auditing; upgraded pytest to its fixed 9.x line.
+
 ## 0.1.0 - 2026-07-23
 
 - Added the initial layered project foundation.

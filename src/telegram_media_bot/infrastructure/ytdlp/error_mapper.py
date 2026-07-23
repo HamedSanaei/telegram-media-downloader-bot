@@ -4,6 +4,7 @@ from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
     DownloadFailedError,
     GeoRestrictedError,
+    InvalidUrlError,
     MediaTooLargeError,
     MediaUnavailableError,
     PlaylistNotAllowedError,
@@ -14,6 +15,8 @@ from telegram_media_bot.domain.errors import (
 
 def map_ytdlp_error(exc: Exception) -> Exception:
     message = str(exc).casefold()
+    if "unsupported url" in message or "is not a valid url" in message:
+        return InvalidUrlError("URL is not supported")
     if "requested format is not available" in message:
         return MediaUnavailableError("Requested format is unavailable")
     if "login" in message or "cookies" in message or "authentication" in message:

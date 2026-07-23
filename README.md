@@ -1,90 +1,69 @@
 # Telegram Media Downloader Bot
 
-A production-oriented starter project for a Telegram media downloader whose media engine is
-`yt-dlp`, but whose application code is isolated from `yt-dlp` internals.
-
-The repository is intentionally a **foundation**, not a falsely complete product. It already
-contains a working configuration system, a Telegram bot process, an ARQ/Redis worker process,
-a typed download-engine port, a `yt-dlp` adapter, Docker Compose, tests, CI, and detailed Codex
-implementation instructions.
+A production-oriented Telegram bot that inspects public media URLs through an isolated yt-dlp
+adapter, offers operator-configured semantic formats, downloads in an ARQ worker, delivers through a
+typed Telegram adapter, persists state, and cleans every job directory.
 
 ## Architectural promise
 
-Only `src/telegram_media_bot/infrastructure/ytdlp/` may import `yt_dlp`.
-Telegram handlers, queue jobs, and application services only use project-owned models and ports.
-Therefore, future `yt-dlp` updates should normally require either no application changes or a
-small adjustment inside the adapter directory.
+Only `src/telegram_media_bot/infrastructure/ytdlp/` imports `yt_dlp` inside the application. Raw
+upstream dictionaries, exceptions, format IDs, and hooks never cross that adapter. Telegram handlers
+do no media extraction or download work. The external plugin SDK is a separate distribution below
+`plugins/`, as required by yt-dlp's plugin namespace.
 
+## Runtime
 
-## Python version policy
-
-The project now targets Python 3.14 or newer. Local `uv` commands use the project pin in
-`.python-version`, currently `3.14`, so a matching Python 3.14 installation already present on the
-system is reused. Docker cannot reuse the host interpreter directly; its Python generation is
-controlled by `PYTHON_VERSION` in the local `.env` file and also defaults to `3.14`.
-
-Python 3.15 beta or release-candidate builds are not selected as production defaults. When a newer
-stable Python generation is approved, update `.python-version` and `PYTHON_VERSION`, regenerate the
-lockfile, and run all quality gates.
+- Python 3.14.5 or a newer stable compatible release;
+- aiogram polling bot and separate ARQ worker;
+- Redis for queue/rate limiting and SQLite/WAL for durable job state;
+- ffmpeg/ffprobe and pinned Deno 2.9.3 for yt-dlp EJS;
+- Docker Compose startup after one ignored local YAML configuration is created.
 
 ## First run
 
-1. Create the local configuration:
-
 ```bash
 ./manage.sh init
-```
-
-2. Edit `config.yaml` and set `telegram.bot_token`.
-
-3. Start the full stack. If `uv.lock` is absent, the management script generates it once before building:
-
-```bash
+# set telegram.bot_token and operator policy in config.yaml
+./manage.sh config-check
 ./manage.sh up
 ```
 
-Windows PowerShell:
+PowerShell:
 
 ```powershell
 .\manage.ps1 init
+.\manage.ps1 config-check
 .\manage.ps1 up
 ```
 
-The stack contains:
+The user flow is: URL -> queued inspection -> normalized metadata -> semantic inline choice ->
+durable download -> throttled progress/cancel -> audio/video/document delivery -> cleanup.
 
-- `bot`: receives Telegram updates and enqueues jobs;
-- `worker`: downloads through `YtDlpEngine` and uploads the result;
-- `redis`: queue and transient job state.
-
-## Local development
+## Development and release gates
 
 ```bash
+uv lock --check
 uv sync --frozen --group dev
-uv run telegram-media-bot config-check --config config.example.yaml
-uv run pytest -m "not contract"
+uv run python scripts/check_architecture.py
+uv run python scripts/check_text_integrity.py
+uv run python scripts/generate_file_manifest.py --check
+uv run pre-commit run detect-secrets --all-files
+uv run pip check
+uv run pip-audit --local --skip-editable --progress-spinner off
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src tests
+uv run pytest -m "not contract" --cov=telegram_media_bot --cov-report=term-missing
+uv build
+docker build -t telegram-media-downloader-bot:review .
 ```
 
-## Codex continuation
+External contract tests are opt-in and require operator-maintained safe public fixtures. See
+`docs/OPERATIONS.md` for upgrades, canary promotion, rollback, alert thresholds, and incident
+diagnosis. See `docs/CONFIGURATION.md` for every runtime option.
 
-Open [`docs/CODEX_EXECUTION.md`](docs/CODEX_EXECUTION.md). The ready-to-paste prompt is in
-[`PROMPT_FOR_CODEX.md`](PROMPT_FOR_CODEX.md). Codex must read `AGENTS.md` before changing code.
+## Intentional boundaries
 
-## Current scope
-
-The starter accepts a URL, enqueues a default download, downloads it in a worker process, and
-sends the resulting file as a Telegram document. Quality-selection UI, progress editing,
-persistent job history, playlists, richer media sending, admin controls, and source-specific
-policies are deliberately specified in the roadmap for the next implementation pass.
-
-## Important files
-
-- `AGENTS.md`: binding implementation rules for coding agents;
-- `docs/ARCHITECTURE.md`: boundaries and data flow;
-- `docs/PROJECT_SPEC.md`: product requirements;
-- `docs/ROADMAP.md`: implementation milestones;
-- `docs/ACCEPTANCE_CRITERIA.md`: definition of done;
-- `config.example.yaml`: all local runtime configuration and secret placeholders;
-- `manage.sh` / `manage.ps1`: one-command operations.
+The v1 supported topology is one worker container with bounded internal concurrency. Local Telegram
+Bot API is supported but not bundled. Spotify, Castbox, DRM circumvention, local/private URLs,
+startup self-updates, and user-controlled yt-dlp options are not implemented.

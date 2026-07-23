@@ -1,12 +1,13 @@
 [project]
 name = "telegram-media-downloader-bot"
-version = "0.1.0"
+version = "1.0.0"
 description = "A maintainable Telegram media downloader bot powered by a replaceable yt-dlp adapter."
 readme = "README.md"
 requires-python = ">=3.14"
 license = { text = "MIT" }
 authors = [{ name = "Project Authors" }]
 dependencies = [
+  "aiohttp>=3.14,<4",
   "aiogram>=3.20,<4",
   "arq>=0.27,<1",
   "pydantic>=2.11,<3",
@@ -21,8 +22,9 @@ dependencies = [
 dev = [
   "detect-secrets>=1.5,<2",
   "mypy>=1.16,<2",
+  "pip-audit>=2.10.1,<3",
   "pre-commit>=4.2,<5",
-  "pytest>=8.4,<9",
+  "pytest>=9.0.3,<10",
   "pytest-asyncio>=1.0,<2",
   "pytest-cov>=6.2,<8",
   "ruff>=0.12,<1",
@@ -71,6 +73,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
   "contract: tests that call external services and are skipped by default",
+  "integration: tests that exercise multiple project adapters",
 ]
 
 [tool.coverage.run]

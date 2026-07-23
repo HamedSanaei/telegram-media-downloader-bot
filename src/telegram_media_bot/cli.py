@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 from arq.worker import run_worker
 
-from telegram_media_bot.bootstrap.config import load_settings
+from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.bootstrap.logging import configure_logging
 from telegram_media_bot.domain.errors import ConfigurationError
 
@@ -54,8 +54,8 @@ def main() -> None:
 
             run_worker(WorkerSettings)
         elif args.command == "config-check":
-            settings = load_settings(args.config, require_token=False)
-            print(json.dumps(settings.model_dump(mode="json"), ensure_ascii=False, indent=2))
+            load_settings(args.config, require_token=False)
+            print("Configuration is valid.")
         elif args.command == "doctor":
             settings = load_settings(args.config, require_token=False)
             _run_doctor(settings)
@@ -64,18 +64,43 @@ def main() -> None:
         raise SystemExit(2) from exc
 
 
-def _run_doctor(settings: object) -> None:
-    del settings
+def _run_doctor(settings: Settings) -> None:
+    javascript_runtime = settings.yt_dlp.javascript_runtime
+    executable = "qjs" if javascript_runtime == "quickjs" else javascript_runtime
     checks = {
         "ffmpeg": shutil.which("ffmpeg"),
         "ffprobe": shutil.which("ffprobe"),
+        javascript_runtime: shutil.which(executable),
     }
+    print(f"OK   python: {sys.version.split()[0]}")
+    from telegram_media_bot.infrastructure.ytdlp.engine import YtDlpEngine
+
+    engine_health = YtDlpEngine(settings).health()
+    print(f"OK   {engine_health.name}: {engine_health.detail}")
     failed = False
     for name, path in checks.items():
         if path:
-            print(f"OK   {name}: {path}")
+            print(f"OK   {name}: {_binary_version(path)}")
         else:
             failed = True
             print(f"FAIL {name}: not found")
     if failed:
         raise SystemExit(1)
+
+
+def _binary_version(path: str) -> str:
+    try:
+        completed = subprocess.run(
+            [path, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+    except OSError, subprocess.SubprocessError:
+        return f"{path} (version unavailable)"
+    first_line = (completed.stdout or completed.stderr).splitlines()
+    version = first_line[0][:200] if first_line else "version unavailable"
+    return f"{path} ({version})"

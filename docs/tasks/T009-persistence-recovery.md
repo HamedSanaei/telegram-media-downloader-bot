@@ -1,6 +1,11 @@
 # T009 - Durable job state and restart recovery
 
-**Status:** pending
+**Status:** complete (2026-07-23)
+
+SQLite/WAL stores selections, jobs, transitions, attempts, error categories, cancellation, blocks,
+and Telegram delivery IDs. Startup reconciliation requeues interrupted pre-delivery jobs and
+quarantines uncertain deliveries. Scheduled maintenance purges expired metadata and safe orphan job
+directories. Concurrency and restart tests cover deduplication and recovery.
 
 ## Deliverables
 

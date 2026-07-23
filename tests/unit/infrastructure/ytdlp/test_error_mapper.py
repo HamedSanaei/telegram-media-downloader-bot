@@ -4,6 +4,7 @@ from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
     DownloadFailedError,
     GeoRestrictedError,
+    InvalidUrlError,
     MediaTooLargeError,
     MediaUnavailableError,
     PlaylistNotAllowedError,
@@ -24,6 +25,7 @@ from telegram_media_bot.infrastructure.ytdlp.error_mapper import map_ytdlp_error
         ("ffmpeg postprocess failed", PostProcessingError),
         ("This media is unavailable", MediaUnavailableError),
         ("Requested format is not available", MediaUnavailableError),
+        ("Unsupported URL: https://example.invalid", InvalidUrlError),
         ("Unexpected upstream error", DownloadFailedError),
     ],
 )

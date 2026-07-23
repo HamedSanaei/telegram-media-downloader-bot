@@ -1,37 +1,34 @@
 # Security model
 
-## Threat boundaries
+Untrusted inputs include Telegram messages, URLs, DNS answers, redirects, remote metadata, titles,
+thumbnails, extensions, playlist entries, and upstream error strings.
 
-Untrusted inputs include Telegram messages, URLs, redirects, remote metadata, file extensions,
-titles, thumbnails, and upstream error strings.
+## Controls
 
-## Baseline controls
+- Only absolute HTTP(S) URLs without credentials or invalid ports are accepted.
+- Local/internal names and every non-global resolved address (loopback, private, link-local,
+  reserved, multicast, unspecified, and metadata-service addresses) are rejected. Mixed public and
+  private DNS answer sets are rejected. The adapter revalidates extracted page/media/playlist URLs.
+- Only operator-defined semantic modes/selectors, output roots, postprocessors, cookies, proxy, and
+  headers exist. Users cannot supply commands, output templates, destinations, or yt-dlp options.
+- Static allow/block policy, durable admin blocks, and a fail-closed Redis per-user rate limit are
+  applied before inspection.
+- Output and temporary paths resolve under fixed roots. Containers run non-root, read-only, with all
+  Linux capabilities dropped and `no-new-privileges`; writable state is limited to `/data` and tmpfs.
+- Tokens, cookies, authorization, passwords, proxy values, and URL credentials are recursively
+  redacted. Arbitrary user URLs and file paths are not logged.
+- Delivery limits are checked before Telegram; ambiguous uploads enter `delivery_uncertain` rather
+  than risking an automatic duplicate.
+- Dependencies are locked and checked against current vulnerability advisories with `pip-audit`;
+  secrets, architecture, and text integrity are checked; yt-dlp upgrades are never automatic or
+  auto-merged.
 
-- only `http` and `https` URL schemes;
-- local config excluded from Git;
-- container runs as non-root;
-- no shell commands built from user input;
-- no user-controlled yt-dlp option dictionaries or output templates;
-- fixed output root and per-job directories;
-- configurable source allowlist and file-size limits;
-- sanitized user-facing errors;
-- cookies stored outside source and mounted at runtime;
-- dependency lockfile and CI gates.
+## Residual risks and operations
 
-## Required next controls
+DNS rebinding between validation and the upstream connection cannot be eliminated without owning the
+yt-dlp transport; multiple validation points reduce the window. Run the worker on an egress-filtered
+network that denies private/metadata ranges as defense in depth. Protect `config.yaml`, cookies,
+SQLite backups, and Redis volumes with restrictive permissions and encryption where applicable.
 
-T007 must resolve hostnames and reject loopback, link-local, private, reserved, and metadata-service
-addresses before passing URLs to the engine, including after redirects where practical. It must add
-real per-user rate limiting and allow/block policy enforcement.
-
-## Secret handling
-
-`telegram.bot_token`, proxy credentials, future API keys, and cookies must never be logged. Use a
-local config file with restrictive permissions. Production backups containing the config or cookies
-must be encrypted and access-controlled.
-
-## Abuse and legal boundaries
-
-Do not implement DRM circumvention. Operators are responsible for source policies, applicable laws,
-platform terms, and responding to abuse reports. The bot should communicate failures honestly and
-must not claim that alternate-source resolution is a direct download from another service.
+The project does not implement DRM circumvention. Operators remain responsible for platform terms,
+copyright, source allowlists, abuse response, and lawful use.

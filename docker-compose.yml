@@ -4,9 +4,17 @@ x-app-common: &app-common
   build:
     context: .
     args:
-      PYTHON_VERSION: "${PYTHON_VERSION:-3.14}"
+      PYTHON_VERSION: "${PYTHON_VERSION:-3.14.5}"
   image: telegram-media-downloader-bot:local
   restart: unless-stopped
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+  stop_grace_period: 45s
   user: "${APP_UID:-10001}:${APP_GID:-10001}"
   environment:
     APP_CONFIG_PATH: /app/config.yaml
@@ -21,13 +29,27 @@ services:
   bot:
     <<: *app-common
     command: ["telegram-media-bot", "bot"]
+    healthcheck:
+      disable: true
 
   worker:
     <<: *app-common
     command: ["telegram-media-bot", "worker"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
   redis:
-    image: redis:7.4-alpine
+    image: redis:7.4.5-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:

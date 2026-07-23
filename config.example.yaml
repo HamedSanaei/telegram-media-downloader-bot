@@ -11,6 +11,13 @@ telegram:
   support_username: null
   polling_timeout_seconds: 30
   upload_as_document: true
+  max_upload_size_mb: 49
+  caption_template: "{title}\nمنبع: {source}"
+  filename_max_length: 96
+  local_api_base_url: null
+  local_api_is_local: false
+  progress_min_interval_seconds: 3.0
+  progress_min_percent_delta: 5.0
 
 redis:
   url: redis://redis:6379/0
@@ -21,6 +28,7 @@ queue:
   job_timeout_seconds: 1800
   max_tries: 2
   keep_result_seconds: 3600
+  retry_delay_seconds: 15
 
 storage:
   root_directory: /data
@@ -28,6 +36,8 @@ storage:
   temp_directory: temp
   state_directory: state
   delete_after_upload: true
+  orphan_grace_seconds: 300
+  job_retention_days: 30
 
 media:
   enabled_sources:
@@ -37,6 +47,13 @@ media:
     - twitter
     - pinterest
     - tiktok
+  enabled_modes:
+    - best
+    - video_1080
+    - video_720
+    - video_480
+    - audio_best
+    - audio_mp3
   default_mode: best
   allow_playlists: false
   playlist_max_items: 20
@@ -66,9 +83,21 @@ yt_dlp:
   audio_format: mp3
   audio_quality: "192"
   user_agent: null
+  javascript_runtime: deno
 
 security:
   allowed_user_ids: []
   blocked_user_ids: []
   requests_per_minute: 5
   reject_private_network_urls: true
+
+persistence:
+  database_filename: jobs.sqlite3
+  selection_ttl_seconds: 600
+  cleanup_interval_seconds: 60
+
+observability:
+  health_host: 0.0.0.0
+  health_port: 8080
+  telegram_readiness_check: true
+  metrics_enabled: true

@@ -37,9 +37,44 @@ unknown keys forbidden. Environment variables may only select the config path.
 Do not self-update yt-dlp at startup. Update the uv lock entry, run adapter and project tests, then
 rebuild. Roll back by reverting the update commit.
 
-## ADR-006: Initial worker uploads results
+## ADR-006: Delivery port with worker-owned upload
 
-**Status:** provisional
+**Status:** accepted; supersedes the starter wording
 
-For the starter, the worker uses the Telegram token to upload the completed file. A later task may
-introduce a delivery port or local Bot API without changing the download-engine boundary.
+The worker owns delivery but depends on a project `DeliveryGateway` port. The Telegram adapter
+selects audio/video/document and supports an operator-selected local Bot API endpoint without
+coupling application or download-engine contracts to aiogram.
+
+## ADR-007: SQLite/WAL is the durable local job store
+
+**Status:** accepted
+
+Use one SQLite database below `storage.state_directory` for jobs, selections, cancellation, dynamic
+blocks, and delivery receipts. WAL plus short transactions supports the bot and one worker container
+concurrently. Redis remains the ARQ/rate-limit backend. Multi-host worker replicas require a future
+leased database adapter before enablement.
+
+## ADR-008: Quarantine uncertain Telegram deliveries
+
+**Status:** accepted
+
+Persist `delivering` before calling Telegram and persist returned file IDs immediately after. If a
+process exits in that gap or Telegram returns an ambiguous transport failure, transition to
+`delivery_uncertain`, include it in idempotency matching, and require operator review. Never retry it
+automatically.
+
+## ADR-009: Deno is the pinned yt-dlp JavaScript runtime
+
+**Status:** accepted
+
+Pin Deno 2.9.3 from the official binary image. yt-dlp recommends Deno and the locked
+`yt-dlp[default]` dependency supplies `yt-dlp-ejs`. Runtime upgrades follow the reviewed
+lock/image/canary process and `doctor` reports the executable version.
+
+## ADR-010: Bounded playlists are delivered as one ZIP document
+
+**Status:** accepted
+
+The stable engine contract returns one final file. When playlist policy is enabled and multiple
+files are produced, the adapter verifies aggregate size, creates a ZIP below the job directory,
+deletes the individual files, and returns it as `MediaKind.PLAYLIST`.

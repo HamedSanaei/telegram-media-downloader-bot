@@ -45,6 +45,29 @@ def map_media_info(info: Mapping[str, Any], *, original_url: str) -> MediaInfo:
 
     duration_raw = info.get("duration")
     duration = int(duration_raw) if isinstance(duration_raw, (int, float)) else None
+    if duration is None and isinstance(entries, list):
+        durations: list[float] = []
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                continue
+            entry_duration = entry.get("duration")
+            if isinstance(entry_duration, (int, float)):
+                durations.append(float(entry_duration))
+        if durations:
+            duration = int(sum(durations))
+
+    size_raw = info.get("filesize") or info.get("filesize_approx")
+    estimated_size = int(size_raw) if isinstance(size_raw, (int, float)) else None
+    if estimated_size is None and isinstance(entries, list):
+        sizes: list[float] = []
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                continue
+            entry_size = entry.get("filesize") or entry.get("filesize_approx")
+            if isinstance(entry_size, (int, float)):
+                sizes.append(float(entry_size))
+        if sizes:
+            estimated_size = int(sum(sizes))
 
     return MediaInfo(
         media_id=str(info.get("id") or ""),
@@ -54,8 +77,7 @@ def map_media_info(info: Mapping[str, Any], *, original_url: str) -> MediaInfo:
         webpage_url=str(info.get("webpage_url") or original_url),
         uploader=str(info["uploader"]) if info.get("uploader") is not None else None,
         duration_seconds=duration,
-        thumbnail_url=(
-            str(info["thumbnail"]) if info.get("thumbnail") is not None else None
-        ),
+        thumbnail_url=(str(info["thumbnail"]) if info.get("thumbnail") is not None else None),
         item_count=item_count,
+        estimated_size_bytes=estimated_size,
     )

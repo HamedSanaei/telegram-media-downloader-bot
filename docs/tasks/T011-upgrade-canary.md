@@ -1,6 +1,11 @@
 # T011 - Controlled yt-dlp updates
 
-**Status:** pending
+**Status:** complete (2026-07-23)
+
+The controlled upgrade script records locked old/new versions, runs adapter tests, optionally runs
+all source contracts, and writes an ignored operator report with rollback steps. Contract fixtures
+cover every example source. A failure-rate comparison gate and staging/canary runbook are included;
+Renovate remains explicitly non-automerge.
 
 ## Deliverables
 

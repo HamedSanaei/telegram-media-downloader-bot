@@ -1,13 +1,17 @@
 # syntax=docker/dockerfile:1.7
-FROM ghcr.io/astral-sh/uv:0.11.31 AS uv
+ARG PYTHON_VERSION=3.14.5
 
-ARG PYTHON_VERSION=3.14
+FROM ghcr.io/astral-sh/uv:0.11.31 AS uv
+FROM denoland/deno:bin-2.9.3 AS deno
+
 FROM python:${PYTHON_VERSION}-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    DENO_DIR=/tmp/deno-cache \
+    XDG_CACHE_HOME=/tmp/cache \
     PATH="/app/.venv/bin:$PATH" \
     APP_CONFIG_PATH=/app/config.yaml
 
@@ -16,9 +20,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=uv /uv /uvx /bin/
+COPY --from=deno /deno /usr/local/bin/deno
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
+COPY plugins ./plugins
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 
@@ -27,5 +33,7 @@ RUN useradd --create-home --uid 10001 appuser \
     && chown -R appuser:appuser /app /data
 
 USER appuser
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=3)" || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["telegram-media-bot", "bot"]
