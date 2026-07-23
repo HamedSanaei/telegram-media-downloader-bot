@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.31"
+          enable-cache: true
+      - run: uv python install 3.14
+      - run: uv lock
+      - run: uv lock --check
+      - run: uv sync --frozen --group dev
+      - run: uv run python scripts/check_architecture.py
+      - run: uv run python scripts/check_text_integrity.py
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src tests
+      - run: uv run pytest -m "not contract" --cov=telegram_media_bot --cov-report=term-missing --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.31"
+      - run: uv lock
+      - run: docker build --build-arg PYTHON_VERSION=3.14 -t telegram-media-downloader-bot:test .

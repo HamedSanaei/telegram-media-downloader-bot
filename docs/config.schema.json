@@ -1,0 +1,467 @@
+{
+  "$defs": {
+    "AppSection": {
+      "additionalProperties": false,
+      "properties": {
+        "environment": {
+          "default": "production",
+          "enum": [
+            "development",
+            "test",
+            "production"
+          ],
+          "title": "Environment",
+          "type": "string"
+        },
+        "log_level": {
+          "default": "INFO",
+          "enum": [
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL"
+          ],
+          "title": "Log Level",
+          "type": "string"
+        },
+        "log_format": {
+          "default": "json",
+          "enum": [
+            "json",
+            "console"
+          ],
+          "title": "Log Format",
+          "type": "string"
+        },
+        "language": {
+          "default": "fa",
+          "title": "Language",
+          "type": "string"
+        },
+        "timezone": {
+          "default": "Asia/Tehran",
+          "title": "Timezone",
+          "type": "string"
+        }
+      },
+      "title": "AppSection",
+      "type": "object"
+    },
+    "DownloadMode": {
+      "enum": [
+        "best",
+        "video_1080",
+        "video_720",
+        "video_480",
+        "audio_best",
+        "audio_mp3"
+      ],
+      "title": "DownloadMode",
+      "type": "string"
+    },
+    "FormatSection": {
+      "additionalProperties": false,
+      "properties": {
+        "best": {
+          "title": "Best",
+          "type": "string"
+        },
+        "video_1080": {
+          "title": "Video 1080",
+          "type": "string"
+        },
+        "video_720": {
+          "title": "Video 720",
+          "type": "string"
+        },
+        "video_480": {
+          "title": "Video 480",
+          "type": "string"
+        },
+        "audio_best": {
+          "title": "Audio Best",
+          "type": "string"
+        },
+        "audio_mp3": {
+          "title": "Audio Mp3",
+          "type": "string"
+        }
+      },
+      "required": [
+        "best",
+        "video_1080",
+        "video_720",
+        "video_480",
+        "audio_best",
+        "audio_mp3"
+      ],
+      "title": "FormatSection",
+      "type": "object"
+    },
+    "MediaSection": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled_sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Enabled Sources",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "default_mode": {
+          "$ref": "#/$defs/DownloadMode",
+          "default": "best"
+        },
+        "allow_playlists": {
+          "default": false,
+          "title": "Allow Playlists",
+          "type": "boolean"
+        },
+        "playlist_max_items": {
+          "default": 20,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Playlist Max Items",
+          "type": "integer"
+        },
+        "max_file_size_mb": {
+          "default": 49,
+          "minimum": 1,
+          "title": "Max File Size Mb",
+          "type": "integer"
+        },
+        "max_duration_seconds": {
+          "default": 14400,
+          "minimum": 1,
+          "title": "Max Duration Seconds",
+          "type": "integer"
+        },
+        "formats": {
+          "$ref": "#/$defs/FormatSection"
+        }
+      },
+      "required": [
+        "enabled_sources",
+        "formats"
+      ],
+      "title": "MediaSection",
+      "type": "object"
+    },
+    "QueueSection": {
+      "additionalProperties": false,
+      "properties": {
+        "max_jobs": {
+          "default": 3,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Jobs",
+          "type": "integer"
+        },
+        "job_timeout_seconds": {
+          "default": 1800,
+          "minimum": 30,
+          "title": "Job Timeout Seconds",
+          "type": "integer"
+        },
+        "max_tries": {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Max Tries",
+          "type": "integer"
+        },
+        "keep_result_seconds": {
+          "default": 3600,
+          "minimum": 0,
+          "title": "Keep Result Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "QueueSection",
+      "type": "object"
+    },
+    "RedisSection": {
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "default": "redis://redis:6379/0",
+          "title": "Url",
+          "type": "string"
+        },
+        "queue_name": {
+          "default": "media-downloads",
+          "title": "Queue Name",
+          "type": "string"
+        }
+      },
+      "title": "RedisSection",
+      "type": "object"
+    },
+    "SecuritySection": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_user_ids": {
+          "default": [],
+          "items": {
+            "type": "integer"
+          },
+          "title": "Allowed User Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "blocked_user_ids": {
+          "default": [],
+          "items": {
+            "type": "integer"
+          },
+          "title": "Blocked User Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "requests_per_minute": {
+          "default": 5,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Requests Per Minute",
+          "type": "integer"
+        },
+        "reject_private_network_urls": {
+          "default": true,
+          "title": "Reject Private Network Urls",
+          "type": "boolean"
+        }
+      },
+      "title": "SecuritySection",
+      "type": "object"
+    },
+    "StorageSection": {
+      "additionalProperties": false,
+      "properties": {
+        "root_directory": {
+          "default": "/data",
+          "format": "path",
+          "title": "Root Directory",
+          "type": "string"
+        },
+        "downloads_directory": {
+          "default": "downloads",
+          "format": "path",
+          "title": "Downloads Directory",
+          "type": "string"
+        },
+        "temp_directory": {
+          "default": "temp",
+          "format": "path",
+          "title": "Temp Directory",
+          "type": "string"
+        },
+        "state_directory": {
+          "default": "state",
+          "format": "path",
+          "title": "State Directory",
+          "type": "string"
+        },
+        "delete_after_upload": {
+          "default": true,
+          "title": "Delete After Upload",
+          "type": "boolean"
+        }
+      },
+      "title": "StorageSection",
+      "type": "object"
+    },
+    "TelegramSection": {
+      "additionalProperties": false,
+      "properties": {
+        "bot_token": {
+          "minLength": 1,
+          "title": "Bot Token",
+          "type": "string"
+        },
+        "admin_ids": {
+          "default": [],
+          "items": {
+            "type": "integer"
+          },
+          "title": "Admin Ids",
+          "type": "array"
+        },
+        "support_username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Support Username"
+        },
+        "polling_timeout_seconds": {
+          "default": 30,
+          "maximum": 60,
+          "minimum": 5,
+          "title": "Polling Timeout Seconds",
+          "type": "integer"
+        },
+        "upload_as_document": {
+          "default": true,
+          "title": "Upload As Document",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "bot_token"
+      ],
+      "title": "TelegramSection",
+      "type": "object"
+    },
+    "YtDlpSection": {
+      "additionalProperties": false,
+      "properties": {
+        "cookies_file": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cookies File"
+        },
+        "proxy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proxy"
+        },
+        "socket_timeout_seconds": {
+          "default": 30,
+          "minimum": 1,
+          "title": "Socket Timeout Seconds",
+          "type": "integer"
+        },
+        "retries": {
+          "default": 5,
+          "minimum": 0,
+          "title": "Retries",
+          "type": "integer"
+        },
+        "fragment_retries": {
+          "default": 10,
+          "minimum": 0,
+          "title": "Fragment Retries",
+          "type": "integer"
+        },
+        "concurrent_fragments": {
+          "default": 4,
+          "maximum": 32,
+          "minimum": 1,
+          "title": "Concurrent Fragments",
+          "type": "integer"
+        },
+        "extractor_retries": {
+          "default": 3,
+          "minimum": 0,
+          "title": "Extractor Retries",
+          "type": "integer"
+        },
+        "restrict_filenames": {
+          "default": true,
+          "title": "Restrict Filenames",
+          "type": "boolean"
+        },
+        "write_thumbnail": {
+          "default": false,
+          "title": "Write Thumbnail",
+          "type": "boolean"
+        },
+        "embed_metadata": {
+          "default": true,
+          "title": "Embed Metadata",
+          "type": "boolean"
+        },
+        "embed_thumbnail": {
+          "default": false,
+          "title": "Embed Thumbnail",
+          "type": "boolean"
+        },
+        "audio_format": {
+          "default": "mp3",
+          "title": "Audio Format",
+          "type": "string"
+        },
+        "audio_quality": {
+          "default": "192",
+          "title": "Audio Quality",
+          "type": "string"
+        },
+        "user_agent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Agent"
+        }
+      },
+      "title": "YtDlpSection",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "app": {
+      "$ref": "#/$defs/AppSection"
+    },
+    "telegram": {
+      "$ref": "#/$defs/TelegramSection"
+    },
+    "redis": {
+      "$ref": "#/$defs/RedisSection"
+    },
+    "queue": {
+      "$ref": "#/$defs/QueueSection"
+    },
+    "storage": {
+      "$ref": "#/$defs/StorageSection"
+    },
+    "media": {
+      "$ref": "#/$defs/MediaSection"
+    },
+    "yt_dlp": {
+      "$ref": "#/$defs/YtDlpSection"
+    },
+    "security": {
+      "$ref": "#/$defs/SecuritySection"
+    }
+  },
+  "required": [
+    "app",
+    "telegram",
+    "redis",
+    "queue",
+    "storage",
+    "media",
+    "yt_dlp",
+    "security"
+  ],
+  "title": "Settings",
+  "type": "object"
+}

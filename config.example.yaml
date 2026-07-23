@@ -1,0 +1,74 @@
+app:
+  environment: production
+  log_level: INFO
+  log_format: json
+  language: fa
+  timezone: Asia/Tehran
+
+telegram:
+  bot_token: CHANGE_ME
+  admin_ids: []
+  support_username: null
+  polling_timeout_seconds: 30
+  upload_as_document: true
+
+redis:
+  url: redis://redis:6379/0
+  queue_name: media-downloads
+
+queue:
+  max_jobs: 3
+  job_timeout_seconds: 1800
+  max_tries: 2
+  keep_result_seconds: 3600
+
+storage:
+  root_directory: /data
+  downloads_directory: downloads
+  temp_directory: temp
+  state_directory: state
+  delete_after_upload: true
+
+media:
+  enabled_sources:
+    - youtube
+    - soundcloud
+    - instagram
+    - twitter
+    - pinterest
+    - tiktok
+  default_mode: best
+  allow_playlists: false
+  playlist_max_items: 20
+  max_file_size_mb: 49
+  max_duration_seconds: 14400
+
+  formats:
+    best: bv*+ba/b
+    video_1080: bv*[height<=1080]+ba/b[height<=1080]
+    video_720: bv*[height<=720]+ba/b[height<=720]
+    video_480: bv*[height<=480]+ba/b[height<=480]
+    audio_best: ba/b
+    audio_mp3: ba/b
+
+yt_dlp:
+  cookies_file: /data/cookies/cookies.txt
+  proxy: null
+  socket_timeout_seconds: 30
+  retries: 5
+  fragment_retries: 10
+  concurrent_fragments: 4
+  extractor_retries: 3
+  restrict_filenames: true
+  write_thumbnail: false
+  embed_metadata: true
+  embed_thumbnail: false
+  audio_format: mp3
+  audio_quality: "192"
+  user_agent: null
+
+security:
+  allowed_user_ids: []
+  blocked_user_ids: []
+  requests_per_minute: 5
+  reject_private_network_urls: true

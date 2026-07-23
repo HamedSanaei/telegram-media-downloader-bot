@@ -1,0 +1,94 @@
+[project]
+name = "telegram-media-downloader-bot"
+version = "0.1.0"
+description = "A maintainable Telegram media downloader bot powered by a replaceable yt-dlp adapter."
+readme = "README.md"
+requires-python = ">=3.14"
+license = { text = "MIT" }
+authors = [{ name = "Project Authors" }]
+dependencies = [
+  "aiogram>=3.20,<4",
+  "arq>=0.27,<1",
+  "pydantic>=2.11,<3",
+  "PyYAML>=6.0.2,<7",
+  "redis>=5.2,<7",
+  "structlog>=25.1,<26",
+  "tzdata>=2025.2",
+  "yt-dlp[default]>=2026.7.4",
+]
+
+[dependency-groups]
+dev = [
+  "detect-secrets>=1.5,<2",
+  "mypy>=1.16,<2",
+  "pre-commit>=4.2,<5",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.0,<2",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+  "types-PyYAML>=6.0.12,<7",
+]
+
+[project.scripts]
+telegram-media-bot = "telegram_media_bot.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/telegram_media_bot"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "C4", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+mypy_path = "src"
+packages = ["telegram_media_bot"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+module = ["yt_dlp", "yt_dlp.*", "arq", "arq.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+  "contract: tests that call external services and are skipped by default",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["telegram_media_bot"]
+omit = [
+  "*/__main__.py",
+  "*/cli.py",
+  "*/bootstrap/logging.py",
+  "*/application/ports/job_queue.py",
+  "*/infrastructure/queue/*",
+  "*/telegram/bot_app.py",
+  "*/telegram/handlers.py",
+  "*/telegram/texts.py",
+  "*/workers/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 80

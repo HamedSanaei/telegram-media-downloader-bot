@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "labels": ["dependencies"],
+  "rangeStrategy": "replace",
+  "packageRules": [
+    {
+      "matchPackageNames": ["yt-dlp"],
+      "groupName": "yt-dlp engine update",
+      "labels": ["dependencies", "yt-dlp"],
+      "automerge": false
+    }
+  ]
+}

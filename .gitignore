@@ -1,0 +1,39 @@
+# Local secrets and runtime configuration
+config.yaml
+*.local.yaml
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Runtime data
+data/downloads/*
+data/temp/*
+data/cookies/*
+data/state/*
+!data/downloads/.gitkeep
+!data/temp/.gitkeep
+!data/cookies/.gitkeep
+!data/cookies/README.md
+!data/state/.gitkeep
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/

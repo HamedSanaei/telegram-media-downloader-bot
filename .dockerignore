@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+config.yaml
+data/downloads
+data/temp
+data/state
+*.log

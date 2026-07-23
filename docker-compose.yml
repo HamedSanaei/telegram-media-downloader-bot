@@ -1,0 +1,42 @@
+name: telegram-media-downloader
+
+x-app-common: &app-common
+  build:
+    context: .
+    args:
+      PYTHON_VERSION: "${PYTHON_VERSION:-3.14}"
+  image: telegram-media-downloader-bot:local
+  restart: unless-stopped
+  user: "${APP_UID:-10001}:${APP_GID:-10001}"
+  environment:
+    APP_CONFIG_PATH: /app/config.yaml
+  volumes:
+    - ./config.yaml:/app/config.yaml:ro
+    - ./data:/data
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  bot:
+    <<: *app-common
+    command: ["telegram-media-bot", "bot"]
+
+  worker:
+    <<: *app-common
+    command: ["telegram-media-bot", "worker"]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  redis-data:
