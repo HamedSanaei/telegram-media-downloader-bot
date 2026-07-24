@@ -22,7 +22,7 @@ from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValid
 from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
 from telegram_media_bot.infrastructure.ytdlp.engine import YtDlpEngine
 from telegram_media_bot.telegram.bot_factory import TelegramRuntime, create_telegram_runtime
-from telegram_media_bot.telegram.delivery import TelegramDeliveryGateway
+from telegram_media_bot.telegram.delivery import RoutedDeliveryGateway
 from telegram_media_bot.workers.jobs import (
     maintenance_job,
     process_download_job,
@@ -64,7 +64,10 @@ async def startup(ctx: dict[str, Any]) -> None:
             engine=engine,
             queue=queue,
             download_service=service,
-            delivery=TelegramDeliveryGateway(bot, settings),
+            delivery=RoutedDeliveryGateway(
+                bot,
+                settings,
+            ),
             metrics=metrics,
             telegram_runtime=runtime,
         )

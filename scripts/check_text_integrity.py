@@ -17,7 +17,7 @@ TEXT_SUFFIXES = {
     ".txt",
 }
 MOJIBAKE_MARKERS = tuple(chr(codepoint) for codepoint in (195, 194, 216, 217, 65533))
-SKIP_PARTS = {".git", ".venv", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+SKIP_PARTS = {".git", ".venv", ".uv-cache", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 
 
 def main() -> int:

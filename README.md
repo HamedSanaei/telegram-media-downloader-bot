@@ -62,10 +62,12 @@ External contract tests are opt-in and require operator-maintained safe public f
 `docs/OPERATIONS.md` for upgrades, canary promotion, rollback, alert thresholds, and incident
 diagnosis. See `docs/CONFIGURATION.md` for every runtime option and `docs/LOCAL_BOT_API.md` for
 managed/external Local Bot API setup, explicit migration, rollback, and files up to 1900 MB.
+See `docs/MULTIPART_DELIVERY.md` for `1440p`, `2160p`, `best_original`, and multi-volume ZIP
+delivery for every result above the direct upload limit through 4096 MB.
 
 ## Intentional boundaries
 
 The v1 supported topology is one worker container with bounded internal concurrency. The official
 Local Bot API executable is supported in managed or external mode but is not bundled. Spotify,
-Castbox, DRM circumvention, local/private media URLs, startup self-updates, Userbot credentials, and
-user-controlled yt-dlp options are not implemented.
+Castbox, DRM circumvention, local/private media URLs, startup self-updates, Userbot/MTProto
+automation, and user-controlled yt-dlp options are not implemented.

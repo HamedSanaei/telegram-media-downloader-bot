@@ -38,6 +38,8 @@ test, deploy, roll back, and hand over to another engineer or coding agent.
 14. The project must remain runnable with `./manage.sh up` after `config.yaml` has been created.
 15. Do not silently weaken tests, type checking, or lint rules to make a change pass.
 16. Use Python 3.14 or newer. Do not downgrade the project to an older Python generation. Preview, beta, and release-candidate interpreters require an explicit ADR and passing compatibility gates before production use.
+17. Only `src/telegram_media_bot/infrastructure/telegram/mtproto/` may import `telethon`; the
+    Premium user session is opt-in and may only upload to the configured staging channel.
 
 ## Layer ownership
 

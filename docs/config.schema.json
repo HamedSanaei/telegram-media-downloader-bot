@@ -51,6 +51,9 @@
     "DownloadMode": {
       "enum": [
         "best",
+        "best_original",
+        "video_2160",
+        "video_1440",
         "video_1080",
         "video_720",
         "video_480",
@@ -65,6 +68,21 @@
       "properties": {
         "best": {
           "title": "Best",
+          "type": "string"
+        },
+        "best_original": {
+          "default": "bv*+ba/b",
+          "title": "Best Original",
+          "type": "string"
+        },
+        "video_2160": {
+          "default": "bv*[height<=2160]+ba/b[height<=2160]",
+          "title": "Video 2160",
+          "type": "string"
+        },
+        "video_1440": {
+          "default": "bv*[height<=1440]+ba/b[height<=1440]",
+          "title": "Video 1440",
           "type": "string"
         },
         "video_1080": {
@@ -253,6 +271,9 @@
         "enabled_modes": {
           "default": [
             "best",
+            "best_original",
+            "video_2160",
+            "video_1440",
             "video_1080",
             "video_720",
             "video_480",
@@ -309,6 +330,43 @@
         "formats"
       ],
       "title": "MediaSection",
+      "type": "object"
+    },
+    "MultipartSection": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "seven_zip_executable": {
+          "format": "path",
+          "title": "Seven Zip Executable",
+          "type": "string"
+        },
+        "part_size_mb": {
+          "default": 1850,
+          "maximum": 1900,
+          "minimum": 1,
+          "title": "Part Size Mb",
+          "type": "integer"
+        },
+        "max_total_size_mb": {
+          "default": 4096,
+          "maximum": 8192,
+          "minimum": 1,
+          "title": "Max Total Size Mb",
+          "type": "integer"
+        },
+        "compression_level": {
+          "const": 0,
+          "default": 0,
+          "title": "Compression Level",
+          "type": "integer"
+        }
+      },
+      "title": "MultipartSection",
       "type": "object"
     },
     "ObservabilitySection": {
@@ -753,6 +811,9 @@
     },
     "media": {
       "$ref": "#/$defs/MediaSection"
+    },
+    "multipart": {
+      "$ref": "#/$defs/MultipartSection"
     },
     "yt_dlp": {
       "$ref": "#/$defs/YtDlpSection"

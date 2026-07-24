@@ -12,34 +12,43 @@ external extractor remains an independent distribution under `plugins/`.
 
 This release also includes managed/external Telegram Local Bot API lifecycle, config-only
 credentials, durable explicit migration and rollback, shared Bot/Worker endpoint leases, and a
-1900 MB practical delivery ceiling without size-triggered transcoding below that ceiling.
+1900 MB practical direct-delivery ceiling without size-triggered transcoding below that ceiling.
+Semantic 1440p, 2160p, and non-transcoding original-quality modes are available. Files above the
+direct ceiling are sent as stored 1850 MB ZIP volumes with a manifest through the 4096 MB media
+ceiling.
 
 ## Verification completed on this host
 
 - Runtime: CPython 3.14.5; pytest 9.1.1; locked yt-dlp 2026.07.04; uv 0.11.28 locally.
 - `uv lock --check` and `uv sync --frozen --group dev`: passed.
-- Architecture boundary and UTF-8/text integrity checks: passed for 139 source files.
-- Ruff lint and format checks: passed for 95 Python files.
-- Strict mypy: passed for 86 source/test files.
-- Root tests: 140 passed, the destructive Local API >200 MB case skipped, and 6 opt-in source
-  contracts deselected.
-- Measured core branch coverage: 81.16%, above the enforced 80% floor.
-- YouTube contract smoke test passed against the operator-provided public fixture; the five other
-  source contracts were skipped because their fixture variables were not configured.
+- Architecture import boundaries, manifest integrity, and UTF-8/text integrity checks: passed.
+- Ruff lint and format checks: passed for 98 Python files.
+- Strict mypy: passed for 89 source/test files.
+- Root tests: 154 passed, 1 destructive large-file case skipped, and 6 opt-in source contracts
+  deselected.
+- Measured core branch coverage: 81.79%, above the enforced 80% floor.
+- The explicitly enabled contract suite selected all 6 cases; all were skipped because no
+  operator-approved `CONTRACT_*_URL` fixtures were configured.
 - Real YouTube quality validation selected the 720p SDR stream instead of the same 480p fallback or
   the oversized HDR variant. The integrated pipeline produced a 44,609,634-byte H.264 file at
   1280x720 with the full 579.968-second duration.
-- `doctor` passed locally for Python 3.14.5, yt-dlp 2026.07.04, ffmpeg 8.1.2, ffprobe 8.1.2, and
-  Deno 2.9.3 after the WinGet links directory was placed on the process `PATH`.
+- `doctor` passed locally for Python 3.14.5, yt-dlp 2026.07.04, ffmpeg 8.1.2, ffprobe 8.1.2,
+  Deno 2.9.3, the managed Local Bot API, and the configured portable 7-Zip executable.
 - Plugin SDK: independent lock/sync passed; 1 test passed and 1 contract case was deselected.
 - Secret scan through the committed pre-commit baseline: passed. A second scan including current
   tracked and untracked source files reported no findings.
 - Dependency integrity: `pip check` passed.
 - Dependency vulnerability audit: `pip-audit 2.10.1` reported no known vulnerabilities after pytest
   was upgraded to the fixed 9.x line and both lockfiles were regenerated.
+- The locked runtime no longer contains Telethon, cryptg, ruamel.yaml, or their transitive
+  authentication dependencies.
 - Configuration validation, JSON-schema generation, Compose YAML parsing, Dockerfile static checks,
   PowerShell syntax parsing, and `git diff --check`: passed.
 - Python source distribution and wheel build: passed for version 1.0.0.
+- Unit/integration coverage includes exact 1440p/2160p/original selection, HDR/FPS behavior,
+  exact direct/multipart threshold routing, ambiguous-delivery quarantine, per-item persistence,
+  multipart ordering, and SHA-256 manifests.
+- A native portable 7-Zip smoke test created a stored split ZIP volume successfully.
 - Telegram upload calls were verified to receive the configured 600-second request timeout; the
   installed aiogram general session default is 60 seconds.
 - Local lifecycle tests verified managed child credentials are absent from command lines, cloud
@@ -56,12 +65,14 @@ credentials, durable explicit migration and rollback, shared Bot/Worker endpoint
 - Bash is not installed, so `bash -n manage.sh` could not be rerun on this Windows host. The
   PowerShell management script parsed successfully; its component quality/security/build commands
   were run directly because the complete script would also reach the unavailable Docker tooling.
-- The SoundCloud, Instagram, Twitter/X, Pinterest, and TikTok network contracts were not enabled
-  because their operator-approved fixture URLs were not provided. They remain excluded from the
-  default suite.
+- The YouTube, SoundCloud, Instagram, Twitter/X, Pinterest, and TikTok network contracts were not
+  executed because their operator-approved fixture URLs were not configured. They remain excluded
+  from the default suite.
 - The real 201 MB Telegram upload test was added but not executed because this host's current
-  `config.yaml` has Local Bot API disabled and no migrated local server/test chat. It is intentionally
-  opt-in and documented in `docs/LOCAL_BOT_API.md`.
+  test target was not enabled. It is intentionally opt-in and documented in
+  `docs/LOCAL_BOT_API.md`.
+- The destructive real multipart reconstruction test above 3900 MB requires an explicit
+  environment opt-in, so it was not run on this workstation.
 
 ## Operational limitations
 
@@ -69,11 +80,12 @@ credentials, durable explicit migration and rollback, shared Bot/Worker endpoint
   workers require a leased/shared durable database adapter instead of the local SQLite/WAL store.
 - Telegram has no upload idempotency key. A crash during upload is quarantined as
   `delivery_uncertain` for operator review and is never resent automatically.
+- Multi-volume recipients need 7-Zip and must start extraction from `.zip.001`.
 - URL and extracted-media validation narrows SSRF exposure, but DNS rebinding between validation and
   an upstream socket connect requires infrastructure egress filtering for complete defense in depth.
-- The official Local Bot API executable is operator-supplied and is not bundled. Castbox, Spotify,
-  Userbot sessions, DRM circumvention, and user-controlled yt-dlp settings remain intentionally
-  outside v1 scope.
+- The official Local Bot API executable is operator-supplied and is not bundled. No user account,
+  phone login, MTProto session, or staging channel is used. Castbox, Spotify, DRM circumvention,
+  and user-controlled yt-dlp settings remain intentionally outside v1 scope.
 
 ## Release commands
 

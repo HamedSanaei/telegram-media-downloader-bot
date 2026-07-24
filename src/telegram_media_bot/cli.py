@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import shutil
 import subprocess
 import sys
@@ -12,7 +13,7 @@ from arq.worker import run_worker
 
 from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.bootstrap.logging import configure_logging
-from telegram_media_bot.domain.errors import ConfigurationError, LocalBotApiError
+from telegram_media_bot.domain.errors import ConfigurationError, DeliveryError, LocalBotApiError
 from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
 
 
@@ -35,19 +36,33 @@ def build_parser() -> argparse.ArgumentParser:
     local_api = subparsers.add_parser("local-api", help="Manage Telegram Local Bot API")
     local_api.add_argument("--config", type=Path, default=None)
     local_actions = local_api.add_subparsers(dest="local_api_action", required=True)
-    local_actions.add_parser("status", help="Show safe Local Bot API status")
-    local_actions.add_parser("start", help="Start managed Local Bot API")
-    local_actions.add_parser("stop", help="Stop managed Local Bot API")
+    status = local_actions.add_parser("status", help="Show safe Local Bot API status")
+    _add_local_api_config_argument(status)
+    start = local_actions.add_parser("start", help="Start managed Local Bot API")
+    _add_local_api_config_argument(start)
+    stop = local_actions.add_parser("stop", help="Stop managed Local Bot API")
+    _add_local_api_config_argument(stop)
     migrate_local = local_actions.add_parser(
         "migrate-to-local", help="Explicitly migrate the bot from cloud to local"
     )
+    _add_local_api_config_argument(migrate_local)
     migrate_local.add_argument("--yes", action="store_true", help="Confirm non-interactively")
     migrate_cloud = local_actions.add_parser(
         "migrate-to-cloud", help="Explicitly migrate the bot from local to cloud"
     )
+    _add_local_api_config_argument(migrate_cloud)
     migrate_cloud.add_argument("--yes", action="store_true", help="Confirm non-interactively")
 
     return parser
+
+
+def _add_local_api_config_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=argparse.SUPPRESS,
+        help="Path to local YAML configuration",
+    )
 
 
 def main() -> None:
@@ -62,8 +77,6 @@ def main() -> None:
             asyncio.run(run_bot(settings))
         elif args.command == "worker":
             if args.config is not None:
-                import os
-
                 os.environ["APP_CONFIG_PATH"] = str(args.config)
             settings = load_settings(args.config, require_token=True)
             configure_logging(settings)
@@ -87,7 +100,7 @@ def main() -> None:
                     bool(getattr(args, "yes", False)),
                 )
             )
-    except (ConfigurationError, LocalBotApiError) as exc:
+    except (ConfigurationError, DeliveryError, LocalBotApiError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
@@ -118,6 +131,13 @@ def _run_doctor(settings: Settings) -> None:
         for name, healthy in diagnostics.items():
             print(f"{'OK  ' if healthy else 'FAIL'} local_api_{name}")
             failed = failed or not healthy
+    if settings.multipart.enabled:
+        seven_zip = _resolve_executable(settings.multipart.seven_zip_executable)
+        if seven_zip:
+            print(f"OK   7zz: {_binary_version(seven_zip)}")
+        else:
+            failed = True
+            print("FAIL 7zz: not found")
     if failed:
         raise SystemExit(1)
 
@@ -132,6 +152,13 @@ def _run_config_check(settings: Settings) -> None:
         raise ConfigurationError(
             f"Local Bot API configuration checks failed: {', '.join(sorted(failed))}"
         )
+
+
+def _resolve_executable(path: Path) -> str | None:
+    expanded = path.expanduser()
+    if expanded.is_absolute():
+        return str(expanded.resolve()) if expanded.is_file() else None
+    return shutil.which(str(expanded))
 
 
 def _local_api_diagnostics(
@@ -261,6 +288,8 @@ def _binary_version(path: str) -> str:
         )
     except OSError, subprocess.SubprocessError:
         return f"{path} (version unavailable)"
-    first_line = (completed.stdout or completed.stderr).splitlines()
+    first_line = [
+        line for line in (completed.stdout or completed.stderr).splitlines() if line.strip()
+    ]
     version = first_line[0][:200] if first_line else "version unavailable"
     return f"{path} ({version})"

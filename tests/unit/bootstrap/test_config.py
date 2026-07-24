@@ -28,6 +28,14 @@ def test_unknown_configuration_key_is_rejected(tmp_path: Path) -> None:
         load_settings(path)
 
 
+def test_retired_premium_uploader_configuration_is_rejected() -> None:
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw["telegram"]["premium_uploader"] = {"enabled": False}
+
+    with pytest.raises(ValidationError):
+        Settings.model_validate(raw)
+
+
 def test_storage_path_must_remain_under_root(settings: Settings) -> None:
     raw = settings.model_dump()
     raw["storage"]["downloads_directory"] = "/tmp/outside"
@@ -126,8 +134,29 @@ def test_external_local_api_does_not_require_api_id_or_hash(settings: Settings) 
     assert configured.telegram.max_upload_size_mb == 1900
 
 
+@pytest.mark.parametrize(
+    ("multipart_enabled", "part_size_mb"),
+    [(False, 49), (True, 50)],
+)
+def test_oversized_media_requires_usable_multipart_route(
+    settings: Settings,
+    multipart_enabled: bool,
+    part_size_mb: int,
+) -> None:
+    raw = settings.model_dump()
+    raw["media"]["max_file_size_mb"] = 100
+    raw["media"]["max_source_size_mb"] = 100
+    raw["multipart"]["enabled"] = multipart_enabled
+    raw["multipart"]["part_size_mb"] = part_size_mb
+    configured = Settings.model_validate(raw)
+
+    with pytest.raises(ConfigurationError):
+        configured.validate_runtime(require_token=False)
+
+
 def test_local_api_paths_are_resolved_relative_to_config_file(tmp_path: Path) -> None:
     raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw["multipart"]["seven_zip_executable"] = "./tools/7zz"
     config_path = tmp_path / "nested" / "config.yaml"
     config_path.parent.mkdir()
     config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
@@ -141,6 +170,10 @@ def test_local_api_paths_are_resolved_relative_to_config_file(tmp_path: Path) ->
     assert (
         configured.telegram.local_bot_api.migration.state_file
         == (config_path.parent / "data" / "state" / "telegram-api-migration.json").resolve()
+    )
+    assert (
+        configured.multipart.seven_zip_executable
+        == (config_path.parent / "tools" / "7zz").resolve()
     )
 
 

@@ -27,6 +27,10 @@ Managed/external Local Bot API installation, explicit public-to-local migration,
 rollback interval, and large-file validation are in `docs/LOCAL_BOT_API.md`. Always stop Bot and
 Worker before a migration command; process leases enforce this rule.
 
+Every result above the configured direct-upload ceiling is sent as stored ZIP volumes. There is no
+Premium/Userbot service to operate. Full setup, extraction, and troubleshooting instructions are
+in `docs/MULTIPART_DELIVERY.md`.
+
 ## Telegram administration
 
 Only IDs in `telegram.admin_ids` can use:

@@ -28,6 +28,11 @@ def main() -> int:
         imports_ytdlp = any(name == "yt_dlp" or name.startswith("yt_dlp.") for name in modules)
         if imports_ytdlp and not path.is_relative_to(ALLOWED_YTDLP_ROOT):
             failures.append(f"Direct yt_dlp import outside adapter: {path.relative_to(ROOT)}")
+        imports_telethon = any(
+            name == "telethon" or name.startswith("telethon.") for name in modules
+        )
+        if imports_telethon:
+            failures.append(f"Retired telethon import: {path.relative_to(ROOT)}")
 
     if failures:
         print("\n".join(failures), file=sys.stderr)

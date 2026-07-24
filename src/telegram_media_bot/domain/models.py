@@ -12,6 +12,9 @@ SelectionToken = NewType("SelectionToken", str)
 
 class DownloadMode(StrEnum):
     BEST = "best"
+    BEST_ORIGINAL = "best_original"
+    VIDEO_2160 = "video_2160"
+    VIDEO_1440 = "video_1440"
     VIDEO_1080 = "video_1080"
     VIDEO_720 = "video_720"
     VIDEO_480 = "video_480"
@@ -72,6 +75,17 @@ class DeliveryMethod(StrEnum):
     AUDIO = "audio"
     VIDEO = "video"
     DOCUMENT = "document"
+
+
+class DeliveryProvider(StrEnum):
+    BOT_API = "bot_api"
+    MULTIPART = "multipart"
+
+
+class DeliveryItemStatus(StrEnum):
+    PENDING = "pending"
+    DELIVERED = "delivered"
+    UNCERTAIN = "uncertain"
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,11 +178,74 @@ class JobRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class DeliveryReceipt:
+class DeliveryItemReceipt:
     method: DeliveryMethod
     message_id: int
     file_id: str
     file_unique_id: str
+    provider: DeliveryProvider = DeliveryProvider.BOT_API
+    ordinal: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryReceipt:
+    items: tuple[DeliveryItemReceipt, ...]
+
+    def __init__(
+        self,
+        method: DeliveryMethod | None = None,
+        message_id: int | None = None,
+        file_id: str | None = None,
+        file_unique_id: str | None = None,
+        *,
+        items: tuple[DeliveryItemReceipt, ...] | None = None,
+    ) -> None:
+        if items is None:
+            if method is None or message_id is None or file_id is None or file_unique_id is None:
+                raise ValueError("A delivery receipt requires an item or legacy receipt fields")
+            items = (
+                DeliveryItemReceipt(
+                    method=method,
+                    message_id=message_id,
+                    file_id=file_id,
+                    file_unique_id=file_unique_id,
+                ),
+            )
+        if not items:
+            raise ValueError("A delivery receipt must contain at least one item")
+        object.__setattr__(self, "items", items)
+
+    @property
+    def primary(self) -> DeliveryItemReceipt:
+        return self.items[0]
+
+    @property
+    def method(self) -> DeliveryMethod:
+        return self.primary.method
+
+    @property
+    def message_id(self) -> int:
+        return self.primary.message_id
+
+    @property
+    def file_id(self) -> str:
+        return self.primary.file_id
+
+    @property
+    def file_unique_id(self) -> str:
+        return self.primary.file_unique_id
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryItemRecord:
+    job_id: JobId
+    ordinal: int
+    provider: DeliveryProvider
+    status: DeliveryItemStatus
+    method: DeliveryMethod
+    recipient_message_id: int | None = None
+    file_id: str | None = None
+    file_unique_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

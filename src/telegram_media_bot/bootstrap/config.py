@@ -204,6 +204,9 @@ class StorageSection(StrictModel):
 
 class FormatSection(StrictModel):
     best: str
+    best_original: str = "bv*+ba/b"
+    video_2160: str = "bv*[height<=2160]+ba/b[height<=2160]"
+    video_1440: str = "bv*[height<=1440]+ba/b[height<=1440]"
     video_1080: str
     video_720: str
     video_480: str
@@ -249,6 +252,14 @@ class MediaSection(StrictModel):
         if self.max_source_size_mb < self.max_file_size_mb:
             raise ValueError("max_source_size_mb must be at least max_file_size_mb")
         return self
+
+
+class MultipartSection(StrictModel):
+    enabled: bool = True
+    seven_zip_executable: Path = Field(default_factory=lambda: Path("7zz"))
+    part_size_mb: int = Field(default=1850, ge=1, le=1900)
+    max_total_size_mb: int = Field(default=4096, ge=1, le=8192)
+    compression_level: Literal[0] = 0
 
 
 class YtDlpSection(StrictModel):
@@ -311,6 +322,7 @@ class Settings(StrictModel):
     queue: QueueSection
     storage: StorageSection
     media: MediaSection
+    multipart: MultipartSection = Field(default_factory=MultipartSection)
     yt_dlp: YtDlpSection
     security: SecuritySection
     persistence: PersistenceSection
@@ -332,6 +344,19 @@ class Settings(StrictModel):
             local_api.working_directory.expanduser().resolve()
             local_api.temp_directory.expanduser().resolve()
             local_api.log_file.expanduser().resolve()
+        if self.media.max_file_size_mb > self.multipart.max_total_size_mb:
+            raise ConfigurationError(
+                "media.max_file_size_mb cannot exceed multipart.max_total_size_mb"
+            )
+        if self.media.max_file_size_mb > self.telegram.max_upload_size_mb:
+            if not self.multipart.enabled:
+                raise ConfigurationError(
+                    "multipart must be enabled when media can exceed the direct upload limit"
+                )
+            if self.multipart.part_size_mb > self.telegram.max_upload_size_mb:
+                raise ConfigurationError(
+                    "multipart.part_size_mb cannot exceed telegram.max_upload_size_mb"
+                )
 
     def create_runtime_directories(self) -> None:
         for path in (
@@ -381,6 +406,16 @@ def load_settings(path: Path | str | None = None, *, require_token: bool = False
 
 
 def _resolve_local_api_paths(raw: dict[str, object], config_directory: Path) -> None:
+    multipart = raw.get("multipart")
+    if isinstance(multipart, dict):
+        value = multipart.get("seven_zip_executable")
+        if (
+            isinstance(value, str)
+            and value
+            and not Path(value).expanduser().is_absolute()
+            and Path(value).parent != Path(".")
+        ):
+            multipart["seven_zip_executable"] = str((config_directory / value).resolve())
     telegram = raw.get("telegram")
     if not isinstance(telegram, dict):
         return

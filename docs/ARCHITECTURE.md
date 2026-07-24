@@ -114,6 +114,15 @@ A genuine change to the project-owned engine port requires an ADR and coordinate
 - Storage can be replaced behind a future storage port.
 - Queue implementation can be replaced without changing Telegram handlers.
 
+## Large-file routing
+
+- `<= telegram.max_upload_size_mb`: direct Local Bot API delivery.
+- `> telegram.max_upload_size_mb` and `<= multipart.max_total_size_mb`: stored multi-volume ZIP
+  documents, each bounded by `multipart.part_size_mb` and sent through Local Bot API.
+
+`best_original` is never transcoded. Fixed resolution modes may be transcoded only after the final
+merged file actually exceeds `media.max_file_size_mb`.
+
 ## Runtime control plane
 
 The worker exposes internal-only `/health`, `/ready`, and Prometheus `/metrics` endpoints. Readiness

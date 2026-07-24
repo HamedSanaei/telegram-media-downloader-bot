@@ -6,12 +6,22 @@ import pytest
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendVideo
-from aiogram.types import Audio, Chat, Document, FSInputFile, Message, Video
+from aiogram.types import Audio, Chat, Document, FSInputFile, Message, MessageId, Video
 
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import DeliveryTooLargeError
-from telegram_media_bot.domain.models import DownloadResult, JobId, MediaKind
-from telegram_media_bot.telegram.delivery import TelegramDeliveryGateway, render_caption
+from telegram_media_bot.domain.models import (
+    DeliveryProvider,
+    DownloadResult,
+    JobId,
+    MediaKind,
+)
+from telegram_media_bot.infrastructure.archive.multipart_zip import MultipartArchive
+from telegram_media_bot.telegram.delivery import (
+    RoutedDeliveryGateway,
+    TelegramDeliveryGateway,
+    render_caption,
+)
 
 
 class FakeBot:
@@ -41,6 +51,9 @@ class FakeBot:
 
     async def edit_message_text(self, **_kwargs: object) -> Message:
         return _message("none")
+
+    async def copy_message(self, **_kwargs: object) -> MessageId:
+        return MessageId(message_id=77)
 
 
 @pytest.mark.parametrize(
@@ -123,6 +136,72 @@ async def test_text_delivery_helpers(settings: Settings) -> None:
     gateway = TelegramDeliveryGateway(cast(Bot, cast(Any, FakeBot())), settings)
     assert await gateway.send_text(1, "text") == 1
     await gateway.edit_text(1, 1, "updated")
+
+
+async def test_routed_delivery_sends_exact_direct_limit_without_partitioning(
+    settings: Settings, tmp_path: Path
+) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["local_api_base_url"] = "http://127.0.0.1:8081"
+    raw["telegram"]["local_api_is_local"] = True
+    raw["telegram"]["max_upload_size_mb"] = 1900
+    raw["media"]["max_file_size_mb"] = 4096
+    raw["media"]["max_source_size_mb"] = 4096
+    configured = Settings.model_validate(raw)
+    result = _result(tmp_path, MediaKind.VIDEO)
+    declared_large = DownloadResult(
+        job_id=result.job_id,
+        media_id=result.media_id,
+        title=result.title,
+        source=result.source,
+        kind=result.kind,
+        file_path=result.file_path,
+        file_size_bytes=1900 * 1024 * 1024,
+    )
+    gateway = RoutedDeliveryGateway(cast(Bot, cast(Any, FakeBot())), configured)
+
+    receipt = await gateway.deliver(chat_id=1, result=declared_large, caption="caption")
+
+    assert receipt.primary.provider is DeliveryProvider.BOT_API
+
+
+async def test_routed_delivery_sends_multipart_immediately_above_direct_limit(
+    settings: Settings, tmp_path: Path
+) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["local_api_base_url"] = "http://127.0.0.1:8081"
+    raw["telegram"]["local_api_is_local"] = True
+    raw["telegram"]["max_upload_size_mb"] = 1900
+    raw["media"]["max_file_size_mb"] = 4096
+    raw["media"]["max_source_size_mb"] = 4096
+    configured = Settings.model_validate(raw)
+    result = _result(tmp_path, MediaKind.VIDEO)
+    declared_large = DownloadResult(
+        job_id=result.job_id,
+        media_id=result.media_id,
+        title=result.title,
+        source=result.source,
+        kind=result.kind,
+        file_path=result.file_path,
+        file_size_bytes=1900 * 1024 * 1024 + 1,
+    )
+    volume_one = tmp_path / "result.mp4.zip.001"
+    volume_two = tmp_path / "result.mp4.zip.002"
+    manifest = tmp_path / "result.mp4.manifest.json"
+    for path in (volume_one, volume_two, manifest):
+        path.write_bytes(b"part")
+
+    class FakeBuilder:
+        def build(self, _source: Path) -> MultipartArchive:
+            return MultipartArchive((volume_one, volume_two), manifest)
+
+    gateway = RoutedDeliveryGateway(cast(Bot, cast(Any, FakeBot())), configured)
+    gateway._multipart = cast(Any, FakeBuilder())
+
+    receipt = await gateway.deliver(chat_id=1, result=declared_large, caption="caption")
+
+    assert len(receipt.items) == 3
+    assert all(item.provider is DeliveryProvider.MULTIPART for item in receipt.items)
 
 
 def _auto_delivery(settings: Settings) -> Settings:

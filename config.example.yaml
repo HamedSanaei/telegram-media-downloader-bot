@@ -70,6 +70,9 @@ media:
     - tiktok
   enabled_modes:
     - best
+    - best_original
+    - video_2160
+    - video_1440
     - video_1080
     - video_720
     - video_480
@@ -85,11 +88,21 @@ media:
 
   formats:
     best: bv*+ba/b
+    best_original: bv*+ba/b
+    video_2160: bv*[height<=2160]+ba/b[height<=2160]
+    video_1440: bv*[height<=1440]+ba/b[height<=1440]
     video_1080: bv*[height<=1080]+ba/b[height<=1080]
     video_720: bv*[height<=720]+ba/b[height<=720]
     video_480: bv*[height<=480]+ba/b[height<=480]
     audio_best: ba/b
     audio_mp3: ba/b
+
+multipart:
+  enabled: true
+  seven_zip_executable: 7zz
+  part_size_mb: 1850
+  max_total_size_mb: 4096
+  compression_level: 0
 
 yt_dlp:
   cookies_file: /data/cookies/cookies.txt

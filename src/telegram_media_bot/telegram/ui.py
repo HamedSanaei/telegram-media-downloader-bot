@@ -6,6 +6,9 @@ from telegram_media_bot.domain.models import DownloadMode, JobId, MediaInfo, Sel
 
 _MODE_LABELS = {
     DownloadMode.BEST: "بهترین ویدئو تا 1080p",
+    DownloadMode.BEST_ORIGINAL: "بهترین کیفیت اصلی",
+    DownloadMode.VIDEO_2160: "ویدئو تا 2160p (4K)",
+    DownloadMode.VIDEO_1440: "ویدئو تا 1440p (2K)",
     DownloadMode.VIDEO_1080: "ویدئو تا 1080p",
     DownloadMode.VIDEO_720: "ویدئو تا 720p",
     DownloadMode.VIDEO_480: "ویدئو تا 480p",

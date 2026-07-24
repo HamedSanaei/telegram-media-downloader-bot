@@ -100,3 +100,14 @@ never repeated after an uncertain response. Normal startup selects the durable a
 never migrates. Cross-process endpoint leases prevent simultaneous cloud/local clients and provide
 reference-counted managed shutdown. The application ceiling is 1900 MB, below Telegram's documented
 2000 MB local maximum. The server binary remains operator-supplied and is not embedded in the image.
+
+## ADR-013: Multipart delivery for every oversized result
+
+**Status:** accepted
+
+Every result above the configured direct Bot API ceiling is packaged with 7-Zip into stored
+multi-volume ZIP files accompanied by SHA-256 metadata. This preserves source bytes, keeps each
+upload below the Local Bot API ceiling, and removes the MTProto user session, private staging
+channel, Premium queue, copy step, and their recovery states. `best_original` remains
+non-transcoding. Delivery receipts remain per-volume so successfully returned Telegram message
+identifiers are durable.

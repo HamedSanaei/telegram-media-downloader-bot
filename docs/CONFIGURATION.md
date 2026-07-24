@@ -51,3 +51,14 @@ uv run python scripts/export_config_schema.py
 
 The complete Local Bot API configuration, conditional credential rules, Windows/Linux paths, and
 migration state machine are documented in `docs/LOCAL_BOT_API.md`.
+
+## High-quality and multipart delivery
+
+`media.enabled_modes` may include `best_original`, `video_2160`, and `video_1440`; the compatible
+`best` mode remains capped at 1080p. Set both media limits to 4096 MB only when Local Bot API and
+multipart routing are operational.
+
+`multipart` owns the `7zz` path, 1850 MB volume size, 4096 MB aggregate ceiling, and store-only
+compression. Every result above `telegram.max_upload_size_mb` uses this route; no Premium account,
+user session, phone number, staging channel, or MTProto process is used. Setup and extraction are
+documented in `docs/MULTIPART_DELIVERY.md`.

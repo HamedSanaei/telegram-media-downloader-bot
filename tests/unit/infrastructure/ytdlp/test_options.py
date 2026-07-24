@@ -125,6 +125,32 @@ def test_best_mode_caps_source_selection_at_1080p() -> None:
     assert video_target_height(DownloadMode.AUDIO_MP3) is None
 
 
+def test_high_resolution_modes_and_original_are_distinct() -> None:
+    assert video_target_height(DownloadMode.VIDEO_1440) == 1440
+    assert video_target_height(DownloadMode.VIDEO_2160) == 2160
+    assert video_target_height(DownloadMode.BEST_ORIGINAL) is None
+
+
+def test_best_original_keeps_hdr_highest_resolution() -> None:
+    formats = [
+        _format("audio", size=10, audio=True),
+        _format("video-sdr", size=40, video=True, height=1440),
+        {
+            **_format("video-hdr", size=50, video=True, height=2160),
+            "dynamic_range": "HDR10",
+        },
+    ]
+    selector = bounded_format_selector(
+        _best_video_audio_selector,
+        mode=DownloadMode.BEST_ORIGINAL,
+        max_size_bytes=100,
+    )
+
+    selected = list(selector({"formats": formats}))
+
+    assert selected[0]["requested_formats"][0]["format_id"] == "video-hdr"
+
+
 def test_bounded_selector_prefers_sdr_at_same_resolution() -> None:
     formats = [
         _format("audio", size=10, audio=True),

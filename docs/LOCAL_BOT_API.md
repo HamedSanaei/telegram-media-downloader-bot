@@ -72,8 +72,8 @@ a quoted YAML path. Ensure the configured port is available:
 ```powershell
 uv run telegram-media-bot config-check --config .\config.yaml
 uv run telegram-media-bot doctor --config .\config.yaml
-uv run telegram-media-bot local-api --config .\config.yaml status
-uv run telegram-media-bot local-api --config .\config.yaml start
+uv run telegram-media-bot local-api status --config .\config.yaml
+uv run telegram-media-bot local-api start --config .\config.yaml
 ```
 
 Give only that Windows account access to `config.yaml`, the server work directory, state directory,
@@ -89,7 +89,7 @@ permission. Keep writable state below a dedicated directory:
 chmod 600 config.yaml
 uv run telegram-media-bot config-check --config ./config.yaml
 uv run telegram-media-bot doctor --config ./config.yaml
-uv run telegram-media-bot local-api --config ./config.yaml start
+uv run telegram-media-bot local-api start --config ./config.yaml
 ```
 
 Bind to loopback unless a protected container network requires another address. Do not publish an
@@ -101,8 +101,8 @@ Stop both normal application processes before migration. Endpoint leases make th
 closed if a live Bot or Worker is detected.
 
 ```bash
-uv run telegram-media-bot local-api --config ./config.yaml status
-uv run telegram-media-bot local-api --config ./config.yaml migrate-to-local
+uv run telegram-media-bot local-api status --config ./config.yaml
+uv run telegram-media-bot local-api migrate-to-local --config ./config.yaml
 ```
 
 The command requires typing `MIGRATE-TO-LOCAL` (or an explicit operator-provided `--yes`). It starts
@@ -122,7 +122,7 @@ register process leases; a cloud/local mixture is rejected.
 Stop Bot and Worker, then run:
 
 ```bash
-uv run telegram-media-bot local-api --config ./config.yaml migrate-to-cloud
+uv run telegram-media-bot local-api migrate-to-cloud --config ./config.yaml
 ```
 
 Confirm with `MIGRATE-TO-CLOUD`. The command calls `logOut` once against the local server, records a
@@ -130,7 +130,7 @@ Confirm with `MIGRATE-TO-CLOUD`. The command calls `logOut` once against the loc
 blocked until the recorded time passes. Then:
 
 ```bash
-uv run telegram-media-bot local-api --config ./config.yaml status
+uv run telegram-media-bot local-api status --config ./config.yaml
 ```
 
 Once `active_endpoint` is `cloud`, disable `local_bot_api`, restore the cloud-safe upload/media

@@ -29,6 +29,10 @@ Actual extraction support is determined by the installed `yt-dlp` version.
 8. Job state is persisted sufficiently for retries and operator inspection.
 9. Temporary files are deleted according to policy.
 
+For explicitly enabled large-file delivery, results up to the Local Bot API ceiling are uploaded
+directly. Every larger result is emitted as bounded multi-volume ZIP documents through the
+configured 4096 MB aggregate ceiling.
+
 The v1 implementation provides the complete two-step inspection, semantic selection, durable job,
 progress/cancellation, delivery, and cleanup flow described above.
 

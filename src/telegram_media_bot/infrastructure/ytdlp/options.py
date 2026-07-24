@@ -12,6 +12,8 @@ from telegram_media_bot.domain.models import DownloadMode, DownloadRequest
 FormatSelector = Callable[[dict[str, Any]], Iterable[dict[str, Any]]]
 _VIDEO_TARGET_HEIGHTS = {
     DownloadMode.BEST: 1080,
+    DownloadMode.VIDEO_2160: 2160,
+    DownloadMode.VIDEO_1440: 1440,
     DownloadMode.VIDEO_1080: 1080,
     DownloadMode.VIDEO_720: 720,
     DownloadMode.VIDEO_480: 480,

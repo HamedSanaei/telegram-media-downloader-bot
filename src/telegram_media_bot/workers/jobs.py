@@ -27,6 +27,8 @@ from telegram_media_bot.domain.errors import (
     MediaBotError,
 )
 from telegram_media_bot.domain.models import (
+    DeliveryItemRecord,
+    DeliveryItemStatus,
     DownloadMode,
     ErrorCategory,
     JobId,
@@ -231,6 +233,20 @@ async def process_download_job(
             result=result,
             caption=render_caption(settings, result),
         )
+        for item in receipt.items:
+            await asyncio.to_thread(
+                repository.upsert_delivery_item,
+                DeliveryItemRecord(
+                    job_id=job_id,
+                    ordinal=item.ordinal,
+                    provider=item.provider,
+                    status=DeliveryItemStatus.DELIVERED,
+                    method=item.method,
+                    recipient_message_id=item.message_id,
+                    file_id=item.file_id,
+                    file_unique_id=item.file_unique_id,
+                ),
+            )
         await asyncio.to_thread(
             repository.transition,
             job_id,
@@ -252,6 +268,7 @@ async def process_download_job(
             source=result.source,
             file_size_bytes=result.file_size_bytes,
             delivery_method=receipt.method.value,
+            delivery_items=len(receipt.items),
         )
         return str(job_id)
     except JobCancelledError:

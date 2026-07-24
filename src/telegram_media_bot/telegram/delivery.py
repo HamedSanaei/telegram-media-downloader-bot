@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import replace
 from pathlib import Path
 
 import structlog
@@ -11,13 +12,19 @@ from aiogram.types import FSInputFile, Message
 
 from telegram_media_bot.application.ports.delivery import DeliveryGateway
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.errors import DeliveryError, DeliveryTooLargeError
+from telegram_media_bot.domain.errors import (
+    DeliveryError,
+    DeliveryTooLargeError,
+)
 from telegram_media_bot.domain.models import (
+    DeliveryItemReceipt,
     DeliveryMethod,
+    DeliveryProvider,
     DeliveryReceipt,
     DownloadResult,
     MediaKind,
 )
+from telegram_media_bot.infrastructure.archive.multipart_zip import MultipartZipBuilder
 
 logger = structlog.get_logger(__name__)
 _UNSAFE_FILENAME = re.compile(r"[^\w.()\- ]+", flags=re.UNICODE)
@@ -122,6 +129,83 @@ class TelegramDeliveryGateway(DeliveryGateway):
         if result.kind is MediaKind.VIDEO:
             return DeliveryMethod.VIDEO
         return DeliveryMethod.DOCUMENT
+
+
+class RoutedDeliveryGateway(DeliveryGateway):
+    """Route final files through Local Bot API or bounded ZIP volumes."""
+
+    def __init__(self, bot: Bot, settings: Settings) -> None:
+        self._settings = settings
+        self._direct = TelegramDeliveryGateway(bot, settings)
+        self._multipart = MultipartZipBuilder(settings.multipart)
+
+    async def deliver(
+        self,
+        *,
+        chat_id: int,
+        result: DownloadResult,
+        caption: str,
+    ) -> DeliveryReceipt:
+        direct_limit = self._settings.telegram.max_upload_size_mb * 1024 * 1024
+        if result.file_size_bytes <= direct_limit:
+            return await self._direct.deliver(chat_id=chat_id, result=result, caption=caption)
+        if not self._settings.multipart.enabled:
+            raise DeliveryTooLargeError("Multipart delivery is disabled")
+        return await self._deliver_multipart(chat_id=chat_id, result=result, caption=caption)
+
+    async def send_text(self, chat_id: int, text: str) -> int:
+        return await self._direct.send_text(chat_id, text)
+
+    async def edit_text(self, chat_id: int, message_id: int, text: str) -> None:
+        await self._direct.edit_text(chat_id, message_id, text)
+
+    async def _deliver_multipart(
+        self,
+        *,
+        chat_id: int,
+        result: DownloadResult,
+        caption: str,
+    ) -> DeliveryReceipt:
+        import asyncio
+
+        archive = await asyncio.to_thread(self._multipart.build, result.file_path)
+        paths = (*archive.volumes, archive.manifest)
+        receipts: list[DeliveryItemReceipt] = []
+        for ordinal, path in enumerate(paths, start=1):
+            part = DownloadResult(
+                job_id=result.job_id,
+                media_id=result.media_id,
+                title=path.stem,
+                source=result.source,
+                kind=MediaKind.UNKNOWN,
+                file_path=path,
+                file_size_bytes=path.stat().st_size,
+                mime_type="application/zip" if path != archive.manifest else "application/json",
+            )
+            part_caption = (
+                f"{caption}\nبخش {ordinal} از {len(archive.volumes)}"
+                if path != archive.manifest
+                else "فایل manifest شامل اندازه و SHA-256 همه بخش‌ها"  # noqa: RUF001
+            )
+            receipt = await self._direct.deliver(
+                chat_id=chat_id,
+                result=part,
+                caption=part_caption,
+            )
+            receipts.append(
+                replace(
+                    receipt.primary,
+                    provider=DeliveryProvider.MULTIPART,
+                    ordinal=ordinal,
+                )
+            )
+        await self._direct.send_text(
+            chat_id,
+            "همه فایل‌های ‎.zip.001‎، ‎.zip.002‎ و سایر بخش‌ها را در یک پوشه قرار دهید "  # noqa: RUF001
+            "و فایل ‎.zip.001‎ را با 7-Zip باز و Extract کنید. سپس SHA-256 را با manifest "
+            "بررسی کنید.",
+        )
+        return DeliveryReceipt(items=tuple(receipts))
 
 
 def render_caption(settings: Settings, result: DownloadResult) -> str:

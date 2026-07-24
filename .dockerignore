@@ -12,4 +12,6 @@ config.yaml
 data/downloads
 data/temp
 data/state
+data/telegram-bot-api
+data/tools
 *.log

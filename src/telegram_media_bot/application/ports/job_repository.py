@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Protocol
 
 from telegram_media_bot.domain.models import (
+    DeliveryItemRecord,
     ErrorCategory,
     JobCounts,
     JobId,
@@ -30,6 +31,10 @@ class JobRepository(Protocol):
     def find_active_job(self, idempotency_key: str) -> JobRecord | None: ...
 
     def set_status_message(self, job_id: JobId, message_id: int) -> None: ...
+
+    def upsert_delivery_item(self, item: DeliveryItemRecord) -> None: ...
+
+    def delivery_items(self, job_id: JobId) -> tuple[DeliveryItemRecord, ...]: ...
 
     def transition(
         self,

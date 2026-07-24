@@ -1,6 +1,6 @@
 # T008 - Telegram delivery and runtime media dependencies
 
-**Status:** complete (expanded 2026-07-24)
+**Status:** complete (large-file routing simplified 2026-07-24)
 
 Delivery is behind a project port and selects audio, video, or document with document fallback.
 Captions and filenames are sanitized, upload limits fail explicitly, and an optional local Bot API
@@ -16,6 +16,11 @@ Bot/Worker client, managed/external Local Bot API lifecycle, explicit idempotent
 migration, safe CLI/doctor/readiness reporting, cross-process endpoint leases, and an opt-in real
 upload test above 200 MB. Files below `telegram.max_upload_size_mb` are never transcoded solely due
 to the independent media policy.
+
+The second expansion adds semantic `1440p`, `2160p`, and `best_original`, plus lossless stored ZIP
+volumes for every result above the direct upload ceiling and up to 4096 MB. Each delivery item is
+persisted separately for restart safety. No Premium account, Userbot, MTProto session, private
+staging channel, or copy step is used.
 
 ## Deliverables
 

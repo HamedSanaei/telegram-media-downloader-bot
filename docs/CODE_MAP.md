@@ -14,6 +14,7 @@
 | `src/telegram_media_bot/infrastructure/security/` | Public URL/DNS validation and Redis rate limiting |
 | `src/telegram_media_bot/infrastructure/observability/` | Health HTTP server and Prometheus metrics registry |
 | `src/telegram_media_bot/infrastructure/telegram/local_api.py` | Local Bot API lifecycle, durable migration, endpoint leases, and safe status |
+| `src/telegram_media_bot/infrastructure/archive/` | Safe 7-Zip multi-volume packaging and SHA-256 manifests |
 | `src/telegram_media_bot/telegram/` | Handlers, semantic UI, correlation middleware, and bounded-time delivery adapter |
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction |
 | `src/telegram_media_bot/workers/` | ARQ worker settings and job functions |

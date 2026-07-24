@@ -16,6 +16,10 @@ from telegram_media_bot.domain.errors import (
     SelectionOwnershipError,
 )
 from telegram_media_bot.domain.models import (
+    DeliveryItemRecord,
+    DeliveryItemStatus,
+    DeliveryMethod,
+    DeliveryProvider,
     DownloadMode,
     ErrorCategory,
     JobCounts,
@@ -104,6 +108,22 @@ class SqliteJobRepository(JobRepository):
                     ON jobs(idempotency_key, status);
                 CREATE INDEX IF NOT EXISTS jobs_updated_idx ON jobs(updated_at);
                 CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs(status);
+
+                CREATE TABLE IF NOT EXISTS delivery_items (
+                    job_id TEXT NOT NULL,
+                    ordinal INTEGER NOT NULL,
+                    provider TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    method TEXT NOT NULL,
+                    recipient_message_id INTEGER,
+                    file_id TEXT,
+                    file_unique_id TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (job_id, ordinal),
+                    FOREIGN KEY (job_id) REFERENCES jobs(job_id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS delivery_items_status_idx
+                    ON delivery_items(status, updated_at);
 
                 CREATE TABLE IF NOT EXISTS blocked_users (
                     user_id INTEGER PRIMARY KEY,
@@ -215,6 +235,58 @@ class SqliteJobRepository(JobRepository):
 
     def set_status_message(self, job_id: JobId, message_id: int) -> None:
         self._update(job_id, status_message_id=message_id, updated_at=_now_text())
+
+    def upsert_delivery_item(self, item: DeliveryItemRecord) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO delivery_items (
+                    job_id, ordinal, provider, status, method,
+                    recipient_message_id, file_id, file_unique_id, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(job_id, ordinal) DO UPDATE SET
+                    provider = excluded.provider,
+                    status = excluded.status,
+                    method = excluded.method,
+                    recipient_message_id = excluded.recipient_message_id,
+                    file_id = excluded.file_id,
+                    file_unique_id = excluded.file_unique_id,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    item.job_id,
+                    item.ordinal,
+                    item.provider.value,
+                    item.status.value,
+                    item.method.value,
+                    item.recipient_message_id,
+                    item.file_id,
+                    item.file_unique_id,
+                    _now_text(),
+                ),
+            )
+
+    def delivery_items(self, job_id: JobId) -> tuple[DeliveryItemRecord, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM delivery_items WHERE job_id = ? ORDER BY ordinal",
+                (job_id,),
+            ).fetchall()
+        return tuple(
+            DeliveryItemRecord(
+                job_id=JobId(str(row["job_id"])),
+                ordinal=int(row["ordinal"]),
+                provider=DeliveryProvider(str(row["provider"])),
+                status=DeliveryItemStatus(str(row["status"])),
+                method=DeliveryMethod(str(row["method"])),
+                recipient_message_id=(
+                    int(row["recipient_message_id"]) if row["recipient_message_id"] else None
+                ),
+                file_id=str(row["file_id"]) if row["file_id"] else None,
+                file_unique_id=(str(row["file_unique_id"]) if row["file_unique_id"] else None),
+            )
+            for row in rows
+        )
 
     def transition(
         self,

@@ -55,7 +55,7 @@ def transcode_video_to_limit(
 
     output = source.with_name(f"{source.stem}.telegram.mp4")
     video_filter = (
-        f"scale=-2:{output_height}:flags=lanczos,fps=fps='min(source_fps,30)',format=yuv420p"
+        f"scale=-2:{output_height}:flags=lanczos,fps=fps='min(source_fps,60)',format=yuv420p"
     )
     common = [
         ffmpeg,

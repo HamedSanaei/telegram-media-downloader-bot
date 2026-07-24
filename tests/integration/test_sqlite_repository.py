@@ -7,6 +7,10 @@ import pytest
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.domain.errors import SelectionExpiredError, SelectionOwnershipError
 from telegram_media_bot.domain.models import (
+    DeliveryItemRecord,
+    DeliveryItemStatus,
+    DeliveryMethod,
+    DeliveryProvider,
     DownloadMode,
     ErrorCategory,
     JobId,
@@ -128,6 +132,40 @@ def test_restart_reconciliation_avoids_uncertain_duplicate_delivery(
     )
     assert not created
     assert duplicate.job_id == delivering.job_id
+
+
+def test_delivery_items_are_upserted_by_job_and_ordinal(
+    repository: SqliteJobRepository,
+) -> None:
+    record = _job(JobId("delivery-items"), JobStatus.DELIVERING, datetime.now(UTC))
+    repository.create_job(record)
+    repository.upsert_delivery_item(
+        DeliveryItemRecord(
+            job_id=record.job_id,
+            ordinal=1,
+            provider=DeliveryProvider.MULTIPART,
+            status=DeliveryItemStatus.PENDING,
+            method=DeliveryMethod.DOCUMENT,
+        )
+    )
+    repository.upsert_delivery_item(
+        DeliveryItemRecord(
+            job_id=record.job_id,
+            ordinal=1,
+            provider=DeliveryProvider.MULTIPART,
+            status=DeliveryItemStatus.DELIVERED,
+            method=DeliveryMethod.DOCUMENT,
+            recipient_message_id=20,
+            file_id="staged",
+            file_unique_id="staged",
+        )
+    )
+
+    items = repository.delivery_items(record.job_id)
+
+    assert len(items) == 1
+    assert items[0].status is DeliveryItemStatus.DELIVERED
+    assert items[0].recipient_message_id == 20
 
 
 def _media() -> MediaInfo:

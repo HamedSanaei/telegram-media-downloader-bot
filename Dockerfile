@@ -15,7 +15,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates ffmpeg tini \
+    && apt-get install -y --no-install-recommends ca-certificates ffmpeg 7zip tini \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=uv /uv /uvx /bin/

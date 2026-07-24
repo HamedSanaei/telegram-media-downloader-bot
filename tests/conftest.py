@@ -25,4 +25,7 @@ def settings(tmp_path: Path) -> Settings:
     raw["telegram"]["bot_token"] = "123456:TEST_TOKEN_FOR_UNIT_TESTS"
     raw["storage"]["root_directory"] = str(tmp_path)
     raw["yt_dlp"]["cookies_file"] = None
+    raw["telegram"]["local_bot_api"]["migration"]["state_file"] = str(
+        tmp_path / "telegram-api-migration.json"
+    )
     return Settings.model_validate(raw)

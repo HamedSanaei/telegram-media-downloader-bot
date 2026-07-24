@@ -23,6 +23,8 @@ data/downloads/*
 data/temp/*
 data/cookies/*
 data/state/*
+data/telegram-bot-api/*
+data/tools/*
 !data/downloads/.gitkeep
 !data/temp/.gitkeep
 !data/cookies/.gitkeep

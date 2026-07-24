@@ -38,6 +38,16 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-24: Simplified large-file delivery: every result above the configured direct Local Bot
+  API ceiling now becomes stored 1850 MB ZIP volumes through 4096 MB. Removed the Premium account,
+  Telethon dependency, MTProto session/CLI, staging channel, uploader queue/process, and `copyMessage`
+  route.
+- 2026-07-24: Added `1440p`, `2160p`, and non-transcoding `best_original` modes. Delivery now routes
+  up to 1900 MB through Local Bot API and every larger result through 4096 MB as stored 1850 MB ZIP
+  volumes with SHA-256 manifests.
+- 2026-07-24: Local API CLI actions now accept `--config` both before and after the action name, so
+  `telegram-media-bot local-api status --config ./config.yaml` and the original ordering are both
+  valid.
 - 2026-07-24: Added production Local Bot API lifecycle and migration. Bot/Worker now share one
   config-derived endpoint, mixed cloud/local clients are rejected, managed credentials never enter
   process command lines, normal startup never calls `logOut`, and files under the configured local
@@ -66,3 +76,5 @@ gate run. External contracts remain opt-in and require operator-maintained publi
   enabled by default. The destructive real >200 MB upload test requires an explicitly configured
   local bot/chat and is skipped in the default suite.
 - Castbox and Spotify are not implemented; both remain outside the generic v1 engine policy.
+- Multi-volume output requires 7-Zip on the server and on the recipient device. Real >2 GB and
+  >3.9 GB tests are destructive opt-in tests and remain skipped in the default suite.
