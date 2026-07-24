@@ -92,5 +92,9 @@ class DeliveryUncertainError(MediaBotError):
     pass
 
 
+class LocalBotApiError(MediaBotError):
+    pass
+
+
 class PersistenceError(MediaBotError):
     retryable = True

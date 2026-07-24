@@ -13,11 +13,14 @@
 | `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL job, selection, block, and recovery store |
 | `src/telegram_media_bot/infrastructure/security/` | Public URL/DNS validation and Redis rate limiting |
 | `src/telegram_media_bot/infrastructure/observability/` | Health HTTP server and Prometheus metrics registry |
+| `src/telegram_media_bot/infrastructure/telegram/local_api.py` | Local Bot API lifecycle, durable migration, endpoint leases, and safe status |
 | `src/telegram_media_bot/telegram/` | Handlers, semantic UI, correlation middleware, and bounded-time delivery adapter |
+| `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction |
 | `src/telegram_media_bot/workers/` | ARQ worker settings and job functions |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, and composition roots |
 | `tests/unit/` | Fast deterministic tests |
 | `tests/integration/` | Local integration tests with fakes/Redis where available |
+| `tests/integration/test_local_api_large_upload.py` | Explicit opt-in real Local API upload over 200 MB |
 | `tests/contracts/` | Opt-in external yt-dlp smoke tests |
 | `docs/tasks/` | Ordered implementation tasks for Codex |
 | `plugins/example_extractor/` | Independent external yt-dlp extractor plugin SDK/template |

@@ -8,6 +8,8 @@ Telegram user
     v
 aiogram bot process
     |
+    +---- project Telegram runtime ---- public or migrated Local Bot API
+    |
     | enqueue project-owned DownloadJob payload
     v
 Redis / ARQ
@@ -117,3 +119,12 @@ A genuine change to the project-owned engine port requires an ADR and coordinate
 The worker exposes internal-only `/health`, `/ready`, and Prometheus `/metrics` endpoints. Readiness
 covers Redis, SQLite, writable storage, Telegram, ffmpeg, and the engine. Compose does not publish
 the port to the host by default; the worker container health check consumes it internally.
+
+## Telegram endpoint control plane
+
+`infrastructure/telegram/local_api.py` owns managed server lifecycle, migration state, endpoint
+leases, safe status, and public/local transitions. `telegram/bot_factory.py` is the shared Bot/Worker
+composition point. Both processes resolve the same endpoint from YAML plus durable migration state.
+Cross-process leases reject mixed endpoints and keep a managed server alive until the final local
+client exits. Migration writes its intent before each non-idempotent `logOut`; an uncertain result
+is quarantined and never repeated automatically.

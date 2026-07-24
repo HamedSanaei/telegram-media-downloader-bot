@@ -18,3 +18,8 @@ A release is acceptable when all of the following are true:
 13. The required lint, format, type, test, coverage, and build gates pass.
 14. Restart and cleanup integration tests pass.
 15. Documentation matches actual behavior and lists any remaining limitations.
+16. Local Bot API migration is explicit, durable, and never repeats an uncertain `logOut`.
+17. Bot and Worker cannot run against mixed cloud/local endpoints, and no Local API credential is
+    exposed through command lines, logs, health, CLI status, Compose, or image layers.
+18. A migrated local runtime accepts configured files above 200 MB and up to the 1900 MB
+    application ceiling without size-triggered transcoding below that ceiling.

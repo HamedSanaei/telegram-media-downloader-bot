@@ -1,6 +1,6 @@
 # T008 - Telegram delivery and runtime media dependencies
 
-**Status:** complete (2026-07-23)
+**Status:** complete (expanded 2026-07-24)
 
 Delivery is behind a project port and selects audio, video, or document with document fallback.
 Captions and filenames are sanitized, upload limits fail explicitly, and an optional local Bot API
@@ -10,6 +10,12 @@ limit. Source transfers have a separate bounded ceiling and never treat one surv
 complete video. File uploads use a dedicated configurable request timeout instead of aiogram's
 shorter general session default. Docker pins Deno 2.9.3 and installs ffmpeg; `doctor` reports runtime
 versions.
+
+The expanded implementation supports a 1900 MB practical ceiling with a shared config-derived
+Bot/Worker client, managed/external Local Bot API lifecycle, explicit idempotent cloud/local
+migration, safe CLI/doctor/readiness reporting, cross-process endpoint leases, and an opt-in real
+upload test above 200 MB. Files below `telegram.max_upload_size_mb` are never transcoded solely due
+to the independent media policy.
 
 ## Deliverables
 

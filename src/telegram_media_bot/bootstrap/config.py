@@ -9,7 +9,15 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from telegram_media_bot.domain.errors import ConfigurationError
 from telegram_media_bot.domain.models import DownloadMode
@@ -36,18 +44,59 @@ class AppSection(StrictModel):
         return value
 
 
+class LocalBotApiMigrationSection(StrictModel):
+    auto_logout_from_cloud: Literal[False] = False
+    state_file: Path = Field(
+        default_factory=lambda: Path("./data/state/telegram-api-migration.json")
+    )
+
+
+class LocalBotApiSection(StrictModel):
+    enabled: bool = False
+    mode: Literal["managed", "external"] = "external"
+    executable: Path | None = None
+    api_id: int | None = Field(default=None, ge=0)
+    api_hash: SecretStr | None = None
+    host: str = "127.0.0.1"
+    port: int = Field(default=8081, ge=1, le=65535)
+    local_mode: bool = True
+    working_directory: Path = Field(default_factory=lambda: Path("./data/telegram-bot-api"))
+    temp_directory: Path = Field(default_factory=lambda: Path("./data/telegram-bot-api/temp"))
+    log_file: Path = Field(
+        default_factory=lambda: Path("./data/telegram-bot-api/telegram-bot-api.log")
+    )
+    verbosity: int = Field(default=2, ge=0, le=10)
+    auto_start: bool = True
+    startup_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    shutdown_timeout_seconds: int = Field(default=20, ge=1, le=300)
+    migration: LocalBotApiMigrationSection = Field(default_factory=LocalBotApiMigrationSection)
+
+    @model_validator(mode="after")
+    def validate_managed_credentials(self) -> LocalBotApiSection:
+        if not self.enabled or self.mode != "managed":
+            return self
+        if self.executable is None:
+            raise ValueError("local_bot_api.executable is required in managed mode")
+        if not self.api_id:
+            raise ValueError("local_bot_api.api_id must be set in managed mode")
+        if self.api_hash is None or self.api_hash.get_secret_value() in {"", "CHANGE_ME"}:
+            raise ValueError("local_bot_api.api_hash must be set in managed mode")
+        return self
+
+
 class TelegramSection(StrictModel):
-    bot_token: str = Field(min_length=1)
+    bot_token: SecretStr
     admin_ids: tuple[int, ...] = ()
     support_username: str | None = None
     polling_timeout_seconds: int = Field(default=30, ge=5, le=60)
     upload_as_document: bool = True
-    max_upload_size_mb: int = Field(default=49, ge=1, le=2048)
+    max_upload_size_mb: int = Field(default=49, ge=1, le=1900)
     upload_timeout_seconds: int = Field(default=600, ge=60, le=86400)
     caption_template: str = "{title}\nمنبع: {source}"
     filename_max_length: int = Field(default=96, ge=16, le=180)
     local_api_base_url: str | None = None
     local_api_is_local: bool = False
+    local_bot_api: LocalBotApiSection = Field(default_factory=LocalBotApiSection)
     progress_min_interval_seconds: float = Field(default=3.0, ge=1.0, le=60.0)
     progress_min_percent_delta: float = Field(default=5.0, ge=1.0, le=100.0)
 
@@ -70,6 +119,23 @@ class TelegramSection(StrictModel):
     def validate_local_api(self) -> TelegramSection:
         if self.local_api_is_local and not self.local_api_base_url:
             raise ValueError("local_api_base_url is required when local_api_is_local is true")
+        if self.local_bot_api.enabled and not self.local_api_base_url:
+            raise ValueError("local_api_base_url is required when local_bot_api is enabled")
+        if (
+            self.local_bot_api.enabled
+            and self.local_bot_api.mode == "managed"
+            and self.local_bot_api.local_mode != self.local_api_is_local
+        ):
+            raise ValueError(
+                "local_api_is_local must match local_bot_api.local_mode in managed mode"
+            )
+        local_configured = bool(
+            self.local_api_base_url and (self.local_api_is_local or self.local_bot_api.enabled)
+        )
+        if self.max_upload_size_mb > 50 and not local_configured:
+            raise ValueError("Cloud Bot API uploads cannot exceed 50 MB")
+        if self.max_upload_size_mb > 50 and not self.local_api_is_local:
+            raise ValueError("Uploads above 50 MB require local_api_is_local")
         return self
 
     @field_validator("local_api_base_url")
@@ -81,6 +147,9 @@ class TelegramSection(StrictModel):
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("local_api_base_url must be an absolute HTTP(S) URL")
         return value.rstrip("/")
+
+    def token(self) -> str:
+        return self.bot_token.get_secret_value()
 
 
 class RedisSection(StrictModel):
@@ -251,12 +320,18 @@ class Settings(StrictModel):
         return self.storage.state_path() / self.persistence.database_filename
 
     def validate_runtime(self, *, require_token: bool) -> None:
-        if require_token and self.telegram.bot_token in {"CHANGE_ME", ""}:
+        if require_token and self.telegram.token() in {"CHANGE_ME", ""}:
             raise ConfigurationError("telegram.bot_token must be set in config.yaml")
         self.storage.downloads_path()
         self.storage.temp_path()
         self.storage.state_path()
         self.database_path()
+        local_api = self.telegram.local_bot_api
+        if local_api.enabled:
+            local_api.migration.state_file.expanduser().resolve()
+            local_api.working_directory.expanduser().resolve()
+            local_api.temp_directory.expanduser().resolve()
+            local_api.log_file.expanduser().resolve()
 
     def create_runtime_directories(self) -> None:
         for path in (
@@ -265,6 +340,15 @@ class Settings(StrictModel):
             self.storage.state_path(),
         ):
             path.mkdir(parents=True, exist_ok=True)
+        local_api = self.telegram.local_bot_api
+        if local_api.enabled and local_api.mode == "managed":
+            local_api.working_directory.expanduser().resolve().mkdir(parents=True, exist_ok=True)
+            local_api.temp_directory.expanduser().resolve().mkdir(parents=True, exist_ok=True)
+            local_api.log_file.expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+        if local_api.enabled:
+            local_api.migration.state_file.expanduser().resolve().parent.mkdir(
+                parents=True, exist_ok=True
+            )
 
 
 def default_config_path() -> Path:
@@ -272,17 +356,20 @@ def default_config_path() -> Path:
 
 
 def load_settings(path: Path | str | None = None, *, require_token: bool = False) -> Settings:
-    config_path = Path(path) if path is not None else default_config_path()
+    config_path = (Path(path) if path is not None else default_config_path()).expanduser().resolve()
     try:
         with config_path.open("r", encoding="utf-8") as file:
             raw = yaml.safe_load(file)
     except FileNotFoundError as exc:
         raise ConfigurationError(f"Configuration file not found: {config_path}") from exc
     except yaml.YAMLError as exc:
-        raise ConfigurationError(f"Invalid YAML in {config_path}: {exc}") from exc
+        mark = getattr(exc, "problem_mark", None)
+        location = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
+        raise ConfigurationError(f"Invalid YAML configuration{location}") from exc
 
     if not isinstance(raw, dict):
         raise ConfigurationError("Configuration root must be a mapping")
+    _resolve_local_api_paths(raw, config_path.parent)
 
     try:
         settings = Settings.model_validate(raw)
@@ -291,6 +378,24 @@ def load_settings(path: Path | str | None = None, *, require_token: bool = False
 
     settings.validate_runtime(require_token=require_token)
     return settings
+
+
+def _resolve_local_api_paths(raw: dict[str, object], config_directory: Path) -> None:
+    telegram = raw.get("telegram")
+    if not isinstance(telegram, dict):
+        return
+    local_api = telegram.get("local_bot_api")
+    if not isinstance(local_api, dict):
+        return
+    for key in ("executable", "working_directory", "temp_directory", "log_file"):
+        value = local_api.get(key)
+        if isinstance(value, str) and value and not Path(value).expanduser().is_absolute():
+            local_api[key] = str((config_directory / value).resolve())
+    migration = local_api.get("migration")
+    if isinstance(migration, dict):
+        value = migration.get("state_file")
+        if isinstance(value, str) and value and not Path(value).expanduser().is_absolute():
+            migration["state_file"] = str((config_directory / value).resolve())
 
 
 @lru_cache(maxsize=1)

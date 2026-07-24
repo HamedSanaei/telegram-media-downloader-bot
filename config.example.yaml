@@ -11,12 +11,32 @@ telegram:
   support_username: null
   polling_timeout_seconds: 30
   upload_as_document: true
+  # Keep at 49 for cloud; set up to 1900 only after explicit Local API migration.
   max_upload_size_mb: 49
   upload_timeout_seconds: 600
   caption_template: "{title}\nمنبع: {source}"
   filename_max_length: 96
   local_api_base_url: null
   local_api_is_local: false
+  local_bot_api:
+    enabled: false
+    mode: managed
+    executable: CHANGE_ME
+    api_id: 0
+    api_hash: CHANGE_ME
+    host: 127.0.0.1
+    port: 8081
+    local_mode: true
+    working_directory: ./data/telegram-bot-api
+    temp_directory: ./data/telegram-bot-api/temp
+    log_file: ./data/telegram-bot-api/telegram-bot-api.log
+    verbosity: 2
+    auto_start: true
+    startup_timeout_seconds: 30
+    shutdown_timeout_seconds: 20
+    migration:
+      auto_logout_from_cloud: false
+      state_file: ./data/state/telegram-api-migration.json
   progress_min_interval_seconds: 3.0
   progress_min_percent_delta: 5.0
 
@@ -58,6 +78,7 @@ media:
   default_mode: best
   allow_playlists: false
   playlist_max_items: 20
+  # Normally match telegram.max_upload_size_mb.
   max_file_size_mb: 49
   max_source_size_mb: 1024
   max_duration_seconds: 14400

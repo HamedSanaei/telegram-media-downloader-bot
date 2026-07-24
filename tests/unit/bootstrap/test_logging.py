@@ -7,12 +7,16 @@ def test_redacts_nested_secrets_and_url_credentials() -> None:
         "info",
         {
             "bot_token": "secret",
+            "api_id": 12345,
+            "api_hash": "secret-hash",
             "nested": {"authorization_header": "bearer secret"},
             "endpoint": "https://user:pass@example.com/path",  # pragma: allowlist secret
             "job_id": "safe",
         },
     )
     assert result["bot_token"] == "[REDACTED]"
+    assert result["api_id"] == "[REDACTED]"
+    assert result["api_hash"] == "[REDACTED]"
     assert result["nested"] == {"authorization_header": "[REDACTED]"}
     assert result["endpoint"] == "https://[REDACTED]@example.com/path"
     assert result["job_id"] == "safe"

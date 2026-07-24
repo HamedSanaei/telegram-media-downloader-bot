@@ -218,6 +218,7 @@ def test_oversized_selected_video_is_transcoded_at_requested_height(
     raw = settings.model_dump()
     raw["media"]["max_file_size_mb"] = 1
     raw["media"]["max_source_size_mb"] = 10
+    raw["telegram"]["max_upload_size_mb"] = 1
     configured = _without_dns_checks(Settings.model_validate(raw))
     monkeypatch.setattr(engine_module, "YoutubeDL", VideoYoutubeDL)
     monkeypatch.setattr(engine_module, "transcode_video_to_limit", fake_transcode)

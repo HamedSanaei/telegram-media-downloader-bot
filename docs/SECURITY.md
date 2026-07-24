@@ -15,8 +15,10 @@ thumbnails, extensions, playlist entries, and upstream error strings.
   applied before inspection.
 - Output and temporary paths resolve under fixed roots. Containers run non-root, read-only, with all
   Linux capabilities dropped and `no-new-privileges`; writable state is limited to `/data` and tmpfs.
-- Tokens, cookies, authorization, passwords, proxy values, and URL credentials are recursively
-  redacted. Arbitrary user URLs and file paths are not logged.
+- Tokens, cookies, authorization, passwords, proxy values, Local API hashes, and URL credentials
+  are recursively redacted. Managed `api_id`/`api_hash` are read only from YAML and passed only in
+  the child process environment, never its command line. Arbitrary user URLs and file paths are not
+  logged.
 - Delivery limits are checked before Telegram; ambiguous uploads enter `delivery_uncertain` rather
   than risking an automatic duplicate.
 - Dependencies are locked and checked against current vulnerability advisories with `pip-audit`;
@@ -32,3 +34,7 @@ SQLite backups, and Redis volumes with restrictive permissions and encryption wh
 
 The project does not implement DRM circumvention. Operators remain responsible for platform terms,
 copyright, source allowlists, abuse response, and lawful use.
+
+Local Bot API support is bot-only. Phone numbers, SMS/login codes, two-step passwords, MTProto user
+sessions, and Userbot accounts are explicitly outside the design. Migration is interactive,
+stateful, fail-closed, and blocked while live Bot/Worker endpoint leases exist.

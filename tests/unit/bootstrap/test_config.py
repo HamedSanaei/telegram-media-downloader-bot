@@ -14,6 +14,8 @@ def test_example_configuration_is_valid() -> None:
     assert settings.media.default_mode.value == "best"
     assert settings.media.max_source_size_mb == 1024
     assert settings.telegram.upload_timeout_seconds == 600
+    assert not settings.telegram.local_bot_api.enabled
+    assert "CHANGE_ME" not in repr(settings.telegram.bot_token)
 
 
 def test_unknown_configuration_key_is_rejected(tmp_path: Path) -> None:
@@ -92,3 +94,61 @@ def test_enabled_modes_require_best_fallback(settings: Settings) -> None:
     raw["media"]["enabled_modes"] = ["audio_mp3"]
     with pytest.raises(ValidationError):
         Settings.model_validate(raw)
+
+
+def test_managed_local_api_requires_its_own_credentials(settings: Settings) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["local_api_base_url"] = "http://127.0.0.1:8081"
+    raw["telegram"]["local_api_is_local"] = True
+    raw["telegram"]["local_bot_api"]["enabled"] = True
+    raw["telegram"]["local_bot_api"]["mode"] = "managed"
+    raw["telegram"]["local_bot_api"]["executable"] = None
+    raw["telegram"]["local_bot_api"]["api_id"] = None
+    raw["telegram"]["local_bot_api"]["api_hash"] = None
+
+    with pytest.raises(ValidationError):
+        Settings.model_validate(raw)
+
+
+def test_external_local_api_does_not_require_api_id_or_hash(settings: Settings) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["local_api_base_url"] = "http://127.0.0.1:8081"
+    raw["telegram"]["local_api_is_local"] = True
+    raw["telegram"]["max_upload_size_mb"] = 1900
+    raw["telegram"]["local_bot_api"]["enabled"] = True
+    raw["telegram"]["local_bot_api"]["mode"] = "external"
+    raw["telegram"]["local_bot_api"]["executable"] = None
+    raw["telegram"]["local_bot_api"]["api_id"] = None
+    raw["telegram"]["local_bot_api"]["api_hash"] = None
+
+    configured = Settings.model_validate(raw)
+
+    assert configured.telegram.max_upload_size_mb == 1900
+
+
+def test_local_api_paths_are_resolved_relative_to_config_file(tmp_path: Path) -> None:
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    config_path = tmp_path / "nested" / "config.yaml"
+    config_path.parent.mkdir()
+    config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    configured = load_settings(config_path)
+
+    assert (
+        configured.telegram.local_bot_api.working_directory
+        == (config_path.parent / "data" / "telegram-bot-api").resolve()
+    )
+    assert (
+        configured.telegram.local_bot_api.migration.state_file
+        == (config_path.parent / "data" / "state" / "telegram-api-migration.json").resolve()
+    )
+
+
+def test_invalid_yaml_error_does_not_echo_secret_source_line(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text('telegram:\n  bot_token: "DO_NOT_ECHO"\n  broken: [\n', encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as captured:
+        load_settings(path)
+
+    assert "DO_NOT_ECHO" not in str(captured.value)

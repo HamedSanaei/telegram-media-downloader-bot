@@ -76,7 +76,7 @@ class YtDlpEngine:
         if request.temp_directory is not None:
             temp_dir = self._safe_temp_directory(request.temp_directory)
             self._reset_job_directory(temp_dir)
-        max_size = self._settings.media.max_file_size_mb * 1024 * 1024
+        max_size = self._settings.telegram.max_upload_size_mb * 1024 * 1024
         source_max_size = self._settings.media.max_source_size_mb * 1024 * 1024
         target_height = video_target_height(request.mode)
         transfer_limit = source_max_size if target_height is not None else max_size

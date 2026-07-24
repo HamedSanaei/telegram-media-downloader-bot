@@ -134,6 +134,20 @@ switch ($Command) {
         uv run telegram-media-bot doctor --config config.yaml
         Assert-LastExitCode "runtime doctor"
     }
+    "local-api" {
+        Ensure-Config
+        if (-not $Service) {
+            throw "Usage: .\manage.ps1 local-api status|start|stop|migrate-to-local|migrate-to-cloud [--yes]"
+        }
+        $LocalApiArguments = @(
+            "run", "telegram-media-bot", "local-api", "--config", "config.yaml", $Service
+        )
+        if ($ThirdArgument) {
+            $LocalApiArguments += $ThirdArgument
+        }
+        & uv @LocalApiArguments
+        Assert-LastExitCode "Local Bot API command"
+    }
     "upgrade-ytdlp" {
         Require-Lock
         uv run python scripts/upgrade_ytdlp.py
@@ -156,7 +170,7 @@ switch ($Command) {
 Usage: .\manage.ps1 COMMAND
 
 Commands: init, lock, up, down, restart, logs, status, check, config-check, doctor,
-          upgrade-ytdlp, canary-report, clean
+          local-api, upgrade-ytdlp, canary-report, clean
 "@
     }
 }

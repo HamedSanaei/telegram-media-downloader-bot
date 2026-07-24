@@ -20,6 +20,9 @@
   aiogram session default.
 - Preserve distinct requested video resolutions with SDR source selection and bounded H.264/AAC
   transcoding when the native result exceeds Telegram's upload ceiling.
+- Added managed/external Telegram Local Bot API lifecycle, config-only credentials, explicit
+  idempotent migration/rollback, shared Bot/Worker endpoint leases, safe diagnostics, and a
+  practical 1900 MB upload ceiling without forced transcoding below that ceiling.
 
 ## 0.1.0 - 2026-07-23
 

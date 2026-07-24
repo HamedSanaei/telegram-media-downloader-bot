@@ -131,6 +131,20 @@ case "${1:-help}" in
     uv run telegram-media-bot doctor --config config.yaml
     ;;
 
+  local-api)
+    require_command uv
+    ensure_config
+    if [[ -z "${2:-}" ]]; then
+      echo "Usage: ./manage.sh local-api status|start|stop|migrate-to-local|migrate-to-cloud [--yes]" >&2
+      exit 2
+    fi
+    local_api_args=(run telegram-media-bot local-api --config config.yaml "$2")
+    if [[ -n "${3:-}" ]]; then
+      local_api_args+=("$3")
+    fi
+    uv "${local_api_args[@]}"
+    ;;
+
   upgrade-ytdlp)
     require_command uv
     require_lock
@@ -167,6 +181,7 @@ Commands:
   check            Run lock, lint, format, type, test, and coverage gates
   config-check     Validate local configuration
   doctor           Check configuration and local runtime dependencies
+  local-api ACTION  Status, lifecycle, and explicit migration commands
   upgrade-ytdlp    Update only the yt-dlp lock entry and run adapter tests
   canary-report    Compare baseline and canary failure-rate snapshots
   clean            Delete local downloaded and temporary files

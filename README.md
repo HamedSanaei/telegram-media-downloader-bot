@@ -60,10 +60,12 @@ docker build -t telegram-media-downloader-bot:review .
 
 External contract tests are opt-in and require operator-maintained safe public fixtures. See
 `docs/OPERATIONS.md` for upgrades, canary promotion, rollback, alert thresholds, and incident
-diagnosis. See `docs/CONFIGURATION.md` for every runtime option.
+diagnosis. See `docs/CONFIGURATION.md` for every runtime option and `docs/LOCAL_BOT_API.md` for
+managed/external Local Bot API setup, explicit migration, rollback, and files up to 1900 MB.
 
 ## Intentional boundaries
 
-The v1 supported topology is one worker container with bounded internal concurrency. Local Telegram
-Bot API is supported but not bundled. Spotify, Castbox, DRM circumvention, local/private URLs,
-startup self-updates, and user-controlled yt-dlp options are not implemented.
+The v1 supported topology is one worker container with bounded internal concurrency. The official
+Local Bot API executable is supported in managed or external mode but is not bundled. Spotify,
+Castbox, DRM circumvention, local/private media URLs, startup self-updates, Userbot credentials, and
+user-controlled yt-dlp options are not implemented.

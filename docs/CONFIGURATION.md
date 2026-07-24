@@ -9,7 +9,7 @@ fail startup and `config.yaml` is ignored by Git and Docker build context.
 - `app`: environment, structured/console logging, language, and timezone.
 - `telegram`: token/admins, polling, automatic or document-only delivery, upload ceiling and upload
   request timeout, sanitized caption template (`{title}` and `{source}` only), filename length,
-  progress throttling, and optional local Bot API base URL.
+  progress throttling, Local Bot API endpoint, managed/external lifecycle, and migration state.
 - `redis`: ARQ/rate-limit Redis DSN and queue name.
 - `queue`: concurrency, timeout, attempts, retry delay, and ARQ result retention.
 - `storage`: contained download/temp/state paths, terminal cleanup, orphan grace, and job retention.
@@ -26,17 +26,18 @@ fail startup and `config.yaml` is ignored by Git and Docker build context.
 format IDs. Storage child paths and the SQLite filename cannot escape configured roots. When
 `telegram.local_api_is_local` is true, an absolute HTTP(S) `local_api_base_url` is required.
 `telegram.upload_timeout_seconds` applies only to file uploads and defaults to 600 seconds so large
-official Bot API uploads are not cut off by aiogram's shorter session default. Text and polling
-requests retain their normal bounded timeouts.
+uploads are not cut off by aiogram's shorter session default. Text and polling requests retain their
+normal bounded timeouts. The public runtime is capped at 50 MB; a migrated Local API runtime may use
+an operator ceiling up to 1900 MB.
 
 The size shown during inspection is advisory upstream metadata and may refer to the source's default
 or best format rather than the user's later semantic selection. Video modes, including `best`,
 select the highest SDR source at the requested ceiling (`1080p`, `720p`, or `480p`) beneath
-`media.max_source_size_mb`. If the merged source exceeds `media.max_file_size_mb`, the adapter
+`media.max_source_size_mb`. If the merged source exceeds `telegram.max_upload_size_mb`, the adapter
 transcodes it to H.264/AAC at the selected resolution and a bounded bitrate; an exact final-size
-check still runs before Telegram delivery. This preserves distinct resolutions under the official
-Bot API ceiling, although long high-resolution videos necessarily receive a lower bitrate. Unknown
-source sizes are bounded cumulatively during transfer.
+check still runs before Telegram delivery. Files at or below the configured upload ceiling are not
+forcibly recompressed. `media.max_file_size_mb` is a separate final content-policy ceiling and
+normally matches the upload ceiling. Unknown source sizes are bounded cumulatively during transfer.
 
 Cookies should be mounted read-only. A missing cookie file is simply not passed to yt-dlp; `doctor`
 and operator startup review should confirm whether authenticated sources need it. Proxy credentials,
@@ -47,3 +48,6 @@ After model changes regenerate and review the schema:
 ```bash
 uv run python scripts/export_config_schema.py
 ```
+
+The complete Local Bot API configuration, conditional credential rules, Windows/Linux paths, and
+migration state machine are documented in `docs/LOCAL_BOT_API.md`.

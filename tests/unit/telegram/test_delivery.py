@@ -6,7 +6,7 @@ import pytest
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendVideo
-from aiogram.types import Audio, Chat, Document, Message, Video
+from aiogram.types import Audio, Chat, Document, FSInputFile, Message, Video
 
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import DeliveryTooLargeError
@@ -91,6 +91,32 @@ async def test_delivery_rejects_oversize_before_api_call(
     gateway = TelegramDeliveryGateway(cast(Bot, cast(Any, FakeBot())), configured)
     with pytest.raises(DeliveryTooLargeError):
         await gateway.deliver(chat_id=1, result=result, caption="caption")
+
+
+async def test_local_api_accepts_declared_file_over_200_mb_without_recompression(
+    settings: Settings, tmp_path: Path
+) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["local_api_base_url"] = "http://127.0.0.1:8081"
+    raw["telegram"]["local_api_is_local"] = True
+    raw["telegram"]["max_upload_size_mb"] = 1900
+    configured = Settings.model_validate(raw)
+    result = _result(tmp_path, MediaKind.VIDEO)
+    large_result = DownloadResult(
+        job_id=result.job_id,
+        media_id=result.media_id,
+        title=result.title,
+        source=result.source,
+        kind=result.kind,
+        file_path=result.file_path,
+        file_size_bytes=201 * 1024 * 1024,
+    )
+    bot = FakeBot()
+    gateway = TelegramDeliveryGateway(cast(Bot, cast(Any, bot)), configured)
+
+    await gateway.deliver(chat_id=1, result=large_result, caption="caption")
+
+    assert isinstance(bot.last_upload["document"], FSInputFile)
 
 
 async def test_text_delivery_helpers(settings: Settings) -> None:

@@ -19,8 +19,9 @@ from telegram_media_bot.infrastructure.observability.metrics import MetricsRegis
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.queue.arq_queue import ArqJobQueue
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
+from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
 from telegram_media_bot.infrastructure.ytdlp.engine import YtDlpEngine
-from telegram_media_bot.telegram.bot_factory import create_bot
+from telegram_media_bot.telegram.bot_factory import TelegramRuntime, create_telegram_runtime
 from telegram_media_bot.telegram.delivery import TelegramDeliveryGateway
 from telegram_media_bot.workers.jobs import (
     maintenance_job,
@@ -34,69 +35,81 @@ logger = structlog.get_logger(__name__)
 async def startup(ctx: dict[str, Any]) -> None:
     settings = load_settings(require_token=True)
     settings.create_runtime_directories()
-    repository = SqliteJobRepository(settings.database_path())
-    await asyncio.to_thread(repository.initialize)
-    bot = create_bot(settings)
-    engine = YtDlpEngine(settings)
-    queue = ArqJobQueue(cast(ArqRedis, ctx["redis"]), settings.redis.queue_name, owns_pool=False)
-    service = DownloadService(
-        engine=engine,
-        enabled_sources=settings.media.enabled_sources,
-        url_validator=PublicUrlValidator(
-            reject_private_networks=settings.security.reject_private_network_urls
-        ),
-        allow_playlists=settings.media.allow_playlists,
-        playlist_max_items=settings.media.playlist_max_items,
-        max_duration_seconds=settings.media.max_duration_seconds,
-        max_file_size_bytes=settings.media.max_file_size_mb * 1024 * 1024,
-    )
-    metrics = MetricsRegistry()
-    ctx.update(
-        settings=settings,
-        repository=repository,
-        bot=bot,
-        engine=engine,
-        queue=queue,
-        download_service=service,
-        delivery=TelegramDeliveryGateway(bot, settings),
-        metrics=metrics,
-    )
-    cutoff = datetime.now(UTC)
-    recovered = await asyncio.to_thread(repository.reconcile_abandoned, cutoff)
-    for record in recovered:
-        if record.status is not JobStatus.QUEUED:
-            await logger.awarning(
-                "delivery_requires_operator_review",
-                job_id=record.job_id,
-                status=record.status.value,
-            )
-            continue
-        if record.kind is JobKind.INSPECTION:
-            await queue.enqueue_inspection(
-                job_id=record.job_id,
-                chat_id=record.chat_id,
-                user_id=record.user_id,
-                url=record.url,
-            )
-        elif record.mode is not None:
-            await queue.enqueue_download(
-                job_id=record.job_id,
-                chat_id=record.chat_id,
-                user_id=record.user_id,
-                url=record.url,
-                mode=record.mode,
-            )
-    server = HealthServer(
-        host=settings.observability.health_host,
-        port=settings.observability.health_port,
-        probe=lambda: _health_report(ctx),
-        metrics=metrics,
-        queue_depth=queue.queue_depth,
-        metrics_enabled=settings.observability.metrics_enabled,
-    )
-    await server.start()
-    ctx["health_server"] = server
-    await logger.ainfo("worker_started", recovered_jobs=len(recovered))
+    runtime = await asyncio.to_thread(create_telegram_runtime, settings, role="worker")
+    settings = runtime.settings
+    bot = runtime.bot
+    try:
+        repository = SqliteJobRepository(settings.database_path())
+        await asyncio.to_thread(repository.initialize)
+        engine = YtDlpEngine(settings)
+        queue = ArqJobQueue(
+            cast(ArqRedis, ctx["redis"]), settings.redis.queue_name, owns_pool=False
+        )
+        service = DownloadService(
+            engine=engine,
+            enabled_sources=settings.media.enabled_sources,
+            url_validator=PublicUrlValidator(
+                reject_private_networks=settings.security.reject_private_network_urls
+            ),
+            allow_playlists=settings.media.allow_playlists,
+            playlist_max_items=settings.media.playlist_max_items,
+            max_duration_seconds=settings.media.max_duration_seconds,
+            max_file_size_bytes=settings.media.max_file_size_mb * 1024 * 1024,
+        )
+        metrics = MetricsRegistry()
+        ctx.update(
+            settings=settings,
+            repository=repository,
+            bot=bot,
+            engine=engine,
+            queue=queue,
+            download_service=service,
+            delivery=TelegramDeliveryGateway(bot, settings),
+            metrics=metrics,
+            telegram_runtime=runtime,
+        )
+        cutoff = datetime.now(UTC)
+        recovered = await asyncio.to_thread(repository.reconcile_abandoned, cutoff)
+        for record in recovered:
+            if record.status is not JobStatus.QUEUED:
+                await logger.awarning(
+                    "delivery_requires_operator_review",
+                    job_id=record.job_id,
+                    status=record.status.value,
+                )
+                continue
+            if record.kind is JobKind.INSPECTION:
+                await queue.enqueue_inspection(
+                    job_id=record.job_id,
+                    chat_id=record.chat_id,
+                    user_id=record.user_id,
+                    url=record.url,
+                )
+            elif record.mode is not None:
+                await queue.enqueue_download(
+                    job_id=record.job_id,
+                    chat_id=record.chat_id,
+                    user_id=record.user_id,
+                    url=record.url,
+                    mode=record.mode,
+                )
+        server = HealthServer(
+            host=settings.observability.health_host,
+            port=settings.observability.health_port,
+            probe=lambda: _health_report(ctx),
+            metrics=metrics,
+            queue_depth=queue.queue_depth,
+            metrics_enabled=settings.observability.metrics_enabled,
+        )
+        await server.start()
+        ctx["health_server"] = server
+        await logger.ainfo("worker_started", recovered_jobs=len(recovered))
+    except Exception:
+        ctx.pop("bot", None)
+        ctx.pop("telegram_runtime", None)
+        await bot.session.close()
+        await asyncio.to_thread(runtime.close_local_api)
+        raise
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -106,6 +119,9 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     bot = ctx.get("bot")
     if isinstance(bot, Bot):
         await bot.session.close()
+    runtime = ctx.get("telegram_runtime")
+    if isinstance(runtime, TelegramRuntime):
+        await asyncio.to_thread(runtime.close_local_api)
 
 
 async def _health_report(ctx: dict[str, Any]) -> HealthReport:
@@ -124,15 +140,26 @@ async def _health_report(ctx: dict[str, Any]) -> HealthReport:
             await bot.get_me()
         except Exception:
             telegram_ok = False
-    checks = (
+    checks = [
         ComponentHealth("redis", redis_ok),
         ComponentHealth("database", database_ok),
         ComponentHealth("storage", storage_ok),
         ComponentHealth("telegram", telegram_ok),
         ComponentHealth("ffmpeg", shutil.which("ffmpeg") is not None),
         engine.health(),
-    )
-    return HealthReport(checks=checks)
+    ]
+    runtime = ctx.get("telegram_runtime")
+    if settings.telegram.local_bot_api.enabled and isinstance(runtime, TelegramRuntime):
+        local_reachable = await asyncio.to_thread(LocalBotApiManager(settings).endpoint_reachable)
+        local_active = runtime.endpoint == "local"
+        checks.append(
+            ComponentHealth(
+                "local_bot_api",
+                local_reachable if local_active else True,
+                "active" if local_active else "inactive",
+            )
+        )
+    return HealthReport(checks=tuple(checks))
 
 
 def _storage_writable(settings: Settings) -> bool:

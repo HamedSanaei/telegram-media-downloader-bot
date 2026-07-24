@@ -10,7 +10,16 @@ import structlog
 
 from telegram_media_bot.bootstrap.config import Settings
 
-_SENSITIVE_FRAGMENTS = ("token", "cookie", "authorization", "password", "proxy", "secret")
+_SENSITIVE_FRAGMENTS = (
+    "token",
+    "cookie",
+    "authorization",
+    "password",
+    "proxy",
+    "secret",
+    "api_id",
+    "api_hash",
+)
 
 
 def configure_logging(settings: Settings) -> None:

@@ -25,6 +25,9 @@ Telegram delivery -> terminal state and cleanup.
   explicit size/duration/playlist limits, and filename/caption sanitization.
 - Structured redacted logs, request/job correlation, admin commands, internal health/readiness, and
   bounded-label Prometheus metrics.
+- Managed and external Telegram Local Bot API modes with a 1900 MB practical ceiling, config-only
+  credentials, explicit durable migration/rollback, shared Bot/Worker endpoint leases, lifecycle
+  CLI, and Local API readiness.
 - Controlled yt-dlp upgrade reports, per-source opt-in contracts, canary failure-rate gate, and an
   independent external extractor plugin template.
 
@@ -35,6 +38,10 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-24: Added production Local Bot API lifecycle and migration. Bot/Worker now share one
+  config-derived endpoint, mixed cloud/local clients are rejected, managed credentials never enter
+  process command lines, normal startup never calls `logOut`, and files under the configured local
+  upload ceiling are delivered without forced transcoding.
 - 2026-07-24: Generic inspection size estimates are now advisory because upstream may report the
   best/default format before semantic selection. The selected download and final post-processed file
   remain strictly bounded by `media.max_file_size_mb`.
@@ -55,5 +62,7 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 - DNS and extracted URLs are revalidated, but no application can eliminate DNS rebinding between a
   validation lookup and an upstream library's socket connect without controlling that library's
   resolver/transport.
-- A local Telegram Bot API endpoint is supported but intentionally not bundled or enabled by default.
+- The official Local Bot API executable is operator-supplied and intentionally not bundled or
+  enabled by default. The destructive real >200 MB upload test requires an explicitly configured
+  local bot/chat and is skipped in the default suite.
 - Castbox and Spotify are not implemented; both remain outside the generic v1 engine policy.

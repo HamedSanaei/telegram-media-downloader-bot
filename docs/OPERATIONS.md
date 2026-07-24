@@ -23,6 +23,10 @@ worker container exposes `/health`, `/ready`, and `/metrics` internally on port 
 port is intentionally not host-published; query it through the container/network or an authenticated
 monitoring sidecar.
 
+Managed/external Local Bot API installation, explicit public-to-local migration, the 10-minute cloud
+rollback interval, and large-file validation are in `docs/LOCAL_BOT_API.md`. Always stop Bot and
+Worker before a migration command; process leases enforce this rule.
+
 ## Telegram administration
 
 Only IDs in `telegram.admin_ids` can use:

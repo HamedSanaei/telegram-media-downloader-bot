@@ -16,8 +16,6 @@ x-app-common: &app-common
     - /tmp:size=128m,mode=1777
   stop_grace_period: 45s
   user: "${APP_UID:-10001}:${APP_GID:-10001}"
-  environment:
-    APP_CONFIG_PATH: /app/config.yaml
   volumes:
     - ./config.yaml:/app/config.yaml:ro
     - ./data:/data
@@ -28,13 +26,13 @@ x-app-common: &app-common
 services:
   bot:
     <<: *app-common
-    command: ["telegram-media-bot", "bot"]
+    command: ["telegram-media-bot", "bot", "--config", "/app/config.yaml"]
     healthcheck:
       disable: true
 
   worker:
     <<: *app-common
-    command: ["telegram-media-bot", "worker"]
+    command: ["telegram-media-bot", "worker", "--config", "/app/config.yaml"]
     healthcheck:
       test:
         [

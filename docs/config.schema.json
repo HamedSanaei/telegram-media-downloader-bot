@@ -99,6 +99,146 @@
       "title": "FormatSection",
       "type": "object"
     },
+    "LocalBotApiMigrationSection": {
+      "additionalProperties": false,
+      "properties": {
+        "auto_logout_from_cloud": {
+          "const": false,
+          "default": false,
+          "title": "Auto Logout From Cloud",
+          "type": "boolean"
+        },
+        "state_file": {
+          "format": "path",
+          "title": "State File",
+          "type": "string"
+        }
+      },
+      "title": "LocalBotApiMigrationSection",
+      "type": "object"
+    },
+    "LocalBotApiSection": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "mode": {
+          "default": "external",
+          "enum": [
+            "managed",
+            "external"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "executable": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Executable"
+        },
+        "api_id": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Id"
+        },
+        "api_hash": {
+          "anyOf": [
+            {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Hash"
+        },
+        "host": {
+          "default": "127.0.0.1",
+          "title": "Host",
+          "type": "string"
+        },
+        "port": {
+          "default": 8081,
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        },
+        "local_mode": {
+          "default": true,
+          "title": "Local Mode",
+          "type": "boolean"
+        },
+        "working_directory": {
+          "format": "path",
+          "title": "Working Directory",
+          "type": "string"
+        },
+        "temp_directory": {
+          "format": "path",
+          "title": "Temp Directory",
+          "type": "string"
+        },
+        "log_file": {
+          "format": "path",
+          "title": "Log File",
+          "type": "string"
+        },
+        "verbosity": {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Verbosity",
+          "type": "integer"
+        },
+        "auto_start": {
+          "default": true,
+          "title": "Auto Start",
+          "type": "boolean"
+        },
+        "startup_timeout_seconds": {
+          "default": 30,
+          "maximum": 300,
+          "minimum": 1,
+          "title": "Startup Timeout Seconds",
+          "type": "integer"
+        },
+        "shutdown_timeout_seconds": {
+          "default": 20,
+          "maximum": 300,
+          "minimum": 1,
+          "title": "Shutdown Timeout Seconds",
+          "type": "integer"
+        },
+        "migration": {
+          "$ref": "#/$defs/LocalBotApiMigrationSection"
+        }
+      },
+      "title": "LocalBotApiSection",
+      "type": "object"
+    },
     "MediaSection": {
       "additionalProperties": false,
       "properties": {
@@ -373,9 +513,10 @@
       "additionalProperties": false,
       "properties": {
         "bot_token": {
-          "minLength": 1,
+          "format": "password",
           "title": "Bot Token",
-          "type": "string"
+          "type": "string",
+          "writeOnly": true
         },
         "admin_ids": {
           "default": [],
@@ -411,7 +552,7 @@
         },
         "max_upload_size_mb": {
           "default": 49,
-          "maximum": 2048,
+          "maximum": 1900,
           "minimum": 1,
           "title": "Max Upload Size Mb",
           "type": "integer"
@@ -451,6 +592,9 @@
           "default": false,
           "title": "Local Api Is Local",
           "type": "boolean"
+        },
+        "local_bot_api": {
+          "$ref": "#/$defs/LocalBotApiSection"
         },
         "progress_min_interval_seconds": {
           "default": 3.0,

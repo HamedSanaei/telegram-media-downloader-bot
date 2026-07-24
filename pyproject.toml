@@ -74,6 +74,7 @@ asyncio_mode = "auto"
 markers = [
   "contract: tests that call external services and are skipped by default",
   "integration: tests that exercise multiple project adapters",
+  "large_file: opt-in test that sends a real file larger than 200 MB",
 ]
 
 [tool.coverage.run]

@@ -88,3 +88,15 @@ transfer with `media.max_source_size_mb`. If the merged result exceeds the final
 ceiling, transcode it to H.264/AAC at the selected resolution and a calculated bounded bitrate.
 This avoids deceptively collapsing `1080p`, `720p`, and `480p` to one low native stream while
 remaining compatible with the official Telegram Bot API upload limit.
+
+## ADR-012: Durable explicit Local Bot API migration
+
+**Status:** accepted
+
+Support the official server in managed and external modes behind one project-owned Telegram runtime.
+Secrets and all lifecycle settings remain in ignored YAML. Public/local migration is an explicit
+operator command with confirmation and a durable write-before-call state machine, so `logOut` is
+never repeated after an uncertain response. Normal startup selects the durable active endpoint and
+never migrates. Cross-process endpoint leases prevent simultaneous cloud/local clients and provide
+reference-counted managed shutdown. The application ceiling is 1900 MB, below Telegram's documented
+2000 MB local maximum. The server binary remains operator-supplied and is not embedded in the image.
