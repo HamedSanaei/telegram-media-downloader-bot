@@ -38,6 +38,12 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-24: Inspection now evaluates each enabled semantic selector against the real formats,
+  hides unavailable exact heights, and displays resolution/FPS/HDR plus exact, estimated, or
+  unknown video+audio size. Direct and multipart uploads report tracked byte progress in Telegram
+  and structured logs, followed by an honest elapsed-time Telegram-processing heartbeat. Per-volume
+  receipts are persisted immediately; upload chunks default to 1024 KiB and per-part timeout to
+  14400 seconds.
 - 2026-07-24: Simplified large-file delivery: every result above the configured direct Local Bot
   API ceiling now becomes stored 1850 MB ZIP volumes through 4096 MB. Removed the Premium account,
   Telethon dependency, MTProto session/CLI, staging channel, uploader queue/process, and `copyMessage`
@@ -59,7 +65,7 @@ gate run. External contracts remain opt-in and require operator-maintained publi
   bounded FFmpeg transcoding. Explicit video modes now preserve both audio and their distinct target
   resolution instead of collapsing every oversized choice to the same lower native stream.
 - 2026-07-24: Telegram file uploads now use the dedicated configurable
-  `telegram.upload_timeout_seconds` (600 seconds by default), preventing large uploads from being
+  `telegram.upload_timeout_seconds` (14400 seconds by default), preventing large uploads from being
   cut off by aiogram's 60-second general session timeout while preserving uncertain-delivery
   quarantine for genuinely ambiguous transport failures.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import mimetypes
 import shutil
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -20,11 +21,14 @@ from telegram_media_bot.domain.errors import (
 )
 from telegram_media_bot.domain.models import (
     ComponentHealth,
+    DownloadMode,
     DownloadRequest,
     DownloadResult,
+    MediaFormatOption,
     MediaInfo,
     MediaKind,
     ProgressEvent,
+    SizeConfidence,
 )
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
 from telegram_media_bot.infrastructure.ytdlp.error_mapper import map_ytdlp_error
@@ -37,6 +41,7 @@ from telegram_media_bot.infrastructure.ytdlp.options import (
     YtDlpOptionsFactory,
     bounded_format_selector,
     final_media_files,
+    inspect_format_option,
     video_target_height,
 )
 from telegram_media_bot.infrastructure.ytdlp.transcoder import transcode_video_to_limit
@@ -56,13 +61,17 @@ class YtDlpEngine:
         try:
             with YoutubeDL(self._options.inspect_options()) as ydl:
                 raw = ydl.extract_info(url, download=False)
+                format_options = self._inspect_format_options(ydl, raw)
                 info = self._sanitize(ydl, raw)
             self._validate_info_urls(info)
         except MediaBotError:
             raise
         except Exception as exc:
             raise map_ytdlp_error(exc) from exc
-        return map_media_info(info, original_url=url)
+        return replace(
+            map_media_info(info, original_url=url),
+            format_options=format_options,
+        )
 
     def download(
         self,
@@ -181,6 +190,79 @@ class YtDlpEngine:
 
     def health(self) -> ComponentHealth:
         return ComponentHealth(name="yt_dlp", healthy=True, detail=ytdlp_version)
+
+    def _inspect_format_options(self, ydl: YoutubeDL, raw: Any) -> tuple[MediaFormatOption, ...]:
+        if not isinstance(raw, dict):
+            return ()
+        entries = raw.get("entries")
+        contexts = (
+            [item for item in entries if isinstance(item, dict)]
+            if isinstance(entries, list)
+            else [raw]
+        )
+        if not contexts:
+            return ()
+        if not any(isinstance(context.get("formats"), list) for context in contexts):
+            return ()
+        max_size = self._settings.media.max_file_size_mb * 1024 * 1024
+        source_max_size = self._settings.media.max_source_size_mb * 1024 * 1024
+        try:
+            mp3_bitrate = int(self._settings.yt_dlp.audio_quality)
+        except ValueError:
+            mp3_bitrate = 192
+        options: list[MediaFormatOption] = []
+        for mode in self._settings.media.enabled_modes:
+            per_item: list[MediaFormatOption] = []
+            for context in contexts:
+                duration_raw = context.get("duration")
+                duration = int(duration_raw) if isinstance(duration_raw, (int, float)) else None
+                target_height = video_target_height(mode)
+                transfer_limit = source_max_size if target_height is not None else max_size
+                selector = ydl.build_format_selector(self._settings.media.formats.for_mode(mode))
+                option = inspect_format_option(
+                    selector,
+                    context,
+                    mode=mode,
+                    max_size_bytes=transfer_limit,
+                    duration_seconds=duration,
+                    mp3_bitrate_kbps=mp3_bitrate,
+                )
+                if option is None:
+                    break
+                per_item.append(option)
+            if len(per_item) != len(contexts):
+                continue
+            options.append(self._aggregate_format_options(mode, per_item))
+        return tuple(options)
+
+    @staticmethod
+    def _aggregate_format_options(
+        mode: DownloadMode,
+        options: list[MediaFormatOption],
+    ) -> MediaFormatOption:
+        known_sizes = [item.size_bytes for item in options if item.size_bytes is not None]
+        if len(known_sizes) != len(options):
+            size = None
+            confidence = SizeConfidence.UNKNOWN
+        else:
+            size = sum(known_sizes)
+            confidence = (
+                SizeConfidence.EXACT
+                if all(item.size_confidence is SizeConfidence.EXACT for item in options)
+                else SizeConfidence.ESTIMATED
+            )
+        widths = [item.width for item in options if item.width is not None]
+        heights = [item.height for item in options if item.height is not None]
+        frame_rates = [item.fps for item in options if item.fps is not None]
+        return MediaFormatOption(
+            mode=mode,
+            width=min(widths) if len(widths) == len(options) else None,
+            height=min(heights) if len(heights) == len(options) else None,
+            fps=min(frame_rates) if len(frame_rates) == len(options) else None,
+            is_hdr=any(item.is_hdr for item in options),
+            size_bytes=size,
+            size_confidence=confidence,
+        )
 
     @staticmethod
     def _sanitize(ydl: YoutubeDL, raw: Any) -> dict[str, Any]:

@@ -13,7 +13,9 @@ def test_example_configuration_is_valid() -> None:
     assert "youtube" in settings.media.enabled_sources
     assert settings.media.default_mode.value == "best"
     assert settings.media.max_source_size_mb == 1024
-    assert settings.telegram.upload_timeout_seconds == 600
+    assert settings.telegram.upload_timeout_seconds == 14400
+    assert settings.telegram.upload_chunk_size_kb == 1024
+    assert settings.telegram.upload_heartbeat_interval_seconds == 30
     assert not settings.telegram.local_bot_api.enabled
     assert "CHANGE_ME" not in repr(settings.telegram.bot_token)
 

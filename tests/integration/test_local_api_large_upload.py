@@ -4,10 +4,17 @@ import os
 from pathlib import Path
 
 import pytest
-from aiogram.types import FSInputFile
 
 from telegram_media_bot.bootstrap.config import load_settings
+from telegram_media_bot.domain.models import (
+    DeliveryProgressEvent,
+    DeliveryStage,
+    DownloadResult,
+    JobId,
+    MediaKind,
+)
 from telegram_media_bot.telegram.bot_factory import create_telegram_runtime
+from telegram_media_bot.telegram.delivery import TelegramDeliveryGateway
 
 
 @pytest.mark.integration
@@ -28,21 +35,39 @@ async def test_real_local_api_upload_larger_than_200_mb(tmp_path: Path) -> None:
     with payload.open("wb") as stream:
         stream.seek(201 * 1024 * 1024 - 1)
         stream.write(b"\0")
-    message = None
+    receipt = None
+    progress: list[DeliveryProgressEvent] = []
     try:
-        message = await runtime.bot.send_document(
+        gateway = TelegramDeliveryGateway(runtime.bot, settings)
+        receipt = await gateway.deliver(
             chat_id=settings.telegram.admin_ids[0],
-            document=FSInputFile(payload),
+            result=DownloadResult(
+                job_id=JobId("local-api-large-file-contract"),
+                media_id="large-file-contract",
+                title="Local API large file contract",
+                source="integration",
+                kind=MediaKind.UNKNOWN,
+                file_path=payload,
+                file_size_bytes=payload.stat().st_size,
+                mime_type="application/octet-stream",
+            ),
             caption="Local Bot API >200 MB integration test",
-            request_timeout=settings.telegram.upload_timeout_seconds,
+            progress=progress.append,
         )
-        assert message.document is not None
-        assert message.document.file_size is not None
-        assert message.document.file_size > 200 * 1024 * 1024
+        assert any(event.stage is DeliveryStage.UPLOADING for event in progress)
+        assert any(event.stage is DeliveryStage.FINALIZING for event in progress)
+        assert (
+            max(
+                event.transferred_bytes
+                for event in progress
+                if event.stage is DeliveryStage.UPLOADING
+            )
+            > 200 * 1024 * 1024
+        )
     finally:
-        if message is not None:
+        if receipt is not None:
             await runtime.bot.delete_message(
-                chat_id=message.chat.id,
-                message_id=message.message_id,
+                chat_id=settings.telegram.admin_ids[0],
+                message_id=receipt.message_id,
             )
         await runtime.bot.session.close()

@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import unicodedata
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import replace
 from pathlib import Path
+from time import monotonic
 
 import structlog
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
-from aiogram.types import FSInputFile, Message
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from aiogram.types import FSInputFile, InputFile, Message
 
-from telegram_media_bot.application.ports.delivery import DeliveryGateway
+from telegram_media_bot.application.ports.delivery import (
+    DeliveryGateway,
+    DeliveryItemSink,
+    DeliveryProgressSink,
+)
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     DeliveryError,
@@ -19,8 +26,10 @@ from telegram_media_bot.domain.errors import (
 from telegram_media_bot.domain.models import (
     DeliveryItemReceipt,
     DeliveryMethod,
+    DeliveryProgressEvent,
     DeliveryProvider,
     DeliveryReceipt,
+    DeliveryStage,
     DownloadResult,
     MediaKind,
 )
@@ -42,6 +51,8 @@ class TelegramDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        progress: DeliveryProgressSink | None = None,
+        item_delivered: DeliveryItemSink | None = None,
     ) -> DeliveryReceipt:
         limit = self._settings.telegram.max_upload_size_mb * 1024 * 1024
         if result.file_size_bytes > limit:
@@ -51,12 +62,21 @@ class TelegramDeliveryGateway(DeliveryGateway):
             suffix=result.file_path.suffix,
             max_length=self._settings.telegram.filename_max_length,
         )
-        upload = FSInputFile(result.file_path, filename=filename)
         preferred = self._preferred_method(result)
         try:
-            message = await self._send(preferred, chat_id, upload, caption)
-            return _receipt(message, preferred)
-        except TelegramAPIError as exc:
+            message = await self._send_tracked(
+                preferred,
+                chat_id,
+                result,
+                filename,
+                caption,
+                progress,
+            )
+            receipt = _receipt(message, preferred)
+            if item_delivered is not None:
+                await item_delivered(receipt.primary)
+            return receipt
+        except TelegramBadRequest as exc:
             if preferred is DeliveryMethod.DOCUMENT:
                 await logger.awarning(
                     "telegram_document_delivery_failed",
@@ -69,14 +89,31 @@ class TelegramDeliveryGateway(DeliveryGateway):
                 error_type=type(exc).__name__,
             )
             try:
-                message = await self._send(DeliveryMethod.DOCUMENT, chat_id, upload, caption)
-                return _receipt(message, DeliveryMethod.DOCUMENT)
+                message = await self._send_tracked(
+                    DeliveryMethod.DOCUMENT,
+                    chat_id,
+                    result,
+                    filename,
+                    caption,
+                    progress,
+                )
+                receipt = _receipt(message, DeliveryMethod.DOCUMENT)
+                if item_delivered is not None:
+                    await item_delivered(receipt.primary)
+                return receipt
             except TelegramAPIError as fallback_exc:
                 await logger.awarning(
                     "telegram_document_fallback_failed",
                     error_type=type(fallback_exc).__name__,
                 )
                 raise DeliveryError("Telegram delivery failed") from fallback_exc
+        except TelegramAPIError as exc:
+            await logger.awarning(
+                "telegram_delivery_response_uncertain",
+                method=preferred.value,
+                error_type=type(exc).__name__,
+            )
+            raise DeliveryError("Telegram delivery response is uncertain") from exc
 
     async def send_text(self, chat_id: int, text: str) -> int:
         try:
@@ -91,11 +128,64 @@ class TelegramDeliveryGateway(DeliveryGateway):
         except TelegramAPIError as exc:
             raise DeliveryError("Telegram progress edit failed") from exc
 
+    async def _send_tracked(
+        self,
+        method: DeliveryMethod,
+        chat_id: int,
+        result: DownloadResult,
+        filename: str,
+        caption: str,
+        progress: DeliveryProgressSink | None,
+    ) -> Message:
+        started = monotonic()
+        stream_finished = asyncio.Event()
+        request_finished = asyncio.Event()
+
+        def emit(stage: DeliveryStage, transferred: int) -> None:
+            if progress is None:
+                return
+            progress(
+                DeliveryProgressEvent(
+                    job_id=result.job_id,
+                    stage=stage,
+                    transferred_bytes=transferred,
+                    total_bytes=result.file_size_bytes,
+                    item_transferred_bytes=transferred,
+                    item_size_bytes=result.file_size_bytes,
+                    elapsed_seconds=monotonic() - started,
+                )
+            )
+
+        def on_stream_finished(transferred: int) -> None:
+            emit(DeliveryStage.FINALIZING, transferred)
+            stream_finished.set()
+
+        upload = TrackedFSInputFile(
+            result.file_path,
+            filename=filename,
+            chunk_size=self._settings.telegram.upload_chunk_size_kb * 1024,
+            on_progress=lambda transferred: emit(DeliveryStage.UPLOADING, transferred),
+            on_finished=on_stream_finished,
+        )
+        heartbeat = asyncio.create_task(
+            _finalization_heartbeat(
+                stream_finished,
+                request_finished,
+                interval_seconds=self._settings.telegram.upload_heartbeat_interval_seconds,
+                emit=lambda: emit(DeliveryStage.FINALIZING, result.file_size_bytes),
+            )
+        )
+        try:
+            return await self._send(method, chat_id, upload, caption)
+        finally:
+            request_finished.set()
+            await heartbeat
+
     async def _send(
         self,
         method: DeliveryMethod,
         chat_id: int,
-        upload: FSInputFile,
+        upload: InputFile,
         caption: str,
     ) -> Message:
         request_timeout = self._settings.telegram.upload_timeout_seconds
@@ -145,13 +235,27 @@ class RoutedDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        progress: DeliveryProgressSink | None = None,
+        item_delivered: DeliveryItemSink | None = None,
     ) -> DeliveryReceipt:
         direct_limit = self._settings.telegram.max_upload_size_mb * 1024 * 1024
         if result.file_size_bytes <= direct_limit:
-            return await self._direct.deliver(chat_id=chat_id, result=result, caption=caption)
+            return await self._direct.deliver(
+                chat_id=chat_id,
+                result=result,
+                caption=caption,
+                progress=progress,
+                item_delivered=item_delivered,
+            )
         if not self._settings.multipart.enabled:
             raise DeliveryTooLargeError("Multipart delivery is disabled")
-        return await self._deliver_multipart(chat_id=chat_id, result=result, caption=caption)
+        return await self._deliver_multipart(
+            chat_id=chat_id,
+            result=result,
+            caption=caption,
+            progress=progress,
+            item_delivered=item_delivered,
+        )
 
     async def send_text(self, chat_id: int, text: str) -> int:
         return await self._direct.send_text(chat_id, text)
@@ -165,11 +269,22 @@ class RoutedDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        progress: DeliveryProgressSink | None,
+        item_delivered: DeliveryItemSink | None,
     ) -> DeliveryReceipt:
-        import asyncio
-
+        packaging_started = monotonic()
+        if progress is not None:
+            progress(
+                DeliveryProgressEvent(
+                    job_id=result.job_id,
+                    stage=DeliveryStage.PACKAGING,
+                    total_bytes=result.file_size_bytes,
+                )
+            )
         archive = await asyncio.to_thread(self._multipart.build, result.file_path)
         paths = (*archive.volumes, archive.manifest)
+        total_upload_bytes = sum(path.stat().st_size for path in paths)
+        completed_bytes = 0
         receipts: list[DeliveryItemReceipt] = []
         for ordinal, path in enumerate(paths, start=1):
             part = DownloadResult(
@@ -187,18 +302,41 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 if path != archive.manifest
                 else "فایل manifest شامل اندازه و SHA-256 همه بخش‌ها"  # noqa: RUF001
             )
+
+            def map_progress(
+                event: DeliveryProgressEvent,
+                *,
+                completed: int = completed_bytes,
+                item_ordinal: int = ordinal,
+            ) -> None:
+                if progress is None:
+                    return
+                progress(
+                    replace(
+                        event,
+                        transferred_bytes=completed + event.item_transferred_bytes,
+                        total_bytes=total_upload_bytes,
+                        item_ordinal=item_ordinal,
+                        item_count=len(paths),
+                        elapsed_seconds=monotonic() - packaging_started,
+                    )
+                )
+
             receipt = await self._direct.deliver(
                 chat_id=chat_id,
                 result=part,
                 caption=part_caption,
+                progress=map_progress,
             )
-            receipts.append(
-                replace(
-                    receipt.primary,
-                    provider=DeliveryProvider.MULTIPART,
-                    ordinal=ordinal,
-                )
+            item = replace(
+                receipt.primary,
+                provider=DeliveryProvider.MULTIPART,
+                ordinal=ordinal,
             )
+            receipts.append(item)
+            if item_delivered is not None:
+                await item_delivered(item)
+            completed_bytes += part.file_size_bytes
         await self._direct.send_text(
             chat_id,
             "همه فایل‌های ‎.zip.001‎، ‎.zip.002‎ و سایر بخش‌ها را در یک پوشه قرار دهید "  # noqa: RUF001
@@ -239,3 +377,52 @@ def _receipt(message: Message, method: DeliveryMethod) -> DeliveryReceipt:
         file_id=media.file_id,
         file_unique_id=media.file_unique_id,
     )
+
+
+class TrackedFSInputFile(FSInputFile):
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        filename: str,
+        chunk_size: int,
+        on_progress: Callable[[int], None],
+        on_finished: Callable[[int], None],
+    ) -> None:
+        super().__init__(path, filename=filename, chunk_size=chunk_size)
+        self._on_progress = on_progress
+        self._on_finished = on_finished
+
+    async def read(self, bot: Bot) -> AsyncGenerator[bytes]:
+        transferred = 0
+        async for chunk in super().read(bot):
+            yield chunk
+            transferred += len(chunk)
+            self._on_progress(transferred)
+        self._on_finished(transferred)
+
+
+async def _finalization_heartbeat(
+    stream_finished: asyncio.Event,
+    request_finished: asyncio.Event,
+    *,
+    interval_seconds: float,
+    emit: Callable[[], None],
+) -> None:
+    stream_wait = asyncio.create_task(stream_finished.wait())
+    request_wait = asyncio.create_task(request_finished.wait())
+    done, pending = await asyncio.wait(
+        {stream_wait, request_wait},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    if request_wait in done or request_finished.is_set():
+        return
+    while not request_finished.is_set():
+        try:
+            await asyncio.wait_for(request_finished.wait(), timeout=interval_seconds)
+        except TimeoutError:
+            emit()

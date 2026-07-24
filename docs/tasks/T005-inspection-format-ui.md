@@ -1,13 +1,14 @@
 # T005 - Inspection and format selection
 
-**Status:** complete (2026-07-23)
+**Status:** complete (real-format/size expansion 2026-07-24)
 
 Inspection runs as an ARQ worker job. Normalized metadata is stored in SQLite behind an opaque,
 owner-bound, expiring selection token. Callback data contains only the token and a configured
 semantic mode; ownership, expiry, mode membership, playlist count, and duration are validated before
-a durable download job is enqueued. A generic upstream size estimate is displayed as advisory
-metadata because it may describe a different format; selected-format and final-file limits remain
-mandatory.
+a durable download job is enqueued. The adapter evaluates the same bounded semantic selector used
+for download, so exact-height modes are shown only when present and cannot silently fall back.
+Each option records resolution, FPS, HDR/SDR, and exact/estimated/unknown component-summed size.
+Legacy selections without this JSON field remain readable.
 
 ## Deliverables
 

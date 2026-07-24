@@ -1,6 +1,15 @@
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from telegram_media_bot.domain.models import DeliveryReceipt, DownloadResult
+from telegram_media_bot.domain.models import (
+    DeliveryItemReceipt,
+    DeliveryProgressEvent,
+    DeliveryReceipt,
+    DownloadResult,
+)
+
+DeliveryProgressSink = Callable[[DeliveryProgressEvent], None]
+DeliveryItemSink = Callable[[DeliveryItemReceipt], Awaitable[None]]
 
 
 class DeliveryGateway(Protocol):
@@ -10,6 +19,8 @@ class DeliveryGateway(Protocol):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        progress: DeliveryProgressSink | None = None,
+        item_delivered: DeliveryItemSink | None = None,
     ) -> DeliveryReceipt: ...
 
     async def send_text(self, chat_id: int, text: str) -> int: ...

@@ -7,7 +7,12 @@ from typing import Any
 
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import MediaTooLargeError
-from telegram_media_bot.domain.models import DownloadMode, DownloadRequest
+from telegram_media_bot.domain.models import (
+    DownloadMode,
+    DownloadRequest,
+    MediaFormatOption,
+    SizeConfidence,
+)
 
 FormatSelector = Callable[[dict[str, Any]], Iterable[dict[str, Any]]]
 _VIDEO_TARGET_HEIGHTS = {
@@ -17,6 +22,13 @@ _VIDEO_TARGET_HEIGHTS = {
     DownloadMode.VIDEO_1080: 1080,
     DownloadMode.VIDEO_720: 720,
     DownloadMode.VIDEO_480: 480,
+}
+_FIXED_VIDEO_MODES = {
+    DownloadMode.VIDEO_2160,
+    DownloadMode.VIDEO_1440,
+    DownloadMode.VIDEO_1080,
+    DownloadMode.VIDEO_720,
+    DownloadMode.VIDEO_480,
 }
 
 
@@ -128,8 +140,18 @@ def bounded_format_selector(
                 item
                 for item in formats
                 if not _is_video(item)
-                or not isinstance(item.get("height"), (int, float))
-                or int(item["height"]) <= target_height
+                or (
+                    mode not in _FIXED_VIDEO_MODES
+                    and not isinstance(item.get("height"), (int, float))
+                )
+                or (
+                    isinstance(item.get("height"), (int, float))
+                    and (
+                        int(item["height"]) == target_height
+                        if mode in _FIXED_VIDEO_MODES
+                        else int(item["height"]) <= target_height
+                    )
+                )
             ]
             sdr_heights = {
                 int(item["height"])
@@ -161,9 +183,22 @@ def bounded_format_selector(
                 continue
             visited.add(excluded)
             available = [item for item in formats if str(item.get("format_id")) not in excluded]
-            candidate_context = {**context, "formats": available}
+            candidate_context = {
+                **context,
+                "formats": available,
+                "has_merged_format": any(
+                    item.get("vcodec") != "none" and item.get("acodec") != "none"
+                    for item in available
+                ),
+                "incomplete_formats": (
+                    all(item.get("vcodec") == "none" for item in available)
+                    or all(item.get("acodec") == "none" for item in available)
+                ),
+            }
             for candidate in base_selector(candidate_context):
                 components = _selected_components(candidate)
+                if not _is_complete_selection(components, mode):
+                    continue
                 score = _selection_score(components, quality_index, mode)
                 size = _known_total_size(components)
                 if size is None:
@@ -190,6 +225,38 @@ def bounded_format_selector(
     return select
 
 
+def inspect_format_option(
+    base_selector: FormatSelector,
+    context: dict[str, Any],
+    *,
+    mode: DownloadMode,
+    max_size_bytes: int,
+    duration_seconds: int | None,
+    mp3_bitrate_kbps: int,
+) -> MediaFormatOption | None:
+    try:
+        candidate = next(
+            iter(
+                bounded_format_selector(
+                    base_selector,
+                    mode=mode,
+                    max_size_bytes=max_size_bytes,
+                )(context)
+            ),
+            None,
+        )
+    except MediaTooLargeError:
+        return None
+    if candidate is None:
+        return None
+    return _describe_candidate(
+        candidate,
+        mode=mode,
+        duration_seconds=duration_seconds,
+        mp3_bitrate_kbps=mp3_bitrate_kbps,
+    )
+
+
 def video_target_height(mode: DownloadMode) -> int | None:
     return _VIDEO_TARGET_HEIGHTS.get(mode)
 
@@ -205,6 +272,91 @@ def _selected_components(candidate: Mapping[str, Any]) -> tuple[Mapping[str, Any
         if components:
             return components
     return (candidate,)
+
+
+def _is_complete_selection(
+    components: tuple[Mapping[str, Any], ...],
+    mode: DownloadMode,
+) -> bool:
+    has_video = any(_is_video(item) for item in components)
+    has_audio = any(item.get("acodec") not in {None, "none"} for item in components)
+    if mode in {DownloadMode.AUDIO_BEST, DownloadMode.AUDIO_MP3}:
+        return has_audio
+    if mode is DownloadMode.BEST and not has_video:
+        return has_audio or bool(components)
+    return has_video and has_audio
+
+
+def _describe_candidate(
+    candidate: Mapping[str, Any],
+    *,
+    mode: DownloadMode,
+    duration_seconds: int | None,
+    mp3_bitrate_kbps: int,
+) -> MediaFormatOption:
+    components = _selected_components(candidate)
+    videos = tuple(item for item in components if _is_video(item))
+    video = max(
+        videos,
+        key=lambda item: (
+            int(item.get("height") or 0),
+            int(item.get("width") or 0),
+            float(item.get("fps") or 0),
+        ),
+        default=None,
+    )
+    size_bytes: int | None
+    if mode is DownloadMode.AUDIO_MP3 and duration_seconds is not None:
+        size_bytes = int(duration_seconds * mp3_bitrate_kbps * 1000 / 8)
+        confidence = SizeConfidence.ESTIMATED
+    else:
+        size_bytes, confidence = _estimated_total_size(components, duration_seconds)
+    return MediaFormatOption(
+        mode=mode,
+        width=_positive_int(video.get("width")) if video is not None else None,
+        height=_positive_int(video.get("height")) if video is not None else None,
+        fps=_positive_float(video.get("fps")) if video is not None else None,
+        is_hdr=any(_is_hdr(item) for item in videos),
+        size_bytes=size_bytes,
+        size_confidence=confidence,
+    )
+
+
+def _estimated_total_size(
+    components: tuple[Mapping[str, Any], ...],
+    duration_seconds: int | None,
+) -> tuple[int | None, SizeConfidence]:
+    total = 0
+    confidence = SizeConfidence.EXACT
+    for component in components:
+        exact = component.get("filesize")
+        if isinstance(exact, (int, float)) and exact > 0:
+            total += int(exact)
+            continue
+        approximate = component.get("filesize_approx")
+        if isinstance(approximate, (int, float)) and approximate > 0:
+            total += int(approximate)
+            confidence = SizeConfidence.ESTIMATED
+            continue
+        bitrate = component.get("tbr") or component.get("vbr") or component.get("abr")
+        if duration_seconds is not None and isinstance(bitrate, (int, float)) and bitrate > 0:
+            total += int(duration_seconds * float(bitrate) * 1000 / 8)
+            confidence = SizeConfidence.ESTIMATED
+            continue
+        return None, SizeConfidence.UNKNOWN
+    return total, confidence
+
+
+def _positive_int(value: object) -> int | None:
+    if isinstance(value, (int, float)) and value > 0:
+        return int(value)
+    return None
+
+
+def _positive_float(value: object) -> float | None:
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    return None
 
 
 def _known_total_size(components: tuple[Mapping[str, Any], ...]) -> int | None:

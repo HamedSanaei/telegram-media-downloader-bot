@@ -30,6 +30,18 @@ class MediaKind(StrEnum):
     UNKNOWN = "unknown"
 
 
+class SizeConfidence(StrEnum):
+    EXACT = "exact"
+    ESTIMATED = "estimated"
+    UNKNOWN = "unknown"
+
+
+class DeliveryStage(StrEnum):
+    PACKAGING = "packaging"
+    UPLOADING = "uploading"
+    FINALIZING = "finalizing"
+
+
 class JobKind(StrEnum):
     INSPECTION = "inspection"
     DOWNLOAD = "download"
@@ -100,6 +112,18 @@ class MediaInfo:
     thumbnail_url: str | None = None
     item_count: int | None = None
     estimated_size_bytes: int | None = None
+    format_options: tuple[MediaFormatOption, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MediaFormatOption:
+    mode: DownloadMode
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    is_hdr: bool = False
+    size_bytes: int | None = None
+    size_confidence: SizeConfidence = SizeConfidence.UNKNOWN
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +162,34 @@ class ProgressEvent:
         if not self.total_bytes or self.total_bytes <= 0:
             return None
         return min(100.0, max(0.0, self.downloaded_bytes * 100 / self.total_bytes))
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryProgressEvent:
+    job_id: JobId
+    stage: DeliveryStage
+    transferred_bytes: int = 0
+    total_bytes: int | None = None
+    item_ordinal: int = 1
+    item_count: int = 1
+    item_transferred_bytes: int = 0
+    item_size_bytes: int | None = None
+    elapsed_seconds: float = 0.0
+
+    @property
+    def percent(self) -> float | None:
+        if not self.total_bytes or self.total_bytes <= 0:
+            return None
+        return min(100.0, max(0.0, self.transferred_bytes * 100 / self.total_bytes))
+
+    @property
+    def item_percent(self) -> float | None:
+        if not self.item_size_bytes or self.item_size_bytes <= 0:
+            return None
+        return min(
+            100.0,
+            max(0.0, self.item_transferred_bytes * 100 / self.item_size_bytes),
+        )
 
 
 @dataclass(frozen=True, slots=True)

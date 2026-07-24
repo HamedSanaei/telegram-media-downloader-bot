@@ -27,10 +27,12 @@ from telegram_media_bot.domain.models import (
     JobKind,
     JobRecord,
     JobStatus,
+    MediaFormatOption,
     MediaInfo,
     MediaKind,
     SelectionRecord,
     SelectionToken,
+    SizeConfidence,
 )
 
 _ACTIVE_STATUSES = (
@@ -153,6 +155,18 @@ class SqliteJobRepository(JobRepository):
             "thumbnail_url": selection.media.thumbnail_url,
             "item_count": selection.media.item_count,
             "estimated_size_bytes": selection.media.estimated_size_bytes,
+            "format_options": [
+                {
+                    "mode": option.mode.value,
+                    "width": option.width,
+                    "height": option.height,
+                    "fps": option.fps,
+                    "is_hdr": option.is_hdr,
+                    "size_bytes": option.size_bytes,
+                    "size_confidence": option.size_confidence.value,
+                }
+                for option in selection.media.format_options
+            ],
         }
         with self._connect() as connection:
             connection.execute(
@@ -457,6 +471,23 @@ def _selection_from_row(row: sqlite3.Row) -> SelectionRecord:
         thumbnail_url=(str(raw["thumbnail_url"]) if raw.get("thumbnail_url") else None),
         item_count=raw.get("item_count"),
         estimated_size_bytes=raw.get("estimated_size_bytes"),
+        format_options=tuple(
+            MediaFormatOption(
+                mode=DownloadMode(str(item["mode"])),
+                width=int(item["width"]) if item.get("width") is not None else None,
+                height=int(item["height"]) if item.get("height") is not None else None,
+                fps=float(item["fps"]) if item.get("fps") is not None else None,
+                is_hdr=bool(item.get("is_hdr", False)),
+                size_bytes=(
+                    int(item["size_bytes"]) if item.get("size_bytes") is not None else None
+                ),
+                size_confidence=SizeConfidence(
+                    str(item.get("size_confidence", SizeConfidence.UNKNOWN.value))
+                ),
+            )
+            for item in raw.get("format_options", [])
+            if isinstance(item, dict) and item.get("mode") is not None
+        ),
     )
     return SelectionRecord(
         token=SelectionToken(str(row["token"])),

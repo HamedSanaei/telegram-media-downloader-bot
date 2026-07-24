@@ -7,9 +7,9 @@ Captions and filenames are sanitized, upload limits fail explicitly, and an opti
 base URL is supported. Video modes select a complete SDR source at the requested resolution
 ceiling and transcode oversized results to H.264/AAC at that resolution beneath the final delivery
 limit. Source transfers have a separate bounded ceiling and never treat one surviving stream as a
-complete video. File uploads use a dedicated configurable request timeout instead of aiogram's
-shorter general session default. Docker pins Deno 2.9.3 and installs ffmpeg; `doctor` reports runtime
-versions.
+complete video. File uploads use a dedicated configurable four-hour per-part timeout, 1024 KiB
+tracked chunks, and 30-second opaque-finalization heartbeats instead of aiogram's shorter general
+session default. Docker pins Deno 2.9.3 and installs ffmpeg; `doctor` reports runtime versions.
 
 The expanded implementation supports a 1900 MB practical ceiling with a shared config-derived
 Bot/Worker client, managed/external Local Bot API lifecycle, explicit idempotent cloud/local
@@ -21,6 +21,10 @@ The second expansion adds semantic `1440p`, `2160p`, and `best_original`, plus l
 volumes for every result above the direct upload ceiling and up to 4096 MB. Each delivery item is
 persisted separately for restart safety. No Premium account, Userbot, MTProto session, private
 staging channel, or copy step is used.
+
+Fixed resolution modes are exact rather than fallback ceilings, selected video+audio size is
+calculated during inspection, and direct/multipart upload byte progress appears in both the status
+message and structured console log. Telegram post-body processing is reported as elapsed time only.
 
 ## Deliverables
 

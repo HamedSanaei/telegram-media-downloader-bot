@@ -1,17 +1,20 @@
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest
-from aiogram.methods import SendVideo
-from aiogram.types import Audio, Chat, Document, FSInputFile, Message, MessageId, Video
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
+from aiogram.methods import SendDocument, SendVideo
+from aiogram.types import Audio, Chat, Document, FSInputFile, InputFile, Message, MessageId, Video
 
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.errors import DeliveryTooLargeError
+from telegram_media_bot.domain.errors import DeliveryError, DeliveryTooLargeError
 from telegram_media_bot.domain.models import (
+    DeliveryProgressEvent,
     DeliveryProvider,
+    DeliveryStage,
     DownloadResult,
     JobId,
     MediaKind,
@@ -20,18 +23,22 @@ from telegram_media_bot.infrastructure.archive.multipart_zip import MultipartArc
 from telegram_media_bot.telegram.delivery import (
     RoutedDeliveryGateway,
     TelegramDeliveryGateway,
+    TrackedFSInputFile,
+    _finalization_heartbeat,
     render_caption,
 )
 
 
 class FakeBot:
     fail_video = False
+    fail_video_network = False
 
     def __init__(self) -> None:
         self.last_upload: dict[str, object] = {}
 
     async def send_audio(self, **kwargs: object) -> Message:
         self.last_upload = kwargs
+        await self._consume(kwargs.get("audio"))
         return _message("audio")
 
     async def send_video(self, **kwargs: object) -> Message:
@@ -40,10 +47,17 @@ class FakeBot:
             raise TelegramBadRequest(
                 method=SendVideo(chat_id=1, video="existing-file-id"), message="unsupported"
             )
+        if self.fail_video_network:
+            raise TelegramNetworkError(
+                method=SendVideo(chat_id=1, video="existing-file-id"),
+                message="connection lost",
+            )
+        await self._consume(kwargs.get("video"))
         return _message("video")
 
     async def send_document(self, **kwargs: object) -> Message:
         self.last_upload = kwargs
+        await self._consume(kwargs.get("document"))
         return _message("document")
 
     async def send_message(self, **_kwargs: object) -> Message:
@@ -54,6 +68,11 @@ class FakeBot:
 
     async def copy_message(self, **_kwargs: object) -> MessageId:
         return MessageId(message_id=77)
+
+    async def _consume(self, upload: object) -> None:
+        if isinstance(upload, InputFile):
+            async for _chunk in upload.read(cast(Bot, cast(Any, self))):
+                pass
 
 
 @pytest.mark.parametrize(
@@ -83,6 +102,24 @@ async def test_video_failure_falls_back_to_document(settings: Settings, tmp_path
         chat_id=1, result=_result(tmp_path, MediaKind.VIDEO), caption="caption"
     )
     assert receipt.method.value == "document"
+
+
+async def test_ambiguous_network_failure_never_falls_back_or_retries(
+    settings: Settings, tmp_path: Path
+) -> None:
+    bot = FakeBot()
+    bot.fail_video_network = True
+    gateway = TelegramDeliveryGateway(cast(Bot, cast(Any, bot)), _auto_delivery(settings))
+
+    with pytest.raises(DeliveryError):
+        await gateway.deliver(
+            chat_id=1,
+            result=_result(tmp_path, MediaKind.VIDEO),
+            caption="caption",
+        )
+
+    assert "video" in bot.last_upload
+    assert "document" not in bot.last_upload
 
 
 async def test_delivery_rejects_oversize_before_api_call(
@@ -130,6 +167,47 @@ async def test_local_api_accepts_declared_file_over_200_mb_without_recompression
     await gateway.deliver(chat_id=1, result=large_result, caption="caption")
 
     assert isinstance(bot.last_upload["document"], FSInputFile)
+
+
+async def test_tracked_input_file_reports_bytes_without_exposing_path(tmp_path: Path) -> None:
+    source = tmp_path / "private-name.bin"
+    source.write_bytes(b"abcdefghij")
+    transferred: list[int] = []
+    finished: list[int] = []
+    upload = TrackedFSInputFile(
+        source,
+        filename="safe.bin",
+        chunk_size=4,
+        on_progress=transferred.append,
+        on_finished=finished.append,
+    )
+
+    chunks = [chunk async for chunk in upload.read(cast(Bot, cast(Any, FakeBot())))]
+
+    assert b"".join(chunks) == b"abcdefghij"
+    assert transferred == [4, 8, 10]
+    assert finished == [10]
+
+
+async def test_finalization_heartbeat_reports_elapsed_wait_without_fake_bytes() -> None:
+    stream_finished = asyncio.Event()
+    request_finished = asyncio.Event()
+    heartbeats: list[None] = []
+    task = asyncio.create_task(
+        _finalization_heartbeat(
+            stream_finished,
+            request_finished,
+            interval_seconds=0.01,
+            emit=lambda: heartbeats.append(None),
+        )
+    )
+
+    stream_finished.set()
+    await asyncio.sleep(0.035)
+    request_finished.set()
+    await task
+
+    assert len(heartbeats) >= 2
 
 
 async def test_text_delivery_helpers(settings: Settings) -> None:
@@ -198,10 +276,88 @@ async def test_routed_delivery_sends_multipart_immediately_above_direct_limit(
     gateway = RoutedDeliveryGateway(cast(Bot, cast(Any, FakeBot())), configured)
     gateway._multipart = cast(Any, FakeBuilder())
 
-    receipt = await gateway.deliver(chat_id=1, result=declared_large, caption="caption")
+    persisted_ordinals: list[int] = []
+    progress: list[DeliveryProgressEvent] = []
+
+    async def item_delivered(item: object) -> None:
+        persisted_ordinals.append(cast(Any, item).ordinal)
+
+    receipt = await gateway.deliver(
+        chat_id=1,
+        result=declared_large,
+        caption="caption",
+        progress=progress.append,
+        item_delivered=item_delivered,
+    )
 
     assert len(receipt.items) == 3
     assert all(item.provider is DeliveryProvider.MULTIPART for item in receipt.items)
+    assert persisted_ordinals == [1, 2, 3]
+    assert progress[0].stage is DeliveryStage.PACKAGING
+    assert progress[-1].item_ordinal == 3
+    assert progress[-1].item_count == 3
+
+
+async def test_multipart_persists_first_receipt_before_later_network_failure(
+    settings: Settings, tmp_path: Path
+) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["max_upload_size_mb"] = 1
+    raw["media"]["max_file_size_mb"] = 10
+    raw["media"]["max_source_size_mb"] = 10
+    raw["multipart"]["part_size_mb"] = 1
+    configured = Settings.model_validate(raw)
+    source = tmp_path / "result.mp4"
+    source.write_bytes(b"source")
+    result = DownloadResult(
+        job_id=JobId("job"),
+        media_id="media",
+        title="Title",
+        source="youtube",
+        kind=MediaKind.VIDEO,
+        file_path=source,
+        file_size_bytes=2 * 1024 * 1024,
+    )
+    volume_one = tmp_path / "result.mp4.zip.001"
+    volume_two = tmp_path / "result.mp4.zip.002"
+    manifest = tmp_path / "result.mp4.manifest.json"
+    for path in (volume_one, volume_two, manifest):
+        path.write_bytes(b"part")
+
+    class FakeBuilder:
+        def build(self, _source: Path) -> MultipartArchive:
+            return MultipartArchive((volume_one, volume_two), manifest)
+
+    class FailSecondBot(FakeBot):
+        def __init__(self) -> None:
+            super().__init__()
+            self.document_calls = 0
+
+        async def send_document(self, **kwargs: object) -> Message:
+            self.document_calls += 1
+            if self.document_calls == 2:
+                raise TelegramNetworkError(
+                    method=SendDocument(chat_id=1, document="existing-file-id"),
+                    message="connection lost",
+                )
+            return await super().send_document(**kwargs)
+
+    gateway = RoutedDeliveryGateway(cast(Bot, cast(Any, FailSecondBot())), configured)
+    gateway._multipart = cast(Any, FakeBuilder())
+    persisted: list[int] = []
+
+    async def item_delivered(item: object) -> None:
+        persisted.append(cast(Any, item).ordinal)
+
+    with pytest.raises(DeliveryError):
+        await gateway.deliver(
+            chat_id=1,
+            result=result,
+            caption="caption",
+            item_delivered=item_delivered,
+        )
+
+    assert persisted == [1]
 
 
 def _auto_delivery(settings: Settings) -> Settings:

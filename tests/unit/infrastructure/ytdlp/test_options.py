@@ -10,6 +10,7 @@ from telegram_media_bot.infrastructure.ytdlp.options import (
     YtDlpOptionsFactory,
     bounded_format_selector,
     final_media_files,
+    inspect_format_option,
     video_target_height,
 )
 
@@ -74,8 +75,8 @@ def test_bounded_selector_prefers_complete_video_with_lower_audio() -> None:
     formats = [
         _format("audio-low", size=10, audio=True),
         _format("audio-high", size=30, audio=True),
-        _format("video-low", size=20, video=True),
-        _format("video-high", size=40, video=True),
+        _format("video-low", size=20, video=True, height=1080),
+        _format("video-high", size=40, video=True, height=1080),
     ]
     selector = bounded_format_selector(
         _best_video_audio_selector,
@@ -94,7 +95,7 @@ def test_bounded_selector_prefers_complete_video_with_lower_audio() -> None:
 def test_bounded_selector_rejects_when_no_complete_selection_fits() -> None:
     formats = [
         _format("audio", size=30, audio=True),
-        _format("video", size=40, video=True),
+        _format("video", size=40, video=True, height=720),
     ]
     selector = bounded_format_selector(
         _best_video_audio_selector,
@@ -169,6 +170,110 @@ def test_bounded_selector_prefers_sdr_at_same_resolution() -> None:
     selected = list(selector({"formats": formats}))
 
     assert selected[0]["requested_formats"][0]["format_id"] == "video-sdr"
+
+
+def test_fixed_mode_never_falls_back_to_lower_height() -> None:
+    formats = [
+        _format("audio", size=10, audio=True),
+        _format("video-1080", size=40, video=True, height=1080),
+    ]
+    selector = bounded_format_selector(
+        _best_video_audio_selector,
+        mode=DownloadMode.VIDEO_2160,
+        max_size_bytes=100,
+    )
+
+    with pytest.raises(MediaTooLargeError):
+        list(selector({"formats": formats}))
+
+
+def test_bounded_selector_supplies_complete_ytdlp_selector_context() -> None:
+    formats = [
+        _format("audio", size=10, audio=True),
+        _format("video", size=40, video=True, height=720),
+    ]
+
+    def context_aware_selector(context: dict[str, Any]) -> list[dict[str, Any]]:
+        assert context["has_merged_format"] is False
+        assert context["incomplete_formats"] is False
+        return _best_video_audio_selector(context)
+
+    selector = bounded_format_selector(
+        context_aware_selector,
+        mode=DownloadMode.VIDEO_720,
+        max_size_bytes=100,
+    )
+
+    assert list(selector({"formats": formats}))
+
+
+def test_inspected_option_sums_exact_video_and_audio_size() -> None:
+    formats = [
+        _format("audio", size=10, audio=True),
+        _format("video", size=40, video=True, height=2160),
+    ]
+
+    option = inspect_format_option(
+        _best_video_audio_selector,
+        {"formats": formats},
+        mode=DownloadMode.VIDEO_2160,
+        max_size_bytes=100,
+        duration_seconds=60,
+        mp3_bitrate_kbps=192,
+    )
+
+    assert option is not None
+    assert option.height == 2160
+    assert option.size_bytes == 50
+    assert option.size_confidence.value == "exact"
+
+
+def test_inspected_option_estimates_missing_size_from_bitrate() -> None:
+    formats = [
+        {
+            **_format("audio", size=0, audio=True),
+            "filesize": None,
+            "abr": 128,
+        },
+        {
+            **_format("video", size=0, video=True, height=1440),
+            "filesize": None,
+            "vbr": 2000,
+        },
+    ]
+
+    option = inspect_format_option(
+        _best_video_audio_selector,
+        {"formats": formats},
+        mode=DownloadMode.VIDEO_1440,
+        max_size_bytes=100_000_000,
+        duration_seconds=60,
+        mp3_bitrate_kbps=192,
+    )
+
+    assert option is not None
+    assert option.size_bytes == int(60 * (128 + 2000) * 1000 / 8)
+    assert option.size_confidence.value == "estimated"
+
+
+def test_mp3_size_uses_configured_bitrate() -> None:
+    option = inspect_format_option(
+        _best_video_audio_selector,
+        {
+            "formats": [
+                _format("audio", size=10, audio=True),
+                _format("video", size=40, video=True, height=1080),
+            ]
+        },
+        mode=DownloadMode.AUDIO_MP3,
+        max_size_bytes=100,
+        duration_seconds=120,
+        mp3_bitrate_kbps=192,
+    )
+
+    assert option is not None
+    assert option.size_bytes == 2_880_000
+    assert option.size_confidence.value == "estimated"
 
 
 def _format(

@@ -31,6 +31,12 @@ Every result above the configured direct-upload ceiling is sent as stored ZIP vo
 Premium/Userbot service to operate. Full setup, extraction, and troubleshooting instructions are
 in `docs/MULTIPART_DELIVERY.md`.
 
+The status message and worker JSON logs report upload stage, part ordinal/count, bytes, percentage,
+and elapsed time. After a part is streamed to Local Bot API, a 30-second heartbeat reports that
+Telegram is still processing it; no synthetic percentage is shown. The default per-part timeout is
+four hours. A network failure remains `delivery_uncertain`: check the chat, then use `/resolve`;
+never retry it automatically.
+
 ## Telegram administration
 
 Only IDs in `telegram.admin_ids` can use:

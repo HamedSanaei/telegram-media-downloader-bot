@@ -87,6 +87,74 @@ def test_inspect_returns_project_owned_model(
     assert info.kind is MediaKind.AUDIO
 
 
+def test_inspect_offers_only_real_fixed_video_heights(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FormatYoutubeDL(FakeYoutubeDL):
+        info: ClassVar[dict[str, Any]] = {
+            "id": "video",
+            "title": "Video",
+            "extractor_key": "Youtube",
+            "webpage_url": "https://example.test/video",
+            "vcodec": "vp9",
+            "acodec": "opus",
+            "ext": "webm",
+            "duration": 60,
+            "formats": [
+                {
+                    "format_id": "audio",
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "filesize": 10,
+                },
+                {
+                    "format_id": "video-1080",
+                    "vcodec": "vp9",
+                    "acodec": "none",
+                    "height": 1080,
+                    "width": 1920,
+                    "fps": 30,
+                    "filesize": 40,
+                },
+            ],
+        }
+
+        def build_format_selector(self, selector: str) -> Any:
+            if selector.startswith("bestaudio"):
+                return lambda context: iter(
+                    item for item in reversed(context["formats"]) if item["acodec"] != "none"
+                )
+
+            def video_audio(context: dict[str, Any]) -> Any:
+                videos = [item for item in context["formats"] if item["vcodec"] != "none"]
+                audios = [item for item in context["formats"] if item["acodec"] != "none"]
+                if not videos or not audios:
+                    return iter(())
+                return iter(
+                    (
+                        {
+                            "requested_formats": [videos[-1], audios[-1]],
+                            "vcodec": videos[-1]["vcodec"],
+                            "acodec": audios[-1]["acodec"],
+                        },
+                    )
+                )
+
+            return video_audio
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", FormatYoutubeDL)
+    info = engine_module.YtDlpEngine(_without_dns_checks(settings)).inspect(
+        "https://example.test/video"
+    )
+    modes = {option.mode for option in info.format_options}
+
+    assert DownloadMode.VIDEO_1080 in modes
+    assert DownloadMode.VIDEO_2160 not in modes
+    assert DownloadMode.VIDEO_1440 not in modes
+    assert DownloadMode.VIDEO_720 not in modes
+    assert DownloadMode.VIDEO_480 not in modes
+
+
 def test_download_returns_file_beneath_job_directory(
     settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

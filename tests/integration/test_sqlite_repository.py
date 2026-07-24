@@ -17,10 +17,12 @@ from telegram_media_bot.domain.models import (
     JobKind,
     JobRecord,
     JobStatus,
+    MediaFormatOption,
     MediaInfo,
     MediaKind,
     SelectionRecord,
     SelectionToken,
+    SizeConfidence,
 )
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 
@@ -176,6 +178,14 @@ def _media() -> MediaInfo:
         kind=MediaKind.VIDEO,
         webpage_url="https://example.com/media",
         estimated_size_bytes=123,
+        format_options=(
+            MediaFormatOption(
+                mode=DownloadMode.VIDEO_1080,
+                height=1080,
+                size_bytes=456,
+                size_confidence=SizeConfidence.ESTIMATED,
+            ),
+        ),
     )
 
 

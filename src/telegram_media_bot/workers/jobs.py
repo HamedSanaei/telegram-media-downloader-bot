@@ -19,20 +19,28 @@ from telegram_media_bot.application.ports.delivery import DeliveryGateway
 from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.error_policy import error_category
-from telegram_media_bot.application.services.progress import ProgressThrottler
+from telegram_media_bot.application.services.progress import (
+    DeliveryProgressThrottler,
+    ProgressThrottler,
+)
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     DeliveryError,
     JobCancelledError,
     MediaBotError,
+    MediaUnavailableError,
 )
 from telegram_media_bot.domain.models import (
+    DeliveryItemReceipt,
     DeliveryItemRecord,
     DeliveryItemStatus,
+    DeliveryProgressEvent,
+    DeliveryStage,
     DownloadMode,
     ErrorCategory,
     JobId,
     JobStatus,
+    MediaFormatOption,
     MediaKind,
     ProgressEvent,
     SelectionRecord,
@@ -40,8 +48,17 @@ from telegram_media_bot.domain.models import (
 )
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.telegram.delivery import render_caption
-from telegram_media_bot.telegram.texts import CANCELLED_TEXT, FAILED_TEXT
-from telegram_media_bot.telegram.ui import render_media_info, render_progress, selection_keyboard
+from telegram_media_bot.telegram.texts import (
+    CANCELLED_TEXT,
+    DELIVERY_UNCERTAIN_TEXT,
+    FAILED_TEXT,
+)
+from telegram_media_bot.telegram.ui import (
+    render_delivery_progress,
+    render_media_info,
+    render_progress,
+    selection_keyboard,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -76,12 +93,19 @@ async def process_inspection_job(
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
         info = await asyncio.to_thread(service.inspect, url)
         now = datetime.now(UTC)
+        allowed_modes = _configured_modes_for(
+            info.kind,
+            settings.media.enabled_modes,
+            info.format_options,
+        )
+        if not allowed_modes:
+            raise MediaUnavailableError("No configured downloadable format is available")
         selection = SelectionRecord(
             token=SelectionToken(secrets.token_urlsafe(15)),
             owner_user_id=user_id,
             chat_id=chat_id,
             media=info,
-            allowed_modes=_configured_modes_for(info.kind, settings.media.enabled_modes),
+            allowed_modes=allowed_modes,
             created_at=now,
             expires_at=now + timedelta(seconds=settings.persistence.selection_ttl_seconds),
         )
@@ -169,13 +193,39 @@ async def process_download_job(
     started = monotonic()
     record = repository.get_job(job_id)
     local_cancel = threading.Event()
-    progress_queue: asyncio.Queue[ProgressEvent | None] = asyncio.Queue(maxsize=1)
+    progress_queue: asyncio.Queue[ProgressEvent | DeliveryProgressEvent | None] = asyncio.Queue(
+        maxsize=1
+    )
     reporter: asyncio.Task[None] | None = None
     cleanup_allowed = True
     loop = asyncio.get_running_loop()
+    last_delivery_progress: DeliveryProgressEvent | None = None
 
     def progress_sink(event: ProgressEvent) -> None:
         loop.call_soon_threadsafe(_offer_progress, progress_queue, event)
+
+    def delivery_progress_sink(event: DeliveryProgressEvent) -> None:
+        nonlocal last_delivery_progress
+        last_delivery_progress = event
+        loop.call_soon_threadsafe(_offer_progress, progress_queue, event)
+
+    async def persist_delivery_item(item: DeliveryItemReceipt) -> None:
+        try:
+            await asyncio.to_thread(
+                repository.upsert_delivery_item,
+                DeliveryItemRecord(
+                    job_id=job_id,
+                    ordinal=item.ordinal,
+                    provider=item.provider,
+                    status=DeliveryItemStatus.DELIVERED,
+                    method=item.method,
+                    recipient_message_id=item.message_id,
+                    file_id=item.file_id,
+                    file_unique_id=item.file_unique_id,
+                ),
+            )
+        except Exception as exc:
+            raise DeliveryError("Delivery receipt persistence failed") from exc
 
     cancellation = _CancellationProbe(repository, job_id, local_cancel)
     await logger.ainfo(
@@ -232,21 +282,9 @@ async def process_download_job(
             chat_id=chat_id,
             result=result,
             caption=render_caption(settings, result),
+            progress=delivery_progress_sink,
+            item_delivered=persist_delivery_item,
         )
-        for item in receipt.items:
-            await asyncio.to_thread(
-                repository.upsert_delivery_item,
-                DeliveryItemRecord(
-                    job_id=job_id,
-                    ordinal=item.ordinal,
-                    provider=item.provider,
-                    status=DeliveryItemStatus.DELIVERED,
-                    method=item.method,
-                    recipient_message_id=item.message_id,
-                    file_id=item.file_id,
-                    file_unique_id=item.file_unique_id,
-                ),
-            )
         await asyncio.to_thread(
             repository.transition,
             job_id,
@@ -296,8 +334,33 @@ async def process_download_job(
         metrics.record_job(
             outcome="delivery_uncertain", error=ErrorCategory.DELIVERY_UNCERTAIN.value
         )
-        await _notify_failure(ctx, chat_id, record.status_message_id if record else None)
-        await logger.awarning("download_delivery_uncertain", job_id=job_id)
+        await _notify(
+            ctx,
+            chat_id,
+            record.status_message_id if record else None,
+            DELIVERY_UNCERTAIN_TEXT,
+        )
+        progress_fields: dict[str, object] = {}
+        if last_delivery_progress is not None:
+            progress_fields = {
+                "stage": last_delivery_progress.stage.value,
+                "item_ordinal": last_delivery_progress.item_ordinal,
+                "item_count": last_delivery_progress.item_count,
+                "transferred_bytes": last_delivery_progress.transferred_bytes,
+                "total_bytes": last_delivery_progress.total_bytes,
+                "percent": (
+                    last_delivery_progress.percent
+                    if last_delivery_progress.stage is DeliveryStage.UPLOADING
+                    else None
+                ),
+                "elapsed_seconds": round(last_delivery_progress.elapsed_seconds, 1),
+            }
+        await logger.awarning(
+            "download_delivery_uncertain",
+            job_id=job_id,
+            error_type=type(exc).__name__,
+            **progress_fields,
+        )
         return str(job_id)
     except MediaBotError as exc:
         await _handle_controlled_failure(ctx, job_id, chat_id, exc, attempt)
@@ -331,7 +394,7 @@ async def process_download_job(
     finally:
         local_cancel.set()
         if reporter is not None:
-            _offer_progress(progress_queue, None)
+            await progress_queue.put(None)
             await reporter
         if settings.storage.delete_after_upload and cleanup_allowed:
             await asyncio.gather(
@@ -395,15 +458,17 @@ async def _handle_controlled_failure(
 
 
 async def _report_progress(
-    queue: asyncio.Queue[ProgressEvent | None],
+    queue: asyncio.Queue[ProgressEvent | DeliveryProgressEvent | None],
     chat_id: int,
     message_id: int | None,
     delivery: DeliveryGateway,
     settings: Settings,
 ) -> None:
-    if message_id is None:
-        return
-    throttler = ProgressThrottler(
+    download_throttler = ProgressThrottler(
+        min_interval_seconds=settings.telegram.progress_min_interval_seconds,
+        min_percent_delta=settings.telegram.progress_min_percent_delta,
+    )
+    delivery_throttler = DeliveryProgressThrottler(
         min_interval_seconds=settings.telegram.progress_min_interval_seconds,
         min_percent_delta=settings.telegram.progress_min_percent_delta,
     )
@@ -412,16 +477,33 @@ async def _report_progress(
         event = await queue.get()
         if event is None:
             return
-        if throttler.should_emit(event):
+        if isinstance(event, DeliveryProgressEvent):
+            if not delivery_throttler.should_emit(event):
+                continue
+            text = render_delivery_progress(event)
+            await logger.ainfo(
+                "delivery_progress",
+                job_id=event.job_id,
+                stage=event.stage.value,
+                item_ordinal=event.item_ordinal,
+                item_count=event.item_count,
+                transferred_bytes=event.transferred_bytes,
+                total_bytes=event.total_bytes,
+                percent=event.percent if event.stage is DeliveryStage.UPLOADING else None,
+                elapsed_seconds=round(event.elapsed_seconds, 1),
+            )
+        elif download_throttler.should_emit(event):
             text = render_progress(
                 event.percent,
                 event.downloaded_bytes,
                 event.total_bytes,
                 status=event.status,
             )
-            if text != last_text:
-                await _safe_edit(delivery, chat_id, message_id, text)
-                last_text = text
+        else:
+            continue
+        if message_id is not None and text != last_text:
+            await _safe_edit(delivery, chat_id, message_id, text)
+            last_text = text
 
 
 async def _notify_failure(ctx: dict[str, Any], chat_id: int, message_id: int | None) -> None:
@@ -470,18 +552,26 @@ class _CancellationProbe:
 
 
 def _configured_modes_for(
-    kind: MediaKind, configured: tuple[DownloadMode, ...]
+    kind: MediaKind,
+    configured: tuple[DownloadMode, ...],
+    options: tuple[MediaFormatOption, ...] = (),
 ) -> tuple[DownloadMode, ...]:
     if kind is MediaKind.AUDIO:
         relevant = {DownloadMode.BEST, DownloadMode.AUDIO_BEST, DownloadMode.AUDIO_MP3}
-        return tuple(mode for mode in configured if mode in relevant)
-    if kind is MediaKind.IMAGE:
-        return tuple(mode for mode in configured if mode is DownloadMode.BEST)
-    return configured
+        relevant_modes = tuple(mode for mode in configured if mode in relevant)
+    elif kind is MediaKind.IMAGE:
+        relevant_modes = tuple(mode for mode in configured if mode is DownloadMode.BEST)
+    else:
+        relevant_modes = configured
+    if not options:
+        return relevant_modes
+    available = {option.mode for option in options}
+    return tuple(mode for mode in relevant_modes if mode in available)
 
 
 def _offer_progress(
-    queue: asyncio.Queue[ProgressEvent | None], event: ProgressEvent | None
+    queue: asyncio.Queue[ProgressEvent | DeliveryProgressEvent | None],
+    event: ProgressEvent | DeliveryProgressEvent | None,
 ) -> None:
     if queue.full():
         queue.get_nowait()

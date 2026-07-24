@@ -21,10 +21,12 @@ Actual extraction support is determined by the installed `yt-dlp` version.
 
 1. User sends one URL.
 2. Bot validates access policy and enqueues metadata inspection.
-3. Bot displays normalized title, duration, source, and semantic format buttons.
+3. Bot displays normalized title, duration, source, and only semantic formats that are actually
+   selectable, including selected resolution/FPS/HDR and exact, estimated, or unknown size.
 4. User chooses output mode.
 5. Worker downloads into an isolated job directory.
-6. Bot or worker reports progress without excessive Telegram edits.
+6. Telegram and worker logs report throttled download/upload progress. Upload percentage covers
+   bytes read into Local Bot API; the opaque Telegram phase reports only elapsed-time heartbeats.
 7. Result is uploaded using the most suitable Telegram method.
 8. Job state is persisted sufficiently for retries and operator inspection.
 9. Temporary files are deleted according to policy.

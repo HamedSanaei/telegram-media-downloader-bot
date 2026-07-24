@@ -10,10 +10,12 @@ from arq import Retry
 from telegram_media_bot.application.ports.delivery import DeliveryGateway
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.errors import RateLimitedError
+from telegram_media_bot.domain.errors import DeliveryError, RateLimitedError
 from telegram_media_bot.domain.models import (
     DeliveryMethod,
+    DeliveryProgressEvent,
     DeliveryReceipt,
+    DeliveryStage,
     DownloadMode,
     DownloadResult,
     JobId,
@@ -75,10 +77,28 @@ class FakeDelivery:
     def __init__(self) -> None:
         self.deliveries = 0
         self.edits: list[str] = []
+        self.failure: Exception | None = None
 
-    async def deliver(self, **_kwargs: object) -> DeliveryReceipt:
+    async def deliver(self, **kwargs: object) -> DeliveryReceipt:
         self.deliveries += 1
-        return DeliveryReceipt(DeliveryMethod.VIDEO, 3, "file-id", "unique-id")
+        if self.failure is not None:
+            progress = kwargs.get("progress")
+            if callable(progress):
+                progress(
+                    DeliveryProgressEvent(
+                        job_id=JobId("job"),
+                        stage=DeliveryStage.FINALIZING,
+                        transferred_bytes=5,
+                        total_bytes=5,
+                        elapsed_seconds=601,
+                    )
+                )
+            raise self.failure
+        receipt = DeliveryReceipt(DeliveryMethod.VIDEO, 3, "file-id", "unique-id")
+        item_delivered = kwargs.get("item_delivered")
+        if callable(item_delivered):
+            await item_delivered(receipt.primary)
+        return receipt
 
     async def send_text(self, _chat_id: int, _text: str) -> int:
         return 4
@@ -173,3 +193,23 @@ async def test_retryable_failure_is_deferred_without_delivery(
     record = repository.get_job(JobId(str(context["job_id"])))
     assert record is not None and record.status is JobStatus.RETRYING
     assert delivery.deliveries == 0
+
+
+async def test_ambiguous_delivery_is_quarantined_with_specific_user_message(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+) -> None:
+    context, repository, _service, delivery = worker_context
+    delivery.failure = DeliveryError("ambiguous response")
+
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media",
+        mode=DownloadMode.BEST.value,
+    )
+
+    record = repository.get_job(JobId(str(context["job_id"])))
+    assert record is not None
+    assert record.status is JobStatus.DELIVERY_UNCERTAIN
+    assert any("دانلود کامل شد" in text for text in delivery.edits)

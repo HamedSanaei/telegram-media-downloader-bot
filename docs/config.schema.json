@@ -616,10 +616,24 @@
           "type": "integer"
         },
         "upload_timeout_seconds": {
-          "default": 600,
+          "default": 14400,
           "maximum": 86400,
           "minimum": 60,
           "title": "Upload Timeout Seconds",
+          "type": "integer"
+        },
+        "upload_chunk_size_kb": {
+          "default": 1024,
+          "maximum": 4096,
+          "minimum": 64,
+          "title": "Upload Chunk Size Kb",
+          "type": "integer"
+        },
+        "upload_heartbeat_interval_seconds": {
+          "default": 30,
+          "maximum": 300,
+          "minimum": 5,
+          "title": "Upload Heartbeat Interval Seconds",
           "type": "integer"
         },
         "caption_template": {

@@ -91,7 +91,9 @@ class TelegramSection(StrictModel):
     polling_timeout_seconds: int = Field(default=30, ge=5, le=60)
     upload_as_document: bool = True
     max_upload_size_mb: int = Field(default=49, ge=1, le=1900)
-    upload_timeout_seconds: int = Field(default=600, ge=60, le=86400)
+    upload_timeout_seconds: int = Field(default=14400, ge=60, le=86400)
+    upload_chunk_size_kb: int = Field(default=1024, ge=64, le=4096)
+    upload_heartbeat_interval_seconds: int = Field(default=30, ge=5, le=300)
     caption_template: str = "{title}\nمنبع: {source}"
     filename_max_length: int = Field(default=96, ge=16, le=180)
     local_api_base_url: str | None = None

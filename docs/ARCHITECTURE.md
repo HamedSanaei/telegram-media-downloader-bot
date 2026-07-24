@@ -50,8 +50,10 @@ or yt-dlp. Infrastructure implements application ports.
 The engine port exposes normalized project models:
 
 - `MediaInfo` for inspection;
+- `MediaFormatOption` for a real semantic candidate and its size-confidence metadata;
 - `DownloadRequest` for semantic requests;
 - `DownloadResult` for final files;
+- `DeliveryProgressEvent` for packaging, byte transfer, and opaque finalization;
 - project exceptions for failure categories.
 
 Raw yt-dlp info dictionaries, extractor objects, format IDs, hooks, and exceptions remain inside the
@@ -74,7 +76,7 @@ adapter package.
 - executes blocking yt-dlp calls via a thread boundary;
 - publishes normalized inspection UI and uploads through a `DeliveryGateway` port;
 - persists transitions, attempts, cancellation, and delivery receipts;
-- maps progress through a bounded, throttled presentation channel;
+- maps download and delivery progress through a bounded, throttled presentation/logging channel;
 - cleans temporary files;
 - is deployed as one worker container until a leased multi-host store is introduced.
 
@@ -122,6 +124,15 @@ A genuine change to the project-owned engine port requires an ADR and coordinate
 
 `best_original` is never transcoded. Fixed resolution modes may be transcoded only after the final
 merged file actually exceeds `media.max_file_size_mb`.
+
+Fixed-resolution candidates are exact-height contracts: `video_2160` is absent unless a real 2160p
+stream can be combined with audio, and download cannot silently fall back. Inspection and download
+use the same adapter-owned bounded selector. Component sizes are summed from `filesize`, then
+`filesize_approx`, then bitrate and duration; incomplete metadata remains explicitly unknown.
+
+Delivery reads through a tracked `InputFile`. Byte progress ends when the HTTP body has streamed to
+Local Bot API. Since Bot API exposes no subsequent byte callback, final response waits emit only
+elapsed-time heartbeats. Each successful multipart receipt is persisted before the next volume.
 
 ## Runtime control plane
 
