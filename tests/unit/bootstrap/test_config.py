@@ -77,6 +77,48 @@ def test_caption_template_rejects_unknown_fields(settings: Settings) -> None:
         Settings.model_validate(raw)
 
 
+def test_required_channels_reject_duplicates_and_invalid_join_url(
+    settings: Settings,
+) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["required_channels"] = {
+        "enabled": True,
+        "channels": [
+            {
+                "chat_id": -1001,
+                "title": "One",
+                "join_url": "https://t.me/one",
+            },
+            {
+                "chat_id": -1001,
+                "title": "Two",
+                "join_url": "http://example.com/two",
+            },
+        ],
+    }
+    with pytest.raises(ValidationError):
+        Settings.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "proxy",
+    [
+        "http://127.0.0.1:8080",
+        "https://127.0.0.1:8080",
+        "socks4://127.0.0.1:1080",
+        "socks4a://127.0.0.1:1080",
+        "socks5://127.0.0.1:1080",
+        "socks5h://127.0.0.1:1080",
+    ],
+)
+def test_supported_proxy_schemes_are_valid(settings: Settings, proxy: str) -> None:
+    raw = settings.model_dump()
+    raw["yt_dlp"]["proxy_enabled"] = True
+    raw["yt_dlp"]["proxy"] = proxy
+    configured = Settings.model_validate(raw)
+    assert configured.yt_dlp.effective_proxy() == proxy
+
+
 def test_upload_timeout_rejects_values_below_session_floor(settings: Settings) -> None:
     raw = settings.model_dump()
     raw["telegram"]["upload_timeout_seconds"] = 59

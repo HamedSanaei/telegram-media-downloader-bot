@@ -1,0 +1,85 @@
+name: Publish container
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release-source:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches package version
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml)"
+          test "$GITHUB_REF_NAME" = "v$version"
+      - name: Build reproducible source archives
+        run: |
+          git archive \
+            --format=tar.gz \
+            --prefix=telegram-media-downloader-bot/ \
+            --output=telegram-media-downloader-bot.tar.gz \
+            HEAD
+          git archive \
+            --format=zip \
+            --prefix=telegram-media-downloader-bot/ \
+            --output=telegram-media-downloader-bot.zip \
+            HEAD
+          sha256sum telegram-media-downloader-bot.tar.gz \
+            > telegram-media-downloader-bot.tar.gz.sha256
+          sha256sum telegram-media-downloader-bot.zip \
+            > telegram-media-downloader-bot.zip.sha256
+      - name: Attach checksummed source archives
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            telegram-media-downloader-bot.tar.gz
+            telegram-media-downloader-bot.tar.gz.sha256
+            telegram-media-downloader-bot.zip
+            telegram-media-downloader-bot.zip.sha256
+
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tagged package version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml)"
+            test "$GITHUB_REF_NAME" = "v$version"
+          fi
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/hamedsanaei/telegram-media-downloader-bot
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PYTHON_VERSION=3.14.5
+            TELEGRAM_BOT_API_REF=a9966eb
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

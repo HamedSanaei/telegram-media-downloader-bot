@@ -67,6 +67,7 @@ class LocalBotApiSection(StrictModel):
     )
     verbosity: int = Field(default=2, ge=0, le=10)
     auto_start: bool = True
+    lifecycle_owner: Literal["application", "service"] = "application"
     startup_timeout_seconds: int = Field(default=30, ge=1, le=300)
     shutdown_timeout_seconds: int = Field(default=20, ge=1, le=300)
     migration: LocalBotApiMigrationSection = Field(default_factory=LocalBotApiMigrationSection)
@@ -84,6 +85,36 @@ class LocalBotApiSection(StrictModel):
         return self
 
 
+class RequiredChannelSection(StrictModel):
+    chat_id: int
+    title: str = Field(min_length=1, max_length=128)
+    join_url: str
+
+    @field_validator("join_url")
+    @classmethod
+    def validate_join_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or parsed.hostname not in {"t.me", "telegram.me"}:
+            raise ValueError("join_url must be an absolute Telegram HTTPS URL")
+        return value.rstrip("/")
+
+
+class RequiredChannelsSection(StrictModel):
+    enabled: bool = False
+    positive_cache_ttl_seconds: int = Field(default=300, ge=1, le=86400)
+    negative_cache_ttl_seconds: int = Field(default=30, ge=1, le=3600)
+    channels: tuple[RequiredChannelSection, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_channels(self) -> RequiredChannelsSection:
+        if self.enabled and not self.channels:
+            raise ValueError("required_channels.channels cannot be empty when enabled")
+        chat_ids = [channel.chat_id for channel in self.channels]
+        if len(chat_ids) != len(set(chat_ids)):
+            raise ValueError("required channel chat_id values must be unique")
+        return self
+
+
 class TelegramSection(StrictModel):
     bot_token: SecretStr
     admin_ids: tuple[int, ...] = ()
@@ -94,25 +125,26 @@ class TelegramSection(StrictModel):
     upload_timeout_seconds: int = Field(default=14400, ge=60, le=86400)
     upload_chunk_size_kb: int = Field(default=1024, ge=64, le=4096)
     upload_heartbeat_interval_seconds: int = Field(default=30, ge=5, le=300)
-    caption_template: str = "{title}\nمنبع: {source}"
+    caption_template: str = "{title}\nمنبع: {source}\nدریافت‌شده با @{bot_username}"  # noqa: RUF001
     filename_max_length: int = Field(default=96, ge=16, le=180)
     local_api_base_url: str | None = None
     local_api_is_local: bool = False
     local_bot_api: LocalBotApiSection = Field(default_factory=LocalBotApiSection)
+    required_channels: RequiredChannelsSection = Field(default_factory=RequiredChannelsSection)
     progress_min_interval_seconds: float = Field(default=3.0, ge=1.0, le=60.0)
     progress_min_percent_delta: float = Field(default=5.0, ge=1.0, le=100.0)
 
     @field_validator("caption_template")
     @classmethod
     def validate_caption_template(cls, value: str) -> str:
-        allowed = {"title", "source"}
+        allowed = {"title", "source", "bot_username"}
         fields = {
             field_name
             for _, field_name, _, _ in string.Formatter().parse(value)
             if field_name is not None
         }
         if not fields <= allowed:
-            raise ValueError("caption_template only supports {title} and {source}")
+            raise ValueError("caption_template only supports {title}, {source}, and {bot_username}")
         if len(value) > 512:
             raise ValueError("caption_template is too long")
         return value
@@ -219,6 +251,14 @@ class FormatSection(StrictModel):
         return cast(str, getattr(self, mode.value))
 
 
+class InstagramSection(StrictModel):
+    auto_download: bool = True
+    force_mp4: bool = True
+    ignore_images: bool = True
+    max_videos: int = Field(default=50, ge=1, le=500)
+    max_total_size_mb: int = Field(default=4096, ge=1, le=8192)
+
+
 class MediaSection(StrictModel):
     enabled_sources: frozenset[str]
     enabled_modes: tuple[DownloadMode, ...] = tuple(DownloadMode)
@@ -229,6 +269,7 @@ class MediaSection(StrictModel):
     max_source_size_mb: int = Field(default=1024, ge=1, le=8192)
     max_duration_seconds: int = Field(default=14400, ge=1)
     formats: FormatSection
+    instagram: InstagramSection = Field(default_factory=InstagramSection)
 
     @field_validator("enabled_sources")
     @classmethod
@@ -266,7 +307,8 @@ class MultipartSection(StrictModel):
 
 class YtDlpSection(StrictModel):
     cookies_file: Path | None = None
-    proxy: str | None = None
+    proxy_enabled: bool | None = None
+    proxy: SecretStr | None = None
     socket_timeout_seconds: int = Field(default=30, ge=1)
     retries: int = Field(default=5, ge=0)
     fragment_retries: int = Field(default=10, ge=0)
@@ -280,6 +322,38 @@ class YtDlpSection(StrictModel):
     audio_quality: str = "192"
     user_agent: str | None = None
     javascript_runtime: Literal["deno", "node", "bun", "quickjs"] = "deno"
+
+    @field_validator("proxy")
+    @classmethod
+    def validate_proxy(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value.get_secret_value())
+        if (
+            parsed.scheme.casefold()
+            not in {
+                "http",
+                "https",
+                "socks4",
+                "socks4a",
+                "socks5",
+                "socks5h",
+            }
+            or not parsed.hostname
+        ):
+            raise ValueError("proxy must be an absolute HTTP(S) or SOCKS URL")
+        return value
+
+    @model_validator(mode="after")
+    def validate_proxy_switch(self) -> YtDlpSection:
+        if self.proxy_enabled is True and self.proxy is None:
+            raise ValueError("proxy is required when proxy_enabled is true")
+        return self
+
+    def effective_proxy(self) -> str | None:
+        if self.proxy is None or self.proxy_enabled is False:
+            return None
+        return self.proxy.get_secret_value()
 
 
 class SecuritySection(StrictModel):
@@ -408,6 +482,11 @@ def load_settings(path: Path | str | None = None, *, require_token: bool = False
 
 
 def _resolve_local_api_paths(raw: dict[str, object], config_directory: Path) -> None:
+    ytdlp = raw.get("yt_dlp")
+    if isinstance(ytdlp, dict):
+        cookies = ytdlp.get("cookies_file")
+        if isinstance(cookies, str) and cookies and not Path(cookies).expanduser().is_absolute():
+            ytdlp["cookies_file"] = str((config_directory / cookies).resolve())
     multipart = raw.get("multipart")
     if isinstance(multipart, dict):
         value = multipart.get("seven_zip_executable")

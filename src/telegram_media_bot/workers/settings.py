@@ -55,8 +55,10 @@ async def startup(ctx: dict[str, Any]) -> None:
             playlist_max_items=settings.media.playlist_max_items,
             max_duration_seconds=settings.media.max_duration_seconds,
             max_file_size_bytes=settings.media.max_file_size_mb * 1024 * 1024,
+            instagram_max_videos=settings.media.instagram.max_videos,
         )
         metrics = MetricsRegistry()
+        identity = await bot.get_me()
         ctx.update(
             settings=settings,
             repository=repository,
@@ -70,6 +72,8 @@ async def startup(ctx: dict[str, Any]) -> None:
             ),
             metrics=metrics,
             telegram_runtime=runtime,
+            bot_username=identity.username or "telegram_media_bot",
+            bot_identity_available=True,
         )
         cutoff = datetime.now(UTC)
         recovered = await asyncio.to_thread(repository.reconcile_abandoned, cutoff)
@@ -95,6 +99,8 @@ async def startup(ctx: dict[str, Any]) -> None:
                     user_id=record.user_id,
                     url=record.url,
                     mode=record.mode,
+                    container=record.container,
+                    container_policy=record.container_policy,
                 )
         server = HealthServer(
             host=settings.observability.health_host,
@@ -132,17 +138,11 @@ async def _health_report(ctx: dict[str, Any]) -> HealthReport:
     repository = cast(SqliteJobRepository, ctx["repository"])
     queue = cast(ArqJobQueue, ctx["queue"])
     engine = cast(YtDlpEngine, ctx["engine"])
-    bot = cast(Bot, ctx["bot"])
     redis_ok, database_ok = await asyncio.gather(
         queue.healthy(), asyncio.to_thread(repository.healthy)
     )
     storage_ok = await asyncio.to_thread(_storage_writable, settings)
-    telegram_ok = True
-    if settings.observability.telegram_readiness_check:
-        try:
-            await bot.get_me()
-        except Exception:
-            telegram_ok = False
+    telegram_ok = bool(ctx.get("bot_identity_available", False))
     checks = [
         ComponentHealth("redis", redis_ok),
         ComponentHealth("database", database_ok),

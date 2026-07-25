@@ -304,7 +304,11 @@ class LocalBotApiManager:
         raise LocalBotApiError("Managed Local Bot API startup timed out")
 
     def stop_if_unused(self) -> None:
-        if self._config.mode == "managed" and not self._live_leases():
+        if (
+            self._config.mode == "managed"
+            and self._config.lifecycle_owner == "application"
+            and not self._live_leases()
+        ):
             self.stop()
 
     def stop(self) -> None:
@@ -421,7 +425,9 @@ class LocalBotApiManager:
 
     def _endpoint_host_port(self) -> tuple[str, int]:
         base_url = self._settings.telegram.local_api_base_url
-        if self._config.mode == "managed" or base_url is None:
+        if (
+            self._config.mode == "managed" and self._config.lifecycle_owner == "application"
+        ) or base_url is None:
             return self._config.host, self._config.port
         parsed = urlsplit(base_url)
         if parsed.hostname is None:

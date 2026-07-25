@@ -8,9 +8,11 @@ from typing import Any
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import MediaTooLargeError
 from telegram_media_bot.domain.models import (
+    ContainerPolicy,
     DownloadMode,
     DownloadRequest,
     MediaFormatOption,
+    OutputContainer,
     SizeConfidence,
 )
 
@@ -42,7 +44,11 @@ class YtDlpOptionsFactory:
             {
                 "skip_download": True,
                 "extract_flat": False,
-                "playlistend": self._settings.media.playlist_max_items,
+                "playlistend": max(
+                    self._settings.media.playlist_max_items,
+                    self._settings.media.instagram.max_videos,
+                ),
+                "noplaylist": False,
             }
         )
         return options
@@ -62,7 +68,7 @@ class YtDlpOptionsFactory:
         options = self._base_options()
         options.update(
             {
-                "format": self._settings.media.formats.for_mode(request.mode),
+                "format": self.format_for_request(request),
                 "outtmpl": {"default": output_template, "thumbnail": output_template},
                 "paths": {
                     "home": str(request.output_directory),
@@ -72,6 +78,11 @@ class YtDlpOptionsFactory:
                 "postprocessors": self._postprocessors(request.mode),
             }
         )
+        if request.container in {OutputContainer.MP4, OutputContainer.WEBM}:
+            options["merge_output_format"] = request.container.value
+        if request.allow_collection:
+            options["noplaylist"] = False
+            options["playlistend"] = self._settings.media.instagram.max_videos
         if progress_hook is not None:
             options["progress_hooks"] = [progress_hook]
         if postprocessor_hook is not None:
@@ -79,6 +90,15 @@ class YtDlpOptionsFactory:
         if match_filter is not None:
             options["match_filter"] = match_filter
         return options
+
+    def format_for_request(self, request: DownloadRequest) -> str:
+        base = self._settings.media.formats.for_mode(request.mode)
+        if request.container not in {OutputContainer.MP4, OutputContainer.WEBM}:
+            return base
+        native = native_container_selector(request.container)
+        if request.container_policy is ContainerPolicy.GUARANTEED:
+            return f"{native}/{base}"
+        return native
 
     def _base_options(self) -> dict[str, Any]:
         ytdlp = self._settings.yt_dlp
@@ -101,8 +121,9 @@ class YtDlpOptionsFactory:
         }
         if ytdlp.cookies_file and ytdlp.cookies_file.exists():
             options["cookiefile"] = str(ytdlp.cookies_file)
-        if ytdlp.proxy:
-            options["proxy"] = ytdlp.proxy
+        proxy = ytdlp.effective_proxy()
+        if proxy is not None:
+            options["proxy"] = proxy
         if ytdlp.user_agent:
             options["user_agent"] = ytdlp.user_agent
         return options
@@ -233,6 +254,9 @@ def inspect_format_option(
     max_size_bytes: int,
     duration_seconds: int | None,
     mp3_bitrate_kbps: int,
+    container: OutputContainer | None = None,
+    container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
+    requires_transcode: bool = False,
 ) -> MediaFormatOption | None:
     try:
         candidate = next(
@@ -254,6 +278,9 @@ def inspect_format_option(
         mode=mode,
         duration_seconds=duration_seconds,
         mp3_bitrate_kbps=mp3_bitrate_kbps,
+        container=container,
+        container_policy=container_policy,
+        requires_transcode=requires_transcode,
     )
 
 
@@ -293,6 +320,9 @@ def _describe_candidate(
     mode: DownloadMode,
     duration_seconds: int | None,
     mp3_bitrate_kbps: int,
+    container: OutputContainer | None,
+    container_policy: ContainerPolicy,
+    requires_transcode: bool,
 ) -> MediaFormatOption:
     components = _selected_components(candidate)
     videos = tuple(item for item in components if _is_video(item))
@@ -313,6 +343,15 @@ def _describe_candidate(
         size_bytes, confidence = _estimated_total_size(components, duration_seconds)
     return MediaFormatOption(
         mode=mode,
+        container=container,
+        container_policy=container_policy,
+        requires_transcode=requires_transcode
+        or (
+            container is not None
+            and container in {OutputContainer.MP4, OutputContainer.WEBM}
+            and container_policy is ContainerPolicy.GUARANTEED
+            and not _components_match_container(components, container)
+        ),
         width=_positive_int(video.get("width")) if video is not None else None,
         height=_positive_int(video.get("height")) if video is not None else None,
         fps=_positive_float(video.get("fps")) if video is not None else None,
@@ -409,6 +448,37 @@ def _is_hdr(item: Mapping[str, Any]) -> bool:
         return True
     format_note = item.get("format_note")
     return isinstance(format_note, str) and "hdr" in format_note.casefold()
+
+
+def native_container_selector(container: OutputContainer) -> str:
+    if container is OutputContainer.MP4:
+        return "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+    if container is OutputContainer.WEBM:
+        return "bv*[ext=webm]+ba[ext=webm]/b[ext=webm]"
+    return "ba/b"
+
+
+def _components_match_container(
+    components: tuple[Mapping[str, Any], ...],
+    container: OutputContainer,
+) -> bool:
+    video_codecs = {
+        str(item.get("vcodec") or "").casefold() for item in components if _is_video(item)
+    }
+    audio_codecs = {
+        str(item.get("acodec") or "").casefold()
+        for item in components
+        if item.get("acodec") not in {None, "none"}
+    }
+    if container is OutputContainer.MP4:
+        return all(codec == "h264" or codec.startswith("avc1") for codec in video_codecs) and all(
+            codec == "aac" or codec.startswith("mp4a") for codec in audio_codecs
+        )
+    if container is OutputContainer.WEBM:
+        return all(codec == "vp9" or codec.startswith("vp09") for codec in video_codecs) and all(
+            codec == "opus" for codec in audio_codecs
+        )
+    return False
 
 
 def final_media_files(directory: Path) -> list[Path]:

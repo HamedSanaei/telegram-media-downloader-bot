@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 
 from telegram_media_bot import cli
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.domain.errors import ConfigurationError
 
 
 def test_config_check_does_not_print_configuration_or_secrets(
@@ -64,3 +66,57 @@ async def test_local_api_status_is_safe(
     assert "migration_phase: cloud" in output
     assert settings.telegram.token() not in output
     assert str(settings.telegram.local_bot_api.migration.state_file) not in output
+
+
+def test_local_api_serve_and_configure_commands_are_explicit() -> None:
+    serve = cli.build_parser().parse_args(["local-api", "serve"])
+    configure = cli.build_parser().parse_args(["configure", "--config", "custom.yaml"])
+    assert serve.local_api_action == "serve"
+    assert configure.config == Path("custom.yaml")
+
+
+def test_interactive_configure_never_prints_secrets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "config.yaml"
+    shutil.copyfile("config.example.yaml", target)
+    hidden = iter(
+        [
+            "123456:BOT_TOKEN_SECRET",
+            "API_HASH_SECRET",
+            "",
+        ]
+    )
+    visible = iter(["12345", "", "n", ""])
+    monkeypatch.setattr(cli, "getpass", lambda _prompt: next(hidden))
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(visible))
+
+    cli._run_interactive_configure(target)
+
+    output = capsys.readouterr().out
+    assert "BOT_TOKEN_SECRET" not in output
+    assert "API_HASH_SECRET" not in output
+    assert "BOT_TOKEN_SECRET" in target.read_text(encoding="utf-8")
+
+
+def test_interactive_configure_removes_secret_temporary_file_on_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "config.yaml"
+    shutil.copyfile("config.example.yaml", target)
+    hidden = iter(["123456:BOT_TOKEN_SECRET", "API_HASH_SECRET", "not-a-proxy"])
+    visible = iter(["12345", "", "n", ""])
+    monkeypatch.setattr(cli, "getpass", lambda _prompt: next(hidden))
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(visible))
+
+    with pytest.raises(ConfigurationError):
+        cli._run_interactive_configure(target)
+
+    assert not target.with_suffix(".yaml.tmp").exists()
+    output = capsys.readouterr()
+    assert "BOT_TOKEN_SECRET" not in output.out + output.err
+    assert "API_HASH_SECRET" not in output.out + output.err

@@ -1,6 +1,11 @@
 from typing import Protocol
 
-from telegram_media_bot.domain.models import DownloadMode, JobId
+from telegram_media_bot.domain.models import (
+    ContainerPolicy,
+    DownloadMode,
+    JobId,
+    OutputContainer,
+)
 
 
 class JobQueue(Protocol):
@@ -23,6 +28,8 @@ class JobQueue(Protocol):
         user_id: int,
         url: str,
         mode: DownloadMode,
+        container: OutputContainer | None = None,
+        container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
     ) -> JobId:
         """Enqueue a download and return its opaque project job ID."""
         ...

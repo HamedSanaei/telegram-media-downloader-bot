@@ -4,7 +4,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ from telegram_media_bot.domain.errors import (
     SelectionOwnershipError,
 )
 from telegram_media_bot.domain.models import (
+    ContainerPolicy,
     DeliveryItemRecord,
     DeliveryItemStatus,
     DeliveryMethod,
@@ -30,9 +31,11 @@ from telegram_media_bot.domain.models import (
     MediaFormatOption,
     MediaInfo,
     MediaKind,
+    OutputContainer,
     SelectionRecord,
     SelectionToken,
     SizeConfidence,
+    UserProfile,
 )
 
 _ACTIVE_STATUSES = (
@@ -94,6 +97,8 @@ class SqliteJobRepository(JobRepository):
                     user_id INTEGER NOT NULL,
                     url TEXT NOT NULL,
                     mode TEXT,
+                    container TEXT,
+                    container_policy TEXT NOT NULL DEFAULT 'native_only',
                     idempotency_key TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -132,7 +137,55 @@ class SqliteJobRepository(JobRepository):
                     blocked_by INTEGER NOT NULL,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    private_chat_id INTEGER,
+                    username TEXT,
+                    first_name TEXT NOT NULL,
+                    last_name TEXT,
+                    language_code TEXT,
+                    is_premium INTEGER,
+                    first_started_at TEXT,
+                    last_started_at TEXT,
+                    last_activity_at TEXT NOT NULL,
+                    start_count INTEGER NOT NULL DEFAULT 0,
+                    request_count INTEGER NOT NULL DEFAULT 0,
+                    successful_download_count INTEGER NOT NULL DEFAULT 0,
+                    failed_download_count INTEGER NOT NULL DEFAULT 0,
+                    delivered_bytes INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS users_last_activity_idx
+                    ON users(last_activity_at);
+
+                CREATE TABLE IF NOT EXISTS user_usage_daily (
+                    user_id INTEGER NOT NULL,
+                    usage_date TEXT NOT NULL,
+                    request_count INTEGER NOT NULL DEFAULT 0,
+                    successful_download_count INTEGER NOT NULL DEFAULT 0,
+                    failed_download_count INTEGER NOT NULL DEFAULT 0,
+                    delivered_bytes INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, usage_date),
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS download_usage_events (
+                    job_id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    usage_date TEXT NOT NULL,
+                    succeeded INTEGER NOT NULL,
+                    delivered_bytes INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                );
                 """
+            )
+            _ensure_column(connection, "jobs", "container", "TEXT")
+            _ensure_column(
+                connection,
+                "jobs",
+                "container_policy",
+                "TEXT NOT NULL DEFAULT 'native_only'",
             )
 
     def healthy(self) -> bool:
@@ -158,6 +211,9 @@ class SqliteJobRepository(JobRepository):
             "format_options": [
                 {
                     "mode": option.mode.value,
+                    "container": option.container.value if option.container else None,
+                    "container_policy": option.container_policy.value,
+                    "requires_transcode": option.requires_transcode,
                     "width": option.width,
                     "height": option.height,
                     "fps": option.fps,
@@ -219,11 +275,12 @@ class SqliteJobRepository(JobRepository):
             connection.execute(
                 """
                 INSERT INTO jobs (
-                    job_id, kind, status, chat_id, user_id, url, mode, idempotency_key,
+                    job_id, kind, status, chat_id, user_id, url, mode, container,
+                    container_policy, idempotency_key,
                     created_at, updated_at, status_message_id, source, error_category,
                     error_summary, cancel_requested, delivery_file_id,
                     delivery_file_unique_id, attempt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _job_values(record),
             )
@@ -329,6 +386,57 @@ class SqliteJobRepository(JobRepository):
         if attempt is not None:
             values["attempt"] = attempt
         self._update(job_id, **values)
+
+    def complete_download(
+        self,
+        job_id: JobId,
+        *,
+        user_id: int,
+        day: date,
+        source: str,
+        delivery_file_id: str | None,
+        delivery_file_unique_id: str | None,
+        attempt: int,
+        delivered_bytes: int,
+    ) -> bool:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                UPDATE jobs SET
+                    status = ?,
+                    source = ?,
+                    delivery_file_id = ?,
+                    delivery_file_unique_id = ?,
+                    attempt = ?,
+                    error_category = NULL,
+                    error_summary = NULL,
+                    updated_at = ?
+                WHERE job_id = ?
+                """,
+                (
+                    JobStatus.SUCCEEDED.value,
+                    source,
+                    delivery_file_id,
+                    delivery_file_unique_id,
+                    attempt,
+                    _now_text(),
+                    job_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                connection.execute("ROLLBACK")
+                raise JobNotFoundError("Job does not exist")
+            recorded = _record_usage_event(
+                connection,
+                job_id=job_id,
+                user_id=user_id,
+                day=day,
+                succeeded=True,
+                delivered_bytes=delivered_bytes,
+            )
+            connection.execute("COMMIT")
+            return recorded
 
     def request_cancel(self, job_id: JobId, owner_user_id: int) -> bool:
         placeholders = ",".join("?" for _ in _CANCELLABLE_STATUSES)
@@ -448,6 +556,88 @@ class SqliteJobRepository(JobRepository):
             ).fetchone()
         return row is not None
 
+    def upsert_user(self, profile: UserProfile, *, started: bool = False) -> None:
+        now = _now_text()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO users (
+                    user_id, private_chat_id, username, first_name, last_name,
+                    language_code, is_premium, first_started_at, last_started_at,
+                    last_activity_at, start_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    private_chat_id = COALESCE(excluded.private_chat_id, users.private_chat_id),
+                    username = excluded.username,
+                    first_name = excluded.first_name,
+                    last_name = excluded.last_name,
+                    language_code = excluded.language_code,
+                    is_premium = excluded.is_premium,
+                    first_started_at = COALESCE(users.first_started_at, excluded.first_started_at),
+                    last_started_at = CASE
+                        WHEN excluded.start_count = 1 THEN excluded.last_started_at
+                        ELSE users.last_started_at
+                    END,
+                    last_activity_at = excluded.last_activity_at,
+                    start_count = users.start_count + excluded.start_count
+                """,
+                (
+                    profile.user_id,
+                    profile.private_chat_id,
+                    profile.username,
+                    profile.first_name,
+                    profile.last_name,
+                    profile.language_code,
+                    int(profile.is_premium) if profile.is_premium is not None else None,
+                    now if started else None,
+                    now if started else None,
+                    now,
+                    int(started),
+                ),
+            )
+
+    def record_request(self, user_id: int, day: date) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            _ensure_stub_user(connection, user_id)
+            connection.execute(
+                "UPDATE users SET request_count = request_count + 1, last_activity_at = ? "
+                "WHERE user_id = ?",
+                (_now_text(), user_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO user_usage_daily (user_id, usage_date, request_count)
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id, usage_date) DO UPDATE SET
+                    request_count = user_usage_daily.request_count + 1
+                """,
+                (user_id, day.isoformat()),
+            )
+            connection.execute("COMMIT")
+
+    def record_download_outcome(
+        self,
+        *,
+        job_id: JobId,
+        user_id: int,
+        day: date,
+        succeeded: bool,
+        delivered_bytes: int = 0,
+    ) -> bool:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            recorded = _record_usage_event(
+                connection,
+                job_id=job_id,
+                user_id=user_id,
+                day=day,
+                succeeded=succeeded,
+                delivered_bytes=delivered_bytes,
+            )
+            connection.execute("COMMIT")
+            return recorded
+
     def _update(self, job_id: JobId, **values: Any) -> None:
         columns = ", ".join(f"{name} = ?" for name in values)
         with self._connect() as connection:
@@ -456,6 +646,67 @@ class SqliteJobRepository(JobRepository):
             )
         if cursor.rowcount != 1:
             raise JobNotFoundError("Job does not exist")
+
+
+def _record_usage_event(
+    connection: sqlite3.Connection,
+    *,
+    job_id: JobId,
+    user_id: int,
+    day: date,
+    succeeded: bool,
+    delivered_bytes: int,
+) -> bool:
+    safe_bytes = max(0, delivered_bytes) if succeeded else 0
+    _ensure_stub_user(connection, user_id)
+    cursor = connection.execute(
+        """
+        INSERT OR IGNORE INTO download_usage_events (
+            job_id, user_id, usage_date, succeeded, delivered_bytes, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            job_id,
+            user_id,
+            day.isoformat(),
+            int(succeeded),
+            safe_bytes,
+            _now_text(),
+        ),
+    )
+    if cursor.rowcount != 1:
+        return False
+    success_delta = int(succeeded)
+    failure_delta = int(not succeeded)
+    connection.execute(
+        """
+        UPDATE users SET
+            successful_download_count = successful_download_count + ?,
+            failed_download_count = failed_download_count + ?,
+            delivered_bytes = delivered_bytes + ?,
+            last_activity_at = ?
+        WHERE user_id = ?
+        """,
+        (success_delta, failure_delta, safe_bytes, _now_text(), user_id),
+    )
+    connection.execute(
+        """
+        INSERT INTO user_usage_daily (
+            user_id, usage_date, successful_download_count,
+            failed_download_count, delivered_bytes
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, usage_date) DO UPDATE SET
+            successful_download_count =
+                user_usage_daily.successful_download_count
+                + excluded.successful_download_count,
+            failed_download_count =
+                user_usage_daily.failed_download_count
+                + excluded.failed_download_count,
+            delivered_bytes = user_usage_daily.delivered_bytes + excluded.delivered_bytes
+        """,
+        (user_id, day.isoformat(), success_delta, failure_delta, safe_bytes),
+    )
+    return True
 
 
 def _selection_from_row(row: sqlite3.Row) -> SelectionRecord:
@@ -474,6 +725,13 @@ def _selection_from_row(row: sqlite3.Row) -> SelectionRecord:
         format_options=tuple(
             MediaFormatOption(
                 mode=DownloadMode(str(item["mode"])),
+                container=(
+                    OutputContainer(str(item["container"])) if item.get("container") else None
+                ),
+                container_policy=ContainerPolicy(
+                    str(item.get("container_policy", ContainerPolicy.NATIVE_ONLY.value))
+                ),
+                requires_transcode=bool(item.get("requires_transcode", False)),
                 width=int(item["width"]) if item.get("width") is not None else None,
                 height=int(item["height"]) if item.get("height") is not None else None,
                 fps=float(item["fps"]) if item.get("fps") is not None else None,
@@ -514,6 +772,12 @@ def _job_from_row(row: sqlite3.Row) -> JobRecord:
         idempotency_key=str(row["idempotency_key"]),
         created_at=_load_datetime(str(row["created_at"])),
         updated_at=_load_datetime(str(row["updated_at"])),
+        container=(OutputContainer(str(row["container"])) if row["container"] else None),
+        container_policy=ContainerPolicy(
+            str(row["container_policy"])
+            if row["container_policy"]
+            else ContainerPolicy.NATIVE_ONLY.value
+        ),
         status_message_id=(int(row["status_message_id"]) if row["status_message_id"] else None),
         source=str(row["source"]) if row["source"] else None,
         error_category=(
@@ -538,6 +802,8 @@ def _job_values(record: JobRecord) -> tuple[Any, ...]:
         record.user_id,
         record.url,
         record.mode.value if record.mode else None,
+        record.container.value if record.container else None,
+        record.container_policy.value,
         record.idempotency_key,
         _dump_datetime(record.created_at),
         _dump_datetime(record.updated_at),
@@ -562,3 +828,26 @@ def _load_datetime(value: str) -> datetime:
 
 def _now_text() -> str:
     return _dump_datetime(datetime.now(UTC))
+
+
+def _ensure_column(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    declaration: str,
+) -> None:
+    existing = {
+        str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in existing:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+
+def _ensure_stub_user(connection: sqlite3.Connection, user_id: int) -> None:
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO users (user_id, first_name, last_activity_at)
+        VALUES (?, '', ?)
+        """,
+        (user_id, _now_text()),
+    )

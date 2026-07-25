@@ -117,6 +117,42 @@
       "title": "FormatSection",
       "type": "object"
     },
+    "InstagramSection": {
+      "additionalProperties": false,
+      "properties": {
+        "auto_download": {
+          "default": true,
+          "title": "Auto Download",
+          "type": "boolean"
+        },
+        "force_mp4": {
+          "default": true,
+          "title": "Force Mp4",
+          "type": "boolean"
+        },
+        "ignore_images": {
+          "default": true,
+          "title": "Ignore Images",
+          "type": "boolean"
+        },
+        "max_videos": {
+          "default": 50,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Max Videos",
+          "type": "integer"
+        },
+        "max_total_size_mb": {
+          "default": 4096,
+          "maximum": 8192,
+          "minimum": 1,
+          "title": "Max Total Size Mb",
+          "type": "integer"
+        }
+      },
+      "title": "InstagramSection",
+      "type": "object"
+    },
     "LocalBotApiMigrationSection": {
       "additionalProperties": false,
       "properties": {
@@ -236,6 +272,15 @@
           "title": "Auto Start",
           "type": "boolean"
         },
+        "lifecycle_owner": {
+          "default": "application",
+          "enum": [
+            "application",
+            "service"
+          ],
+          "title": "Lifecycle Owner",
+          "type": "string"
+        },
         "startup_timeout_seconds": {
           "default": 30,
           "maximum": 300,
@@ -323,6 +368,9 @@
         },
         "formats": {
           "$ref": "#/$defs/FormatSection"
+        },
+        "instagram": {
+          "$ref": "#/$defs/InstagramSection"
         }
       },
       "required": [
@@ -481,6 +529,66 @@
       "title": "RedisSection",
       "type": "object"
     },
+    "RequiredChannelSection": {
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "title": "Chat Id",
+          "type": "integer"
+        },
+        "title": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "join_url": {
+          "title": "Join Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat_id",
+        "title",
+        "join_url"
+      ],
+      "title": "RequiredChannelSection",
+      "type": "object"
+    },
+    "RequiredChannelsSection": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "positive_cache_ttl_seconds": {
+          "default": 300,
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Positive Cache Ttl Seconds",
+          "type": "integer"
+        },
+        "negative_cache_ttl_seconds": {
+          "default": 30,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Negative Cache Ttl Seconds",
+          "type": "integer"
+        },
+        "channels": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RequiredChannelSection"
+          },
+          "title": "Channels",
+          "type": "array"
+        }
+      },
+      "title": "RequiredChannelsSection",
+      "type": "object"
+    },
     "SecuritySection": {
       "additionalProperties": false,
       "properties": {
@@ -637,7 +745,7 @@
           "type": "integer"
         },
         "caption_template": {
-          "default": "{title}\nمنبع: {source}",
+          "default": "{title}\nمنبع: {source}\nدریافت‌شده با @{bot_username}",
           "title": "Caption Template",
           "type": "string"
         },
@@ -667,6 +775,9 @@
         },
         "local_bot_api": {
           "$ref": "#/$defs/LocalBotApiSection"
+        },
+        "required_channels": {
+          "$ref": "#/$defs/RequiredChannelsSection"
         },
         "progress_min_interval_seconds": {
           "default": 3.0,
@@ -705,10 +816,24 @@
           "default": null,
           "title": "Cookies File"
         },
+        "proxy_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proxy Enabled"
+        },
         "proxy": {
           "anyOf": [
             {
-              "type": "string"
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
             },
             {
               "type": "null"

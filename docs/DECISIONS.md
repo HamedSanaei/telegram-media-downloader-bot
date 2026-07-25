@@ -99,7 +99,8 @@ operator command with confirmation and a durable write-before-call state machine
 never repeated after an uncertain response. Normal startup selects the durable active endpoint and
 never migrates. Cross-process endpoint leases prevent simultaneous cloud/local clients and provide
 reference-counted managed shutdown. The application ceiling is 1900 MB, below Telegram's documented
-2000 MB local maximum. The server binary remains operator-supplied and is not embedded in the image.
+2000 MB local maximum. Bare-metal mode accepts an operator-supplied binary; the Docker topology
+builds the same official server from pinned upstream source.
 
 ## ADR-013: Multipart delivery for every oversized result
 
@@ -111,3 +112,27 @@ upload below the Local Bot API ceiling, and removes the MTProto user session, pr
 channel, Premium queue, copy step, and their recovery states. `best_original` remains
 non-transcoding. Delivery receipts remain per-volume so successfully returned Telegram message
 identifiers are durable.
+
+## ADR-014: Container contracts, Instagram automation, and durable user usage
+
+**Status:** accepted
+
+Ordinary videos use a two-stage semantic Container then quality selection. MP4 and WebM are
+project-owned contracts: native files are preferred and an incompatible candidate is converted to
+H.264/AAC or VP9/Opus. `best_original` remains native-only. Instagram video posts, Reels, Stories,
+Highlights, and multi-video collections are normalized by the same yt-dlp adapter, skip
+presentation choices, ignore image entries, and deliver ordered best-MP4 artifacts separately.
+
+Required-channel membership is a fail-closed application policy backed by Telegram and positive/
+negative Redis cache. User profiles and usage totals are permanent SQLite/WAL records; a unique
+event per job makes accounting idempotent. The optional secret proxy is scoped solely to yt-dlp.
+
+## ADR-015: Docker-first installation and official Local API service
+
+**Status:** accepted
+
+Production installation is Docker-first on Linux and Windows. The official Local API executable is
+compiled from pinned upstream source and can be owned by a dedicated Compose service. Bot and Worker
+share the YAML-derived endpoint; API credentials enter only the official child environment.
+Cross-platform `tmb` commands provide lifecycle, logs, doctor, configuration, checksummed release
+updates with state-aware recovery, backup, and explicit uninstall.

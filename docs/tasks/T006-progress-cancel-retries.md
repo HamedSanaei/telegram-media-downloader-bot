@@ -1,6 +1,6 @@
 # T006 - Progress, cancellation, deduplication, and retries
 
-**Status:** complete (delivery-progress expansion 2026-07-24)
+**Status:** complete (delivery/user-accounting expansion 2026-07-25)
 
 The adapter maps upstream hooks to `ProgressEvent`; the worker uses a bounded latest-value queue and
 time/percentage throttling. Durable cancellation is polled by adapter hooks. Active-job SHA-256
@@ -11,6 +11,8 @@ Delivery has a project-owned progress event. A tracked InputFile reports bytes s
 Bot API in Telegram and structured logs; the subsequent opaque Telegram phase emits elapsed-time
 heartbeats only. Multipart receipts are committed after every successful part. Ambiguous HTTP
 failures include safe stage/byte/ordinal context and remain quarantined.
+Confirmed delivery updates permanent user/daily counters in the same short SQLite transaction,
+guarded by unique `job_id`; retries and restarts cannot double-count bytes.
 
 ## Deliverables
 

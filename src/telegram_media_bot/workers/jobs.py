@@ -16,21 +16,28 @@ from aiogram import Bot
 from arq import Retry
 
 from telegram_media_bot.application.ports.delivery import DeliveryGateway
+from telegram_media_bot.application.ports.job_queue import JobQueue
 from telegram_media_bot.application.ports.job_repository import JobRepository
+from telegram_media_bot.application.ports.user_repository import UserRepository
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.error_policy import error_category
+from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.application.services.progress import (
     DeliveryProgressThrottler,
     ProgressThrottler,
 )
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
+    AuthenticationRequiredError,
     DeliveryError,
     JobCancelledError,
     MediaBotError,
+    MediaTooLargeError,
     MediaUnavailableError,
+    PlaylistNotAllowedError,
 )
 from telegram_media_bot.domain.models import (
+    ContainerPolicy,
     DeliveryItemReceipt,
     DeliveryItemRecord,
     DeliveryItemStatus,
@@ -39,9 +46,11 @@ from telegram_media_bot.domain.models import (
     DownloadMode,
     ErrorCategory,
     JobId,
+    JobKind,
     JobStatus,
     MediaFormatOption,
     MediaKind,
+    OutputContainer,
     ProgressEvent,
     SelectionRecord,
     SelectionToken,
@@ -49,15 +58,19 @@ from telegram_media_bot.domain.models import (
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.telegram.delivery import render_caption
 from telegram_media_bot.telegram.texts import (
+    AUTH_REQUIRED_TEXT,
     CANCELLED_TEXT,
+    COLLECTION_LIMIT_TEXT,
     DELIVERY_UNCERTAIN_TEXT,
     FAILED_TEXT,
+    MEDIA_TOO_LARGE_TEXT,
+    MEDIA_UNAVAILABLE_TEXT,
 )
 from telegram_media_bot.telegram.ui import (
+    container_keyboard,
     render_delivery_progress,
     render_media_info,
     render_progress,
-    selection_keyboard,
 )
 
 logger = structlog.get_logger(__name__)
@@ -93,6 +106,47 @@ async def process_inspection_job(
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
         info = await asyncio.to_thread(service.inspect, url)
         now = datetime.now(UTC)
+        if info.source.casefold() == "instagram" and settings.media.instagram.auto_download:
+            download, created = await asyncio.to_thread(
+                JobService(repository).create_download,
+                chat_id=chat_id,
+                user_id=user_id,
+                url=info.webpage_url,
+                mode=DownloadMode.BEST_ORIGINAL,
+                container=OutputContainer.MP4,
+                container_policy=ContainerPolicy.GUARANTEED,
+            )
+            if record.status_message_id is not None:
+                await asyncio.to_thread(
+                    repository.set_status_message,
+                    download.job_id,
+                    record.status_message_id,
+                )
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=record.status_message_id,
+                    text="بهترین نسخهٔ MP4 اینستاگرام برای دریافت آماده شد و در صف قرار گرفت.",
+                )
+            if created:
+                queue = cast(JobQueue, ctx["queue"])
+                await queue.enqueue_download(
+                    job_id=download.job_id,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    url=info.webpage_url,
+                    mode=DownloadMode.BEST_ORIGINAL,
+                    container=OutputContainer.MP4,
+                    container_policy=ContainerPolicy.GUARANTEED,
+                )
+            await asyncio.to_thread(
+                repository.transition,
+                job_id,
+                JobStatus.SUCCEEDED,
+                source=info.source,
+            )
+            metrics.record_job(outcome="inspection_succeeded", source=info.source)
+            await logger.ainfo("instagram_download_enqueued", job_id=job_id)
+            return str(job_id)
         allowed_modes = _configured_modes_for(
             info.kind,
             settings.media.enabled_modes,
@@ -116,13 +170,13 @@ async def process_inspection_job(
                 chat_id=chat_id,
                 message_id=record.status_message_id,
                 text=text,
-                reply_markup=selection_keyboard(selection),
+                reply_markup=container_keyboard(selection),
             )
         else:
             message = await bot.send_message(
                 chat_id=chat_id,
                 text=text,
-                reply_markup=selection_keyboard(selection),
+                reply_markup=container_keyboard(selection),
             )
             await asyncio.to_thread(repository.set_status_message, job_id, message.message_id)
         await asyncio.to_thread(
@@ -179,6 +233,8 @@ async def process_download_job(
     user_id: int,
     url: str,
     mode: str,
+    container: str | None = None,
+    container_policy: str = ContainerPolicy.NATIVE_ONLY.value,
 ) -> str:
     settings = cast(Settings, ctx["settings"])
     repository = cast(JobRepository, ctx["repository"])
@@ -242,23 +298,30 @@ async def process_download_job(
         if cancellation():
             raise JobCancelledError("Download was cancelled")
         selected_mode = DownloadMode(mode)
+        selected_container = OutputContainer(container) if container else None
+        selected_policy = ContainerPolicy(container_policy)
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
         reporter = asyncio.create_task(
             _report_progress(
                 progress_queue, record.chat_id, record.status_message_id, delivery, settings
             )
         )
-        download_task = asyncio.create_task(
-            asyncio.to_thread(
-                service.download,
-                job_id=job_id,
-                url=url,
-                mode=selected_mode,
-                output_directory=output_directory,
-                temp_directory=temp_directory,
-                progress=progress_sink if record.status_message_id is not None else None,
-                is_cancelled=cancellation,
+        common_download_arguments: dict[str, Any] = {
+            "job_id": job_id,
+            "url": url,
+            "mode": selected_mode,
+            "output_directory": output_directory,
+            "temp_directory": temp_directory,
+            "progress": progress_sink if record.status_message_id is not None else None,
+            "is_cancelled": cancellation,
+        }
+        if selected_container is not None:
+            common_download_arguments.update(
+                container=selected_container,
+                container_policy=selected_policy,
             )
+        download_task = asyncio.create_task(
+            asyncio.to_thread(service.download, **common_download_arguments)
         )
         try:
             result = await asyncio.shield(download_task)
@@ -281,20 +344,29 @@ async def process_download_job(
         receipt = await delivery.deliver(
             chat_id=chat_id,
             result=result,
-            caption=render_caption(settings, result),
+            caption=render_caption(
+                settings,
+                result,
+                str(ctx.get("bot_username") or "telegram_media_bot"),
+            ),
             progress=delivery_progress_sink,
             item_delivered=persist_delivery_item,
         )
-        await asyncio.to_thread(
-            repository.transition,
-            job_id,
-            JobStatus.SUCCEEDED,
-            source=result.source,
-            delivery_file_id=receipt.file_id,
-            delivery_file_unique_id=receipt.file_unique_id,
-            attempt=attempt,
-        )
-        metrics.add_bytes(result.file_size_bytes)
+        try:
+            await asyncio.to_thread(
+                repository.complete_download,
+                job_id,
+                user_id=user_id,
+                day=datetime.now(UTC).date(),
+                source=result.source,
+                delivery_file_id=receipt.file_id,
+                delivery_file_unique_id=receipt.file_unique_id,
+                attempt=attempt,
+                delivered_bytes=result.total_file_size_bytes,
+            )
+        except Exception as exc:
+            raise DeliveryError("Atomic delivery completion persistence failed") from exc
+        metrics.add_bytes(result.total_file_size_bytes)
         metrics.record_job(outcome="succeeded", source=result.source)
         if record.status_message_id is not None:
             await _safe_edit(
@@ -323,14 +395,18 @@ async def process_download_job(
         await logger.ainfo("download_cancelled", job_id=job_id)
         return str(job_id)
     except DeliveryError as exc:
-        await asyncio.to_thread(
-            repository.transition,
-            job_id,
-            JobStatus.DELIVERY_UNCERTAIN,
-            error_category=ErrorCategory.DELIVERY_UNCERTAIN,
-            error_summary=type(exc).__name__,
-            attempt=attempt,
-        )
+        quarantine_persisted = True
+        try:
+            await asyncio.to_thread(
+                repository.transition,
+                job_id,
+                JobStatus.DELIVERY_UNCERTAIN,
+                error_category=ErrorCategory.DELIVERY_UNCERTAIN,
+                error_summary=type(exc).__name__,
+                attempt=attempt,
+            )
+        except Exception:
+            quarantine_persisted = False
         metrics.record_job(
             outcome="delivery_uncertain", error=ErrorCategory.DELIVERY_UNCERTAIN.value
         )
@@ -359,6 +435,7 @@ async def process_download_job(
             "download_delivery_uncertain",
             job_id=job_id,
             error_type=type(exc).__name__,
+            quarantine_persisted=quarantine_persisted,
             **progress_fields,
         )
         return str(job_id)
@@ -388,6 +465,7 @@ async def process_download_job(
             attempt=attempt,
         )
         metrics.record_job(outcome="failed", error=ErrorCategory.INTERNAL.value)
+        await _record_failed_usage(repository, job_id, user_id)
         await _notify_failure(ctx, chat_id, record.status_message_id if record else None)
         await logger.aexception("download_unexpected_failure", job_id=job_id)
         return str(job_id)
@@ -451,7 +529,14 @@ async def _handle_controlled_failure(
         attempt=attempt,
     )
     metrics.record_job(outcome="failed", error=category.value)
-    await _notify_failure(ctx, chat_id, record.status_message_id if record else None)
+    if record is not None and record.kind is JobKind.DOWNLOAD:
+        await _record_failed_usage(repository, job_id, record.user_id)
+    await _notify(
+        ctx,
+        chat_id,
+        record.status_message_id if record else None,
+        _controlled_failure_text(exc),
+    )
     await logger.awarning(
         "job_controlled_failure", job_id=job_id, error_category=category.value, attempt=attempt
     )
@@ -508,6 +593,33 @@ async def _report_progress(
 
 async def _notify_failure(ctx: dict[str, Any], chat_id: int, message_id: int | None) -> None:
     await _notify(ctx, chat_id, message_id, FAILED_TEXT)
+
+
+async def _record_failed_usage(
+    repository: JobRepository,
+    job_id: JobId,
+    user_id: int,
+) -> None:
+    users = cast(UserRepository, repository)
+    await asyncio.to_thread(
+        users.record_download_outcome,
+        job_id=job_id,
+        user_id=user_id,
+        day=datetime.now(UTC).date(),
+        succeeded=False,
+    )
+
+
+def _controlled_failure_text(exc: MediaBotError) -> str:
+    if isinstance(exc, AuthenticationRequiredError):
+        return AUTH_REQUIRED_TEXT
+    if isinstance(exc, MediaTooLargeError):
+        return MEDIA_TOO_LARGE_TEXT
+    if isinstance(exc, PlaylistNotAllowedError):
+        return COLLECTION_LIMIT_TEXT
+    if isinstance(exc, MediaUnavailableError):
+        return MEDIA_UNAVAILABLE_TEXT
+    return FAILED_TEXT
 
 
 async def _notify(ctx: dict[str, Any], chat_id: int, message_id: int | None, text: str) -> None:

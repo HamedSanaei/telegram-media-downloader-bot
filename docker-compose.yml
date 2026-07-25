@@ -5,7 +5,7 @@ x-app-common: &app-common
     context: .
     args:
       PYTHON_VERSION: "${PYTHON_VERSION:-3.14.5}"
-  image: telegram-media-downloader-bot:local
+  image: "${TMB_IMAGE:-telegram-media-downloader-bot:local}"
   restart: unless-stopped
   read_only: true
   security_opt:
@@ -24,6 +24,33 @@ x-app-common: &app-common
       condition: service_healthy
 
 services:
+  local-api:
+    <<: *app-common
+    profiles: ["local-api"]
+    command:
+      [
+        "telegram-media-bot",
+        "local-api",
+        "--config",
+        "/app/config.yaml",
+        "serve",
+      ]
+    depends_on: {}
+    ports:
+      - "127.0.0.1:8081:8081"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.create_connection(('127.0.0.1',8081),3); s.close()",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 12
+
   bot:
     <<: *app-common
     command: ["telegram-media-bot", "bot", "--config", "/app/config.yaml"]

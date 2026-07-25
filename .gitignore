@@ -1,5 +1,6 @@
 # Local secrets and runtime configuration
 config.yaml
+config.yaml.tmp
 *.local.yaml
 .env
 
@@ -16,6 +17,7 @@ coverage.xml
 htmlcov/
 dist/
 build/
+backups/
 *.egg-info/
 
 # Runtime data

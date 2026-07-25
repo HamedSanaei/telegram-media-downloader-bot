@@ -14,6 +14,17 @@ Windows equivalents use `manage.ps1`. The stack contains bot, worker, and persis
 downloads, temporary files, upgrade reports, and cookies live below `./data`; only configuration and
 cookies should be backed up as sensitive material.
 
+Production operators can instead use the Docker-first one-line installers and the shared `tmb`
+menu/command documented in `docs/INSTALLATION.md`. The release topology additionally runs the
+official pinned Local Bot API in a dedicated Compose service.
+
+Release rollback uses `TMB_RELEASE_TAG=vX.Y.Z tmb update`; the updater verifies the selected
+release checksum, stops application writers for a consistent backup, pins the matching image, and
+preserves local configuration/data. Redis and its ARQ queue remain running; a failed download,
+validation, or pull restores the old image and exactly the previously running application services.
+Backup archives exclude downloads/temp but include configuration, SQLite/WAL state, cookies, and
+Local API state; Redis continues to use its persistent Compose volume.
+
 If the Windows execution policy blocks unsigned local scripts, use
 `powershell -NoProfile -ExecutionPolicy Bypass -File .\manage.ps1 COMMAND` for the current process or
 apply the organization's approved signing policy; do not lower the machine-wide policy silently.
@@ -49,6 +60,10 @@ Only IDs in `telegram.admin_ids` can use:
   permitted; it never resends automatically.
 
 No command returns URLs, tokens, cookies, proxy data, internal exception text, or file paths.
+
+For required channels, add the bot as administrator before enabling the policy. A user must be a
+member of every configured channel. The “joined, recheck” button bypasses Redis cache; ordinary
+checks use the configured positive/negative TTL.
 
 ## Alerts and diagnosis
 

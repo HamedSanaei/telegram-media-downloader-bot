@@ -23,7 +23,8 @@ Actual extraction support is determined by the installed `yt-dlp` version.
 2. Bot validates access policy and enqueues metadata inspection.
 3. Bot displays normalized title, duration, source, and only semantic formats that are actually
    selectable, including selected resolution/FPS/HDR and exact, estimated, or unknown size.
-4. User chooses output mode.
+4. For ordinary video, the user chooses MP4 or WebM and then a real semantic quality. Instagram
+   video posts, Reels, Stories, and Highlights skip both prompts and use best-quality MP4.
 5. Worker downloads into an isolated job directory.
 6. Telegram and worker logs report throttled download/upload progress. Upload percentage covers
    bytes read into Local Bot API; the opaque Telegram phase reports only elapsed-time heartbeats.
@@ -41,6 +42,9 @@ progress/cancellation, delivery, and cleanup flow described above.
 ## Required operational behavior
 
 - One-command Docker Compose startup after local config creation.
+- Optional fail-closed membership in every configured channel before protected operations.
+- An optional HTTP(S)/SOCKS proxy scoped strictly to yt-dlp source traffic.
+- Permanent user profiles and idempotent daily/success/failure/byte usage counters in SQLite.
 - All secrets in ignored local YAML configuration.
 - Separate bot and download worker processes.
 - Bounded concurrency, retries, timeouts, size limits, and rate limits.

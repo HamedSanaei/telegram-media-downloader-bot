@@ -9,6 +9,8 @@ from telegram_media_bot.domain.models import (
     JobId,
     MediaFormatOption,
     MediaInfo,
+    OutputContainer,
+    RequiredChannel,
     SelectionRecord,
     SizeConfidence,
 )
@@ -26,18 +28,54 @@ _MODE_LABELS = {
 }
 
 
-def selection_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
-    options = {option.mode: option for option in selection.media.format_options}
+def selection_keyboard(
+    selection: SelectionRecord,
+    container: OutputContainer | None = None,
+) -> InlineKeyboardMarkup:
+    options = {
+        option.mode: option
+        for option in selection.media.format_options
+        if option.container is container
+    }
     rows = [
         [
             InlineKeyboardButton(
                 text=_button_label(mode, options.get(mode)),
-                callback_data=f"fmt:{selection.token}:{mode.value}",
+                callback_data=(
+                    f"fmt:{selection.token}:{container.value}:{mode.value}"
+                    if container is not None
+                    else f"fmt:{selection.token}:{mode.value}"
+                ),
             )
         ]
         for mode in selection.allowed_modes
+        if mode in options or container is None
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def container_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
+    labels = {
+        OutputContainer.MP4: "ویدئو MP4",
+        OutputContainer.WEBM: "ویدئو WebM",
+        OutputContainer.MP3: "صوت MP3",
+    }
+    containers = tuple(
+        container
+        for container in OutputContainer
+        if any(option.container is container for option in selection.media.format_options)
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=labels[container],
+                    callback_data=f"container:{selection.token}:{container.value}",
+                )
+            ]
+            for container in containers
+        ]
+    )
 
 
 def cancellation_keyboard(job_id: JobId) -> InlineKeyboardMarkup:
@@ -48,7 +86,28 @@ def cancellation_keyboard(job_id: JobId) -> InlineKeyboardMarkup:
     )
 
 
-def render_media_info(info: MediaInfo) -> str:
+def required_channels_keyboard(
+    channels: tuple[RequiredChannel, ...],
+) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=f"عضویت در {channel.title}", url=channel.join_url)]
+        for channel in channels
+    ]
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="عضو شدم، بررسی مجدد",
+                callback_data="membership:recheck",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def render_media_info(
+    info: MediaInfo,
+    container: OutputContainer | None = None,
+) -> str:
     lines = [
         f"عنوان: {_clean(info.title, 256)}",
         f"منبع: {_clean(info.source, 64)}",
@@ -60,13 +119,25 @@ def render_media_info(info: MediaInfo) -> str:
         lines.append(f"حجم تقریبی: {_size(info.estimated_size_bytes)}")
     if info.item_count is not None:
         lines.append(f"تعداد آیتم: {info.item_count}")
-    if info.format_options:
+    matching_options = tuple(
+        option
+        for option in info.format_options
+        if container is None or option.container is container
+    )
+    legacy_options = container is None and not any(
+        option.container is not None for option in info.format_options
+    )
+    if (container is not None or legacy_options) and matching_options:
         lines.append("کیفیت‌های قابل دریافت:")
         lines.extend(
             f"• {_MODE_LABELS[option.mode]} — {_option_details(option)}"
-            for option in info.format_options
+            for option in matching_options
         )
-    lines.append("خروجی موردنظر را انتخاب کنید:")
+    lines.append(
+        "کیفیت موردنظر را انتخاب کنید:"
+        if container is not None
+        else "نوع فایل خروجی را انتخاب کنید:"
+    )
     return "\n".join(lines)
 
 
@@ -78,12 +149,12 @@ def render_progress(
     status: str | None = None,
 ) -> str:
     if status == "transcoding":
-        return "در حال فشرده‌سازی ویدئو در کیفیت انتخابی…"
+        return "در حال تبدیل فرمت، فشرده‌سازی و آماده‌سازی ویدئو…"
     percent_text = "؟" if percent is None else f"{percent:.0f}"
     size_text = _size(downloaded)
     if total is not None:
         size_text = f"{size_text} از {_size(total)}"
-    return f"در حال دریافت… {percent_text}٪\n{size_text}"
+    return f"در حال دریافت از منبع… {percent_text}٪\n{size_text}"
 
 
 def render_delivery_progress(event: DeliveryProgressEvent) -> str:
@@ -93,8 +164,8 @@ def render_delivery_progress(event: DeliveryProgressEvent) -> str:
     item = f"بخش {event.item_ordinal} از {event.item_count}"
     if event.stage is DeliveryStage.FINALIZING:
         return (
-            f"{item} به Local Bot API تحویل شد.\n"
-            f"Telegram در حال پردازش و ثبت نهایی است…\nزمان سپری‌شده: {elapsed}"  # noqa: RUF001
+            f"آپلود {item} کامل شد.\n"
+            f"Telegram در حال پردازش نهایی فایل است…\nزمان سپری‌شده: {elapsed}"  # noqa: RUF001
         )
     item_percent = "؟" if event.item_percent is None else f"{event.item_percent:.0f}"
     overall_percent = "؟" if event.percent is None else f"{event.percent:.0f}"
@@ -122,6 +193,10 @@ def _option_details(option: MediaFormatOption) -> str:
         details.append(f"{option.fps:g}fps")
     if option.height is not None:
         details.append("HDR" if option.is_hdr else "SDR")
+    if option.requires_transcode:
+        details.append("نیازمند تبدیل")
+    elif option.container is not None:
+        details.append("نسخهٔ اصلی")
     details.append(_size_label(option))
     return "، ".join(details)
 

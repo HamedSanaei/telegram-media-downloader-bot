@@ -11,14 +11,20 @@ thumbnails, extensions, playlist entries, and upstream error strings.
   private DNS answer sets are rejected. The adapter revalidates extracted page/media/playlist URLs.
 - Only operator-defined semantic modes/selectors, output roots, postprocessors, cookies, proxy, and
   headers exist. Users cannot supply commands, output templates, destinations, or yt-dlp options.
-- Static allow/block policy, durable admin blocks, and a fail-closed Redis per-user rate limit are
-  applied before inspection.
+- Static allow/block policy, durable admin blocks, all-channel membership, and a fail-closed Redis
+  per-user rate limit are applied before inspection. Telegram membership errors deny access.
 - Output and temporary paths resolve under fixed roots. Containers run non-root, read-only, with all
   Linux capabilities dropped and `no-new-privileges`; writable state is limited to `/data` and tmpfs.
 - Tokens, cookies, authorization, passwords, proxy values, Local API hashes, and URL credentials
   are recursively redacted. Managed `api_id`/`api_hash` are read only from YAML and passed only in
   the child process environment, never its command line. Arbitrary user URLs and file paths are not
   logged.
+- The optional proxy is a `SecretStr` scoped to the yt-dlp adapter. It never affects Telegram,
+  Redis, Local API, or installer traffic and is not included in logs or CLI health output.
+- Interactive configuration uses atomic replacement and removes its secret-bearing temporary file
+  on success or validation failure; `config.yaml.tmp` is ignored as defense in depth.
+- User persistence stores only Bot API profile fields and aggregate usage. No phone, email, contact,
+  user-session, SMS, or two-factor credential is collected.
 - Delivery limits are checked before Telegram; ambiguous uploads enter `delivery_uncertain` rather
   than risking an automatic duplicate.
 - Dependencies are locked and checked against current vulnerability advisories with `pip-audit`;

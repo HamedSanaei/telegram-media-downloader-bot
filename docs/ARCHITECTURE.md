@@ -31,7 +31,8 @@ yt-dlp + ffmpeg
 ```
 
 SQLite/WAL under `/data/state` is the durable control plane shared by the bot and worker. Redis is
-the transient queue/rate-limit plane and is not the source of truth for completed delivery state.
+the transient queue/rate-limit/membership-cache plane and is not the source of truth for completed
+delivery state or user usage.
 
 ## Dependency direction
 
@@ -51,8 +52,9 @@ The engine port exposes normalized project models:
 
 - `MediaInfo` for inspection;
 - `MediaFormatOption` for a real semantic candidate and its size-confidence metadata;
+- `OutputContainer`/`ContainerPolicy` for native-only or guaranteed MP4/WebM/MP3 output;
 - `DownloadRequest` for semantic requests;
-- `DownloadResult` for final files;
+- `DownloadResult`/`DownloadArtifact` for one or an ordered set of final files;
 - `DeliveryProgressEvent` for packaging, byte transfer, and opaque finalization;
 - project exceptions for failure categories.
 
@@ -65,6 +67,8 @@ adapter package.
 
 - long polling initially;
 - validates public DNS results and static/durable user policy;
+- enforces membership in every configured channel through a cached Telegram gateway;
+- upserts the Bot API user profile and request counters through a persistence port;
 - creates a durable job record before its immutable queue payload;
 - reads owner-bound, expiring selections for callbacks;
 - does not download media;
@@ -122,8 +126,9 @@ A genuine change to the project-owned engine port requires an ADR and coordinate
 - `> telegram.max_upload_size_mb` and `<= multipart.max_total_size_mb`: stored multi-volume ZIP
   documents, each bounded by `multipart.part_size_mb` and sent through Local Bot API.
 
-`best_original` is never transcoded. Fixed resolution modes may be transcoded only after the final
-merged file actually exceeds `media.max_file_size_mb`.
+`best_original` is native-only and never transcoded. Ordinary MP4 and WebM selections prefer a
+native candidate, then guarantee MP4 H.264/AAC or WebM VP9/Opus through cancellable FFmpeg
+conversion. Fixed resolution and at-most-60-FPS contracts are preserved.
 
 Fixed-resolution candidates are exact-height contracts: `video_2160` is absent unless a real 2160p
 stream can be combined with audio, and download cannot silently fall back. Inspection and download
@@ -148,3 +153,15 @@ composition point. Both processes resolve the same endpoint from YAML plus durab
 Cross-process leases reject mixed endpoints and keep a managed server alive until the final local
 client exits. Migration writes its intent before each non-idempotent `logOut`; an uncertain result
 is quarantined and never repeated automatically.
+
+The Docker topology can assign Local API lifecycle ownership to a dedicated `local-api` service.
+That service reads credentials from mounted YAML and injects them only into the official child
+process environment. Bot and Worker connect through `http://local-api:8081`; no credential is
+placed in Compose environment or command arguments.
+
+## Source-specific policy without handler coupling
+
+Source detection remains inside the yt-dlp adapter. The worker consumes normalized `source` policy:
+Instagram collections are the approved automatic multi-artifact flow, image entries are discarded,
+and ordered video artifacts are delivered separately. Cookies remain an optional read-only operator
+file. Telegram handlers contain no extractor/domain-name dispatch chain.

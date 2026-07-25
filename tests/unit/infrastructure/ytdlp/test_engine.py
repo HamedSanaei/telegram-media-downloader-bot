@@ -14,10 +14,12 @@ from telegram_media_bot.domain.errors import (
     UnsafeUrlError,
 )
 from telegram_media_bot.domain.models import (
+    ContainerPolicy,
     DownloadMode,
     DownloadRequest,
     JobId,
     MediaKind,
+    OutputContainer,
     ProgressEvent,
 )
 from telegram_media_bot.infrastructure.ytdlp import engine as engine_module
@@ -177,6 +179,56 @@ def test_download_returns_file_beneath_job_directory(
     assert result.file_size_bytes == 5
     assert events[0].percent == 50
     assert events[0].eta_seconds == 3
+
+
+def test_instagram_collection_returns_ordered_mp4_video_artifacts(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class InstagramYoutubeDL(FakeYoutubeDL):
+        info: ClassVar[dict[str, Any]] = {
+            "id": "collection",
+            "title": "Highlight",
+            "extractor_key": "Instagram",
+            "webpage_url": "https://example.test/highlights/1",
+            "entries": [
+                {"id": "first", "vcodec": "h264", "acodec": "aac", "ext": "mp4"},
+                {"id": "image", "vcodec": "none", "acodec": "none", "ext": "jpg"},
+                {"id": "second", "vcodec": "h264", "acodec": "aac", "ext": "mp4"},
+            ],
+        }
+
+        def extract_info(self, _url: str, *, download: bool) -> dict[str, Any]:
+            if download:
+                output = Path(self.options["paths"]["home"])
+                output.mkdir(parents=True, exist_ok=True)
+                (output / "first.mp4").write_bytes(b"first")
+                (output / "image.jpg").write_bytes(b"image")
+                (output / "second.mp4").write_bytes(b"second")
+            return dict(self.info)
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", InstagramYoutubeDL)
+    monkeypatch.setattr(engine_module, "is_compatible_video", lambda *_args: True)
+    configured = _without_dns_checks(settings)
+
+    result = engine_module.YtDlpEngine(configured).download(
+        DownloadRequest(
+            job_id=JobId("instagram-collection"),
+            url="https://example.test/highlights/1",
+            mode=DownloadMode.BEST,
+            output_directory=configured.storage.downloads_path() / "instagram-collection",
+            container=OutputContainer.MP4,
+            container_policy=ContainerPolicy.GUARANTEED,
+            allow_collection=True,
+        )
+    )
+
+    assert result.source == "instagram"
+    assert result.kind is MediaKind.PLAYLIST
+    assert [artifact.file_path.name for artifact in result.artifacts] == [
+        "first.mp4",
+        "second.mp4",
+    ]
+    assert result.total_file_size_bytes == 11
 
 
 def test_download_rejects_output_outside_storage(settings: Settings, tmp_path: Path) -> None:

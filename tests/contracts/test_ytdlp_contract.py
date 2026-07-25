@@ -9,6 +9,8 @@ _SOURCE_FIXTURES = (
     ("youtube", "CONTRACT_YOUTUBE_URL"),
     ("soundcloud", "CONTRACT_SOUNDCLOUD_URL"),
     ("instagram", "CONTRACT_INSTAGRAM_URL"),
+    ("instagram", "CONTRACT_INSTAGRAM_STORY_URL"),
+    ("instagram", "CONTRACT_INSTAGRAM_HIGHLIGHT_URL"),
     ("twitter", "CONTRACT_TWITTER_URL"),
     ("pinterest", "CONTRACT_PINTEREST_URL"),
     ("tiktok", "CONTRACT_TIKTOK_URL"),

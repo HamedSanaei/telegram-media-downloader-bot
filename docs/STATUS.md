@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-07-24
+Last updated: 2026-07-25
 
 ## Release state
 
@@ -30,6 +30,19 @@ Telegram delivery -> terminal state and cleanup.
   CLI, and Local API readiness.
 - Controlled yt-dlp upgrade reports, per-source opt-in contracts, canary failure-rate gate, and an
   independent external extractor plugin template.
+- Fail-closed all-channel membership with Redis positive/negative cache and admin bypass.
+- yt-dlp-only HTTP(S)/SOCKS proxy switching with legacy behavior and secret-safe configuration.
+- Two-stage MP4/WebM quality selection, codec-verified fallback conversion, automatic best-MP4
+  Instagram multi-video delivery, and runtime bot attribution in every caption.
+- Permanent SQLite user profiles, daily counters, and job-idempotent delivery byte accounting.
+- Docker-first Linux/Windows installers with SHA-256-verified release archives, version-pinned
+  images, interactive `tmb` management, official pinned Local Bot API source build, dedicated
+  Local API service, and GHCR amd64/arm64 release workflow.
+- Failed interactive configuration writes remove their secret-bearing temporary file; the exact
+  temporary filename is also ignored by Git.
+- `tmb update` now preserves Redis/ARQ state, backs up SQLite/WAL only after graceful writer
+  shutdown, verifies releases in staging, and restores exactly the previously running application
+  services on download/checksum/pull failure.
 
 ## Verification
 
@@ -38,6 +51,12 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-25: Made successful delivery completion and permanent byte accounting one atomic SQLite
+  transaction; persistence uncertainty is quarantined without automatic Telegram retry. Added WAL
+  contention coverage and backward-compatible legacy job idempotency keys.
+- 2026-07-25: Added required-channel membership, yt-dlp-only proxy control, MP4/WebM container
+  selection, Instagram Story/Highlight/multi-video policy, dynamic bot captions, durable user
+  usage, and cross-platform Docker installation/management.
 - 2026-07-24: Inspection now evaluates each enabled semantic selector against the real formats,
   hides unavailable exact heights, and displays resolution/FPS/HDR plus exact, estimated, or
   unknown video+audio size. Direct and multipart uploads report tracked byte progress in Telegram
@@ -78,9 +97,11 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 - DNS and extracted URLs are revalidated, but no application can eliminate DNS rebinding between a
   validation lookup and an upstream library's socket connect without controlling that library's
   resolver/transport.
-- The official Local Bot API executable is operator-supplied and intentionally not bundled or
-  enabled by default. The destructive real >200 MB upload test requires an explicitly configured
-  local bot/chat and is skipped in the default suite.
+- The Docker image builds the official Local Bot API executable from pinned upstream source. The
+  destructive real >200 MB upload test still requires an explicitly configured local bot/chat and
+  remains skipped in the default suite.
+- Instagram Stories/Highlights that require authentication depend on a current operator-supplied
+  read-only cookies file; upstream login challenges can still invalidate it.
 - Castbox and Spotify are not implemented; both remain outside the generic v1 engine policy.
 - Multi-volume output requires 7-Zip on the server and on the recipient device. Real >2 GB and
   >3.9 GB tests are destructive opt-in tests and remain skipped in the default suite.

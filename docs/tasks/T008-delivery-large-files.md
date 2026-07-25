@@ -1,6 +1,6 @@
 # T008 - Telegram delivery and runtime media dependencies
 
-**Status:** complete (large-file routing simplified 2026-07-24)
+**Status:** complete (container and bundled Local API expansion 2026-07-25)
 
 Delivery is behind a project port and selects audio, video, or document with document fallback.
 Captions and filenames are sanitized, upload limits fail explicitly, and an optional local Bot API
@@ -25,6 +25,10 @@ staging channel, or copy step is used.
 Fixed resolution modes are exact rather than fallback ceilings, selected video+audio size is
 calculated during inspection, and direct/multipart upload byte progress appears in both the status
 message and structured console log. Telegram post-body processing is reported as elapsed time only.
+
+The official Local Bot API is compiled from a pinned upstream commit in the multi-stage image and
+can run as a separate Compose service. Ordinary video guarantees MP4 H.264/AAC or WebM VP9/Opus;
+WebM is delivered as a document. Ordered Instagram video artifacts are sent separately.
 
 ## Deliverables
 

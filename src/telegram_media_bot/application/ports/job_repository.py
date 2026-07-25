@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 
 from telegram_media_bot.domain.models import (
@@ -48,6 +48,19 @@ class JobRepository(Protocol):
         delivery_file_unique_id: str | None = None,
         attempt: int | None = None,
     ) -> None: ...
+
+    def complete_download(
+        self,
+        job_id: JobId,
+        *,
+        user_id: int,
+        day: date,
+        source: str,
+        delivery_file_id: str | None,
+        delivery_file_unique_id: str | None,
+        attempt: int,
+        delivered_bytes: int,
+    ) -> bool: ...
 
     def request_cancel(self, job_id: JobId, owner_user_id: int) -> bool: ...
 

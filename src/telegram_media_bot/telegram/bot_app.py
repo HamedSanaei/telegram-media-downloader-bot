@@ -11,6 +11,9 @@ from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.queue.arq_queue import ArqJobQueue
 from telegram_media_bot.infrastructure.security.redis_rate_limiter import RedisRateLimiter
+from telegram_media_bot.infrastructure.security.telegram_membership import (
+    TelegramMembershipChecker,
+)
 from telegram_media_bot.telegram.bot_factory import create_telegram_runtime
 from telegram_media_bot.telegram.handlers import build_router
 
@@ -24,15 +27,24 @@ async def run_bot(settings: Settings) -> None:
     bot = runtime.bot
     queue: ArqJobQueue | None = None
     rate_limiter: RedisRateLimiter | None = None
+    membership_checker: TelegramMembershipChecker | None = None
     try:
+        await bot.get_me()
         queue = await ArqJobQueue.create(settings)
         repository = SqliteJobRepository(settings.database_path())
         repository.initialize()
         rate_limiter = RedisRateLimiter.create(settings.redis.url)
+        if settings.telegram.required_channels.enabled:
+            membership_checker = TelegramMembershipChecker.create(
+                bot,
+                settings.redis.url,
+                settings.telegram.required_channels,
+            )
         access_policy = AccessPolicyService(
             settings=settings,
             repository=repository,
             rate_limiter=rate_limiter,
+            membership_checker=membership_checker,
         )
         dispatcher = Dispatcher()
         dispatcher.include_router(
@@ -42,6 +54,7 @@ async def run_bot(settings: Settings) -> None:
                 repository=repository,
                 access_policy=access_policy,
                 jobs=JobService(repository),
+                users=repository,
             )
         )
         await logger.ainfo("bot_started")
@@ -55,5 +68,7 @@ async def run_bot(settings: Settings) -> None:
             await queue.close()
         if rate_limiter is not None:
             await rate_limiter.close()
+        if membership_checker is not None:
+            await membership_checker.close()
         await bot.session.close()
         await asyncio.to_thread(runtime.close_local_api)

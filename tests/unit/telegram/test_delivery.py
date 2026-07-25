@@ -15,6 +15,7 @@ from telegram_media_bot.domain.models import (
     DeliveryProgressEvent,
     DeliveryProvider,
     DeliveryStage,
+    DownloadArtifact,
     DownloadResult,
     JobId,
     MediaKind,
@@ -35,14 +36,17 @@ class FakeBot:
 
     def __init__(self) -> None:
         self.last_upload: dict[str, object] = {}
+        self.uploads: list[dict[str, object]] = []
 
     async def send_audio(self, **kwargs: object) -> Message:
         self.last_upload = kwargs
+        self.uploads.append(kwargs)
         await self._consume(kwargs.get("audio"))
         return _message("audio")
 
     async def send_video(self, **kwargs: object) -> Message:
         self.last_upload = kwargs
+        self.uploads.append(kwargs)
         if self.fail_video:
             raise TelegramBadRequest(
                 method=SendVideo(chat_id=1, video="existing-file-id"), message="unsupported"
@@ -57,6 +61,7 @@ class FakeBot:
 
     async def send_document(self, **kwargs: object) -> Message:
         self.last_upload = kwargs
+        self.uploads.append(kwargs)
         await self._consume(kwargs.get("document"))
         return _message("document")
 
@@ -102,6 +107,63 @@ async def test_video_failure_falls_back_to_document(settings: Settings, tmp_path
         chat_id=1, result=_result(tmp_path, MediaKind.VIDEO), caption="caption"
     )
     assert receipt.method.value == "document"
+
+
+async def test_webm_is_always_sent_as_document(settings: Settings, tmp_path: Path) -> None:
+    configured = _auto_delivery(settings)
+    path = tmp_path / "video.webm"
+    path.write_bytes(b"webm")
+    result = DownloadResult(
+        job_id=JobId("webm"),
+        media_id="webm",
+        title="WebM",
+        source="youtube",
+        kind=MediaKind.VIDEO,
+        file_path=path,
+        file_size_bytes=4,
+        mime_type="video/webm",
+    )
+    gateway = TelegramDeliveryGateway(cast(Bot, cast(Any, FakeBot())), configured)
+
+    receipt = await gateway.deliver(chat_id=1, result=result, caption="caption")
+
+    assert receipt.method.value == "document"
+
+
+async def test_multiple_video_artifacts_are_delivered_separately(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+    first.write_bytes(b"one")
+    second.write_bytes(b"two")
+    result = DownloadResult(
+        job_id=JobId("instagram"),
+        media_id="collection",
+        title="Collection",
+        source="instagram",
+        kind=MediaKind.PLAYLIST,
+        file_path=first,
+        file_size_bytes=6,
+        artifacts=(
+            DownloadArtifact(first, 3, MediaKind.VIDEO, "video/mp4", "One"),
+            DownloadArtifact(second, 3, MediaKind.VIDEO, "video/mp4", "Two"),
+        ),
+    )
+    bot = FakeBot()
+    gateway = RoutedDeliveryGateway(cast(Bot, cast(Any, bot)), settings)
+
+    receipt = await gateway.deliver(chat_id=1, result=result, caption="caption")
+
+    assert len(receipt.items) == 2
+    assert [item.ordinal for item in receipt.items] == [1, 2]
+    assert len(bot.uploads) == 2
+
+
+def test_caption_contains_runtime_bot_username(settings: Settings, tmp_path: Path) -> None:
+    caption = render_caption(settings, _result(tmp_path, MediaKind.VIDEO), "ExampleBot")
+    assert "@ExampleBot" in caption
 
 
 async def test_ambiguous_network_failure_never_falls_back_or_retries(

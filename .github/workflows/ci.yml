@@ -51,3 +51,34 @@ jobs:
           version: "0.11.31"
       - run: uv lock --check
       - run: docker build --build-arg PYTHON_VERSION=3.14.5 -t telegram-media-downloader-bot:test .
+
+  installer-quality:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck Linux management scripts
+        if: runner.os == 'Linux'
+        run: shellcheck install.sh scripts/tmb.sh
+      - name: Test Linux update recovery
+        if: runner.os == 'Linux'
+        run: bash scripts/tests/test_tmb_update.sh
+      - name: Install PSScriptAnalyzer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+      - name: Analyze PowerShell management scripts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $issues = Invoke-ScriptAnalyzer -Path install.ps1,scripts/tmb.ps1 `
+            -Recurse
+          $issues | Format-Table
+          $errors = $issues | Where-Object Severity -eq Error
+          if ($errors) { throw "PSScriptAnalyzer reported installer errors." }
+      - name: Test Windows update recovery
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/tests/Test-TmbUpdate.ps1

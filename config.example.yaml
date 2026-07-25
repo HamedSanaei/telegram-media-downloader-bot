@@ -16,7 +16,7 @@ telegram:
   upload_timeout_seconds: 14400
   upload_chunk_size_kb: 1024
   upload_heartbeat_interval_seconds: 30
-  caption_template: "{title}\nمنبع: {source}"
+  caption_template: "{title}\nمنبع: {source}\nدریافت‌شده با @{bot_username}"
   filename_max_length: 96
   local_api_base_url: null
   local_api_is_local: false
@@ -34,11 +34,20 @@ telegram:
     log_file: ./data/telegram-bot-api/telegram-bot-api.log
     verbosity: 2
     auto_start: true
+    lifecycle_owner: application
     startup_timeout_seconds: 30
     shutdown_timeout_seconds: 20
     migration:
       auto_logout_from_cloud: false
       state_file: ./data/state/telegram-api-migration.json
+  required_channels:
+    enabled: false
+    positive_cache_ttl_seconds: 300
+    negative_cache_ttl_seconds: 30
+    channels:
+      - chat_id: -1001234567890
+        title: "کانال اصلی"
+        join_url: "https://t.me/CHANGE_ME"
   progress_min_interval_seconds: 3.0
   progress_min_percent_delta: 5.0
 
@@ -98,6 +107,12 @@ media:
     video_480: bv*[height<=480]+ba/b[height<=480]
     audio_best: ba/b
     audio_mp3: ba/b
+  instagram:
+    auto_download: true
+    force_mp4: true
+    ignore_images: true
+    max_videos: 50
+    max_total_size_mb: 4096
 
 multipart:
   enabled: true
@@ -108,6 +123,7 @@ multipart:
 
 yt_dlp:
   cookies_file: /data/cookies/cookies.txt
+  proxy_enabled: false
   proxy: null
   socket_timeout_seconds: 30
   retries: 5

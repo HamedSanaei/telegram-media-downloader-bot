@@ -22,6 +22,17 @@ class DownloadMode(StrEnum):
     AUDIO_MP3 = "audio_mp3"
 
 
+class OutputContainer(StrEnum):
+    MP4 = "mp4"
+    WEBM = "webm"
+    MP3 = "mp3"
+
+
+class ContainerPolicy(StrEnum):
+    NATIVE_ONLY = "native_only"
+    GUARANTEED = "guaranteed"
+
+
 class MediaKind(StrEnum):
     VIDEO = "video"
     AUDIO = "audio"
@@ -118,6 +129,9 @@ class MediaInfo:
 @dataclass(frozen=True, slots=True)
 class MediaFormatOption:
     mode: DownloadMode
+    container: OutputContainer | None = None
+    container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY
+    requires_transcode: bool = False
     width: int | None = None
     height: int | None = None
     fps: float | None = None
@@ -133,6 +147,18 @@ class DownloadRequest:
     mode: DownloadMode
     output_directory: Path
     temp_directory: Path | None = None
+    container: OutputContainer | None = None
+    container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY
+    allow_collection: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadArtifact:
+    file_path: Path
+    file_size_bytes: int
+    kind: MediaKind
+    mime_type: str | None = None
+    title: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +172,25 @@ class DownloadResult:
     file_size_bytes: int
     duration_seconds: int | None = None
     mime_type: str | None = None
+    artifacts: tuple[DownloadArtifact, ...] = ()
+
+    @property
+    def delivery_artifacts(self) -> tuple[DownloadArtifact, ...]:
+        if self.artifacts:
+            return self.artifacts
+        return (
+            DownloadArtifact(
+                file_path=self.file_path,
+                file_size_bytes=self.file_size_bytes,
+                kind=self.kind,
+                mime_type=self.mime_type,
+                title=self.title,
+            ),
+        )
+
+    @property
+    def total_file_size_bytes(self) -> int:
+        return sum(item.file_size_bytes for item in self.delivery_artifacts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +264,8 @@ class JobRecord:
     idempotency_key: str
     created_at: datetime
     updated_at: datetime
+    container: OutputContainer | None = None
+    container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY
     status_message_id: int | None = None
     source: str | None = None
     error_category: ErrorCategory | None = None
@@ -227,6 +274,24 @@ class JobRecord:
     delivery_file_id: str | None = None
     delivery_file_unique_id: str | None = None
     attempt: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class UserProfile:
+    user_id: int
+    private_chat_id: int | None
+    username: str | None
+    first_name: str
+    last_name: str | None
+    language_code: str | None
+    is_premium: bool | None
+
+
+@dataclass(frozen=True, slots=True)
+class RequiredChannel:
+    chat_id: int
+    title: str
+    join_url: str
 
 
 @dataclass(frozen=True, slots=True)

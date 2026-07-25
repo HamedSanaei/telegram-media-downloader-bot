@@ -8,16 +8,17 @@ fail startup and `config.yaml` is ignored by Git and Docker build context.
 
 - `app`: environment, structured/console logging, language, and timezone.
 - `telegram`: token/admins, polling, automatic or document-only delivery, upload ceiling and upload
-  request timeout, upload chunk/heartbeat intervals, sanitized caption template (`{title}` and
-  `{source}` only), filename length, progress throttling, Local Bot API endpoint, managed/external
-  lifecycle, and migration state.
+  request timeout, upload chunk/heartbeat intervals, sanitized caption template (`{title}`,
+  `{source}`, and `{bot_username}`), required channels, filename length, progress throttling, Local
+  Bot API endpoint, managed/external lifecycle, and migration state.
 - `redis`: ARQ/rate-limit Redis DSN and queue name.
 - `queue`: concurrency, timeout, attempts, retry delay, and ARQ result retention.
 - `storage`: contained download/temp/state paths, terminal cleanup, orphan grace, and job retention.
 - `media`: source allowlist, enabled semantic modes, default mode, playlist policy, final/source
   size ceilings, and operator-owned semantic yt-dlp selectors.
-- `yt_dlp`: cookies/proxy/timeouts/retries, safe filename/media settings, audio conversion, user agent,
-  and the selected JavaScript runtime. These are operator settings, never user input.
+- `yt_dlp`: cookies, an explicit yt-dlp-only proxy switch, timeouts/retries, safe filename/media
+  settings, audio conversion, user agent, and the selected JavaScript runtime. These are operator
+  settings, never user input.
 - `security`: static allow/block sets, Redis-backed per-user request ceiling, and public-network URL
   enforcement.
 - `persistence`: contained SQLite filename, selection lifetime, and cleanup interval.
@@ -46,6 +47,22 @@ exposes no trustworthy percentage for that phase.
 Cookies should be mounted read-only. A missing cookie file is simply not passed to yt-dlp; `doctor`
 and operator startup review should confirm whether authenticated sources need it. Proxy credentials,
 tokens, cookies, and authorization values are redacted from structured logs.
+
+`telegram.required_channels.enabled` requires a non-empty unique channel list. Every entry has an
+integer `chat_id`, display `title`, and HTTPS `t.me` join URL. The bot must be administrator in each
+channel. All channels are required; positive/negative Redis cache lifetimes are separately
+configurable and admins bypass membership only.
+
+`yt_dlp.proxy_enabled` controls only source inspection/download requests. Supported schemes are
+HTTP, HTTPS, SOCKS4, SOCKS4a, SOCKS5, and SOCKS5h. A legacy configuration that has `proxy` but omits
+`proxy_enabled` remains enabled; explicit `false` always disables it. The value is a secret and is
+never printed.
+
+Ordinary video options carry `mp4` or `webm`. Native candidates are preferred; guaranteed fallback
+uses H.264/AAC for MP4 and VP9/Opus for WebM. `best_original` remains native-only. Instagram policy
+is configured under `media.instagram`: best MP4 is automatic, image entries are ignored, and the
+ordered video count/aggregate size are bounded. Authenticated content uses the optional local
+read-only cookies file.
 
 After model changes regenerate and review the schema:
 

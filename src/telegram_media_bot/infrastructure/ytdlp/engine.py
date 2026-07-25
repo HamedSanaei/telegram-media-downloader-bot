@@ -18,15 +18,19 @@ from telegram_media_bot.domain.errors import (
     JobCancelledError,
     MediaBotError,
     MediaTooLargeError,
+    MediaUnavailableError,
 )
 from telegram_media_bot.domain.models import (
     ComponentHealth,
+    ContainerPolicy,
+    DownloadArtifact,
     DownloadMode,
     DownloadRequest,
     DownloadResult,
     MediaFormatOption,
     MediaInfo,
     MediaKind,
+    OutputContainer,
     ProgressEvent,
     SizeConfidence,
 )
@@ -42,9 +46,14 @@ from telegram_media_bot.infrastructure.ytdlp.options import (
     bounded_format_selector,
     final_media_files,
     inspect_format_option,
+    native_container_selector,
     video_target_height,
 )
-from telegram_media_bot.infrastructure.ytdlp.transcoder import transcode_video_to_limit
+from telegram_media_bot.infrastructure.ytdlp.transcoder import (
+    is_compatible_video,
+    transcode_video_to_container,
+    transcode_video_to_limit,
+)
 
 
 class YtDlpEngine:
@@ -86,6 +95,11 @@ class YtDlpEngine:
             temp_dir = self._safe_temp_directory(request.temp_directory)
             self._reset_job_directory(temp_dir)
         max_size = self._settings.media.max_file_size_mb * 1024 * 1024
+        if request.allow_collection:
+            max_size = min(
+                max_size,
+                self._settings.media.instagram.max_total_size_mb * 1024 * 1024,
+            )
         source_max_size = self._settings.media.max_source_size_mb * 1024 * 1024
         target_height = video_target_height(request.mode)
         transfer_limit = source_max_size if target_height is not None else max_size
@@ -142,46 +156,134 @@ class YtDlpEngine:
             if not files:
                 raise DownloadFailedError("yt-dlp completed without a final output file")
             detected_kind = detect_kind(info)
-            if detected_kind is not MediaKind.IMAGE:
+            if request.allow_collection or detected_kind is not MediaKind.IMAGE:
                 non_images = [
                     path
                     for path in files
                     if path.suffix.casefold() not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}
                 ]
+                if request.allow_collection and not non_images:
+                    raise MediaUnavailableError("Instagram collection contains no videos")
                 if non_images:
                     files = non_images
-            if (
+            requested_container = request.container
+            requested_video_container = requested_container in {
+                OutputContainer.MP4,
+                OutputContainer.WEBM,
+            }
+            incompatible_container = (
                 len(files) == 1
                 and detected_kind is MediaKind.VIDEO
-                and target_height is not None
-                and files[0].stat().st_size > max_size
-            ):
+                and requested_container is not None
+                and requested_video_container
+                and request.container_policy is ContainerPolicy.GUARANTEED
+                and not is_compatible_video(files[0], requested_container)
+            )
+            should_transcode = (
+                len(files) == 1
+                and detected_kind is MediaKind.VIDEO
+                and (
+                    (
+                        requested_container is not None
+                        and requested_video_container
+                        and request.container_policy is ContainerPolicy.GUARANTEED
+                        and (
+                            incompatible_container
+                            or files[0].suffix.casefold() != f".{requested_container.value}"
+                            or files[0].stat().st_size > max_size
+                        )
+                    )
+                    or (
+                        request.container is None
+                        and target_height is not None
+                        and files[0].stat().st_size > max_size
+                    )
+                )
+            )
+            if should_transcode:
                 if progress is not None:
                     progress(ProgressEvent(job_id=request.job_id, status="transcoding"))
-                files = [
-                    transcode_video_to_limit(
+                if request.container is None:
+                    transcoded = transcode_video_to_limit(
                         files[0],
-                        target_height=target_height,
+                        target_height=target_height or 4320,
                         max_size_bytes=max_size,
                         is_cancelled=is_cancelled,
                     )
-                ]
+                else:
+                    transcoded = transcode_video_to_container(
+                        files[0],
+                        target_height=target_height or 4320,
+                        max_size_bytes=max_size,
+                        container=request.container,
+                        is_cancelled=is_cancelled,
+                    )
+                files = [transcoded]
+            elif (
+                request.allow_collection
+                and request.container in {OutputContainer.MP4, OutputContainer.WEBM}
+                and request.container_policy is ContainerPolicy.GUARANTEED
+            ):
+                converted: list[Path] = []
+                for path in files:
+                    if is_compatible_video(path, request.container):
+                        converted.append(path)
+                        continue
+                    if progress is not None:
+                        progress(ProgressEvent(job_id=request.job_id, status="transcoding"))
+                    converted.append(
+                        transcode_video_to_container(
+                            path,
+                            target_height=4320,
+                            max_size_bytes=max_size,
+                            container=request.container,
+                            is_cancelled=is_cancelled,
+                        )
+                    )
+                files = converted
             if sum(path.stat().st_size for path in files) > max_size:
                 raise MediaTooLargeError("Final media exceeds configured size limit")
-            final_file = self._bundle_playlist(job_dir, files) if len(files) > 1 else files[0]
-            size = final_file.stat().st_size
+            source = normalize_source(info)
+            is_instagram_collection = source == "instagram" and len(files) > 1
+            final_file = (
+                files[0]
+                if is_instagram_collection
+                else self._bundle_playlist(job_dir, files)
+                if len(files) > 1
+                else files[0]
+            )
+            size = (
+                sum(path.stat().st_size for path in files)
+                if is_instagram_collection
+                else final_file.stat().st_size
+            )
             if size > max_size:
                 raise MediaTooLargeError("Final media exceeds configured size limit")
+            artifacts = (
+                tuple(
+                    DownloadArtifact(
+                        file_path=path,
+                        file_size_bytes=path.stat().st_size,
+                        kind=MediaKind.VIDEO,
+                        mime_type=mimetypes.guess_type(path.name)[0],
+                        title=f"{info.get('title') or 'Instagram'!s} {index}",
+                    )
+                    for index, path in enumerate(reversed(files), start=1)
+                )
+                if is_instagram_collection
+                else ()
+            )
             return DownloadResult(
                 job_id=request.job_id,
                 media_id=str(info.get("id") or final_file.stem),
                 title=str(info.get("title") or "Untitled"),
-                source=normalize_source(info),
+                source=source,
                 kind=MediaKind.PLAYLIST if len(files) > 1 else detect_kind(info),
                 file_path=final_file,
                 file_size_bytes=size,
                 duration_seconds=map_media_info(info, original_url=request.url).duration_seconds,
                 mime_type=mimetypes.guess_type(final_file.name)[0],
+                artifacts=artifacts,
             )
         except Exception as exc:
             if isinstance(exc, MediaBotError):
@@ -202,6 +304,8 @@ class YtDlpEngine:
         )
         if not contexts:
             return ()
+        if normalize_source(raw) == "instagram":
+            return ()
         if not any(isinstance(context.get("formats"), list) for context in contexts):
             return ()
         max_size = self._settings.media.max_file_size_mb * 1024 * 1024
@@ -212,28 +316,100 @@ class YtDlpEngine:
             mp3_bitrate = 192
         options: list[MediaFormatOption] = []
         for mode in self._settings.media.enabled_modes:
-            per_item: list[MediaFormatOption] = []
-            for context in contexts:
-                duration_raw = context.get("duration")
-                duration = int(duration_raw) if isinstance(duration_raw, (int, float)) else None
-                target_height = video_target_height(mode)
-                transfer_limit = source_max_size if target_height is not None else max_size
-                selector = ydl.build_format_selector(self._settings.media.formats.for_mode(mode))
-                option = inspect_format_option(
-                    selector,
-                    context,
-                    mode=mode,
-                    max_size_bytes=transfer_limit,
-                    duration_seconds=duration,
-                    mp3_bitrate_kbps=mp3_bitrate,
-                )
-                if option is None:
-                    break
-                per_item.append(option)
-            if len(per_item) != len(contexts):
+            if mode is DownloadMode.AUDIO_BEST:
                 continue
-            options.append(self._aggregate_format_options(mode, per_item))
+            if mode is DownloadMode.AUDIO_MP3:
+                audio = self._inspect_mode(
+                    ydl,
+                    contexts,
+                    mode=mode,
+                    selector_expression=self._settings.media.formats.for_mode(mode),
+                    max_size=max_size,
+                    source_max_size=source_max_size,
+                    mp3_bitrate=mp3_bitrate,
+                    container=OutputContainer.MP3,
+                    policy=ContainerPolicy.GUARANTEED,
+                )
+                if audio is not None:
+                    options.append(audio)
+                continue
+            generic = self._inspect_mode(
+                ydl,
+                contexts,
+                mode=mode,
+                selector_expression=self._settings.media.formats.for_mode(mode),
+                max_size=max_size,
+                source_max_size=source_max_size,
+                mp3_bitrate=mp3_bitrate,
+            )
+            for container in (OutputContainer.MP4, OutputContainer.WEBM):
+                policy = (
+                    ContainerPolicy.NATIVE_ONLY
+                    if mode is DownloadMode.BEST_ORIGINAL
+                    else ContainerPolicy.GUARANTEED
+                )
+                native = self._inspect_mode(
+                    ydl,
+                    contexts,
+                    mode=mode,
+                    selector_expression=native_container_selector(container),
+                    max_size=max_size,
+                    source_max_size=source_max_size,
+                    mp3_bitrate=mp3_bitrate,
+                    container=container,
+                    policy=policy,
+                )
+                if native is not None:
+                    options.append(native)
+                elif generic is not None and policy is ContainerPolicy.GUARANTEED:
+                    options.append(
+                        replace(
+                            generic,
+                            container=container,
+                            container_policy=policy,
+                            requires_transcode=True,
+                            size_confidence=(
+                                SizeConfidence.UNKNOWN
+                                if generic.size_bytes is None
+                                else SizeConfidence.ESTIMATED
+                            ),
+                        )
+                    )
         return tuple(options)
+
+    def _inspect_mode(
+        self,
+        ydl: YoutubeDL,
+        contexts: list[dict[str, Any]],
+        *,
+        mode: DownloadMode,
+        selector_expression: str,
+        max_size: int,
+        source_max_size: int,
+        mp3_bitrate: int,
+        container: OutputContainer | None = None,
+        policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
+    ) -> MediaFormatOption | None:
+        per_item: list[MediaFormatOption] = []
+        for context in contexts:
+            duration_raw = context.get("duration")
+            duration = int(duration_raw) if isinstance(duration_raw, (int, float)) else None
+            transfer_limit = source_max_size if video_target_height(mode) is not None else max_size
+            selector = ydl.build_format_selector(selector_expression)
+            option = inspect_format_option(
+                selector,
+                context,
+                mode=mode,
+                max_size_bytes=transfer_limit,
+                duration_seconds=duration,
+                mp3_bitrate_kbps=mp3_bitrate,
+                container=container,
+                container_policy=policy,
+            )
+            if option is None:
+                return None
+            per_item.append(option)
+        return self._aggregate_format_options(mode, per_item)
 
     @staticmethod
     def _aggregate_format_options(
@@ -256,6 +432,9 @@ class YtDlpEngine:
         frame_rates = [item.fps for item in options if item.fps is not None]
         return MediaFormatOption(
             mode=mode,
+            container=options[0].container,
+            container_policy=options[0].container_policy,
+            requires_transcode=any(item.requires_transcode for item in options),
             width=min(widths) if len(widths) == len(options) else None,
             height=min(heights) if len(heights) == len(options) else None,
             fps=min(frame_rates) if len(frame_rates) == len(options) else None,

@@ -5,7 +5,13 @@ import pytest
 
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import MediaTooLargeError
-from telegram_media_bot.domain.models import DownloadMode, DownloadRequest, JobId
+from telegram_media_bot.domain.models import (
+    ContainerPolicy,
+    DownloadMode,
+    DownloadRequest,
+    JobId,
+    OutputContainer,
+)
 from telegram_media_bot.infrastructure.ytdlp.options import (
     YtDlpOptionsFactory,
     bounded_format_selector,
@@ -27,7 +33,7 @@ def make_request(tmp_path: Path, mode: DownloadMode) -> DownloadRequest:
 def test_inspect_options_do_not_download(settings: Settings) -> None:
     options = YtDlpOptionsFactory(settings).inspect_options()
     assert options["skip_download"] is True
-    assert options["noplaylist"] is True
+    assert options["noplaylist"] is False
 
 
 def test_semantic_mode_maps_to_configured_selector(settings: Settings, tmp_path: Path) -> None:
@@ -55,6 +61,7 @@ def test_optional_proxy_cookie_and_user_agent_are_applied(
     cookie.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
     raw = settings.model_dump()
     raw["yt_dlp"]["cookies_file"] = cookie
+    raw["yt_dlp"]["proxy_enabled"] = None
     raw["yt_dlp"]["proxy"] = "socks5://localhost:1080"
     raw["yt_dlp"]["user_agent"] = "test-agent"
     configured = type(settings).model_validate(raw)
@@ -62,6 +69,39 @@ def test_optional_proxy_cookie_and_user_agent_are_applied(
     assert options["cookiefile"] == str(cookie)
     assert options["proxy"] == "socks5://localhost:1080"
     assert options["user_agent"] == "test-agent"
+
+
+def test_explicit_proxy_disable_wins_over_configured_secret(settings: Settings) -> None:
+    raw = settings.model_dump()
+    raw["yt_dlp"]["proxy_enabled"] = False
+    raw["yt_dlp"]["proxy"] = "http://user:pa" + "ssword@127.0.0.1:8080"
+    configured = type(settings).model_validate(raw)
+
+    options = YtDlpOptionsFactory(configured).inspect_options()
+
+    assert "proxy" not in options
+    assert "password" not in repr(configured.yt_dlp.proxy)
+
+
+@pytest.mark.parametrize("container", [OutputContainer.MP4, OutputContainer.WEBM])
+def test_guaranteed_container_uses_native_first_then_safe_fallback(
+    settings: Settings,
+    tmp_path: Path,
+    container: OutputContainer,
+) -> None:
+    request = DownloadRequest(
+        job_id=JobId("container"),
+        url="https://example.test/video",
+        mode=DownloadMode.VIDEO_1080,
+        output_directory=tmp_path,
+        container=container,
+        container_policy=ContainerPolicy.GUARANTEED,
+    )
+
+    options = YtDlpOptionsFactory(settings).download_options(request)
+
+    assert options["format"].endswith(f"/{settings.media.formats.video_1080}")
+    assert options["merge_output_format"] == container.value
 
 
 def test_final_media_files_ignores_partial_files(tmp_path: Path) -> None:

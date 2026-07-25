@@ -21,6 +21,21 @@ do no media extraction or download work. The external plugin SDK is a separate d
 
 ## First run
 
+Production one-line installers:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/HamedSanaei/telegram-media-downloader-bot/main/install.sh)
+```
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force; irm https://raw.githubusercontent.com/HamedSanaei/telegram-media-downloader-bot/main/install.ps1 | iex
+```
+
+They install/configure the Docker topology and expose the same `tmb` lifecycle menu on Linux and
+Windows. See `docs/INSTALLATION.md`.
+
+Developer/local build:
+
 ```bash
 ./manage.sh init
 # set telegram.bot_token and operator policy in config.yaml
@@ -36,8 +51,10 @@ PowerShell:
 .\manage.ps1 up
 ```
 
-The user flow is: URL -> queued inspection -> normalized metadata -> semantic inline choice ->
-durable download -> throttled progress/cancel -> audio/video/document delivery -> cleanup.
+The ordinary-video flow is: URL -> queued inspection -> MP4/WebM -> semantic quality -> durable
+download -> throttled progress/cancel -> audio/video/document delivery -> cleanup. Instagram video
+posts, Reels, Stories, Highlights, and multi-video collections automatically use best MP4 and
+deliver videos separately.
 
 ## Development and release gates
 
@@ -68,6 +85,6 @@ delivery for every result above the direct upload limit through 4096 MB.
 ## Intentional boundaries
 
 The v1 supported topology is one worker container with bounded internal concurrency. The official
-Local Bot API executable is supported in managed or external mode but is not bundled. Spotify,
+Local Bot API executable is built from pinned upstream source in the Docker image. Spotify,
 Castbox, DRM circumvention, local/private media URLs, startup self-updates, Userbot/MTProto
 automation, and user-controlled yt-dlp options are not implemented.

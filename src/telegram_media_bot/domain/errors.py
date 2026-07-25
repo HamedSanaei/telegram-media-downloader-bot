@@ -1,3 +1,6 @@
+from telegram_media_bot.domain.models import RequiredChannel
+
+
 class MediaBotError(Exception):
     """Base class for controlled project errors."""
 
@@ -50,6 +53,12 @@ class PostProcessingError(MediaBotError):
 
 class AccessDeniedError(MediaBotError):
     pass
+
+
+class MembershipRequiredError(AccessDeniedError):
+    def __init__(self, channels: tuple[RequiredChannel, ...]) -> None:
+        super().__init__("Membership in all configured channels is required")
+        self.channels = channels
 
 
 class UserRateLimitError(MediaBotError):

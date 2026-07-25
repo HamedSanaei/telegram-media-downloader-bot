@@ -4,7 +4,12 @@ from arq.connections import ArqRedis, RedisSettings, create_pool
 
 from telegram_media_bot.application.ports.job_queue import JobQueue
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.models import DownloadMode, JobId
+from telegram_media_bot.domain.models import (
+    ContainerPolicy,
+    DownloadMode,
+    JobId,
+    OutputContainer,
+)
 
 
 class ArqJobQueue(JobQueue):
@@ -48,6 +53,8 @@ class ArqJobQueue(JobQueue):
         user_id: int,
         url: str,
         mode: DownloadMode,
+        container: OutputContainer | None = None,
+        container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
     ) -> JobId:
         await self._redis.enqueue_job(
             "process_download_job",
@@ -55,6 +62,8 @@ class ArqJobQueue(JobQueue):
             user_id=user_id,
             url=url,
             mode=mode.value,
+            container=container.value if container else None,
+            container_policy=container_policy.value,
             _job_id=str(job_id),
             _queue_name=self._queue_name,
         )

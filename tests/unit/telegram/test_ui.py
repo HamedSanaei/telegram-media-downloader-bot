@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from telegram_media_bot.domain.models import (
+    ContainerPolicy,
     DeliveryProgressEvent,
     DeliveryStage,
     DownloadMode,
@@ -10,6 +11,7 @@ from telegram_media_bot.domain.models import (
     MediaFormatOption,
     MediaInfo,
     MediaKind,
+    OutputContainer,
     SelectionRecord,
     SelectionToken,
     SizeConfidence,
@@ -18,6 +20,7 @@ from telegram_media_bot.telegram.delivery import sanitize_caption_value, sanitiz
 from telegram_media_bot.telegram.handlers import parse_selection_callback
 from telegram_media_bot.telegram.ui import (
     cancellation_keyboard,
+    container_keyboard,
     render_delivery_progress,
     render_media_info,
     render_progress,
@@ -33,6 +36,47 @@ def test_callback_parser_accepts_only_semantic_modes() -> None:
         parse_selection_callback("fmt:opaque-token-123:137")
     with pytest.raises(ValueError):
         parse_selection_callback("fmt:short:best")
+
+
+def test_container_selection_is_tokenized_and_only_offers_real_combinations() -> None:
+    now = datetime.now(UTC)
+    info = MediaInfo(
+        media_id="id",
+        title="Title",
+        source="youtube",
+        kind=MediaKind.VIDEO,
+        webpage_url="https://example.com/media",
+        format_options=(
+            MediaFormatOption(
+                mode=DownloadMode.VIDEO_1080,
+                container=OutputContainer.MP4,
+                container_policy=ContainerPolicy.GUARANTEED,
+                height=1080,
+            ),
+            MediaFormatOption(
+                mode=DownloadMode.VIDEO_720,
+                container=OutputContainer.WEBM,
+                container_policy=ContainerPolicy.GUARANTEED,
+                height=720,
+            ),
+        ),
+    )
+    selection = SelectionRecord(
+        token=SelectionToken("opaque-token-123"),
+        owner_user_id=1,
+        chat_id=1,
+        media=info,
+        allowed_modes=(DownloadMode.VIDEO_1080, DownloadMode.VIDEO_720),
+        created_at=now,
+        expires_at=now + timedelta(minutes=1),
+    )
+
+    containers = container_keyboard(selection)
+    mp4 = selection_keyboard(selection, OutputContainer.MP4)
+
+    assert containers.inline_keyboard[0][0].callback_data == ("container:opaque-token-123:mp4")
+    assert len(mp4.inline_keyboard) == 1
+    assert mp4.inline_keyboard[0][0].callback_data == ("fmt:opaque-token-123:mp4:video_1080")
 
 
 def test_filename_and_caption_are_sanitized() -> None:

@@ -1,6 +1,6 @@
 # T005 - Inspection and format selection
 
-**Status:** complete (real-format/size expansion 2026-07-24)
+**Status:** complete (container/Instagram expansion 2026-07-25)
 
 Inspection runs as an ARQ worker job. Normalized metadata is stored in SQLite behind an opaque,
 owner-bound, expiring selection token. Callback data contains only the token and a configured
@@ -8,7 +8,9 @@ semantic mode; ownership, expiry, mode membership, playlist count, and duration 
 a durable download job is enqueued. The adapter evaluates the same bounded semantic selector used
 for download, so exact-height modes are shown only when present and cannot silently fall back.
 Each option records resolution, FPS, HDR/SDR, and exact/estimated/unknown component-summed size.
-Legacy selections without this JSON field remain readable.
+Legacy selections without this JSON field remain readable. Ordinary videos now use an opaque
+two-step Container -> semantic-quality callback. MP4/WebM candidates state whether they are native
+or require guaranteed conversion. Instagram video URLs bypass the choice UI and enqueue best MP4.
 
 ## Deliverables
 

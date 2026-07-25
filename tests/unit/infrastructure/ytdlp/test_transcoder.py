@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from telegram_media_bot.domain.errors import MediaTooLargeError, PostProcessingError
+from telegram_media_bot.domain.models import OutputContainer
 from telegram_media_bot.infrastructure.ytdlp import transcoder
 
 
@@ -98,3 +99,35 @@ def test_transcode_requires_ffmpeg(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             target_height=1080,
             max_size_bytes=10 * 1024 * 1024,
         )
+
+
+def test_webm_transcode_uses_vp9_and_opus(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(transcoder, "_find_executable", lambda name: name)
+    monkeypatch.setattr(
+        transcoder,
+        "_probe_video",
+        lambda _ffprobe, _source: transcoder.VideoProbe(60.0, 1080, True),
+    )
+
+    def fake_run(args: list[str], _is_cancelled: object) -> None:
+        commands.append(args)
+        Path(args[-1]).write_bytes(b"webm")
+
+    monkeypatch.setattr(transcoder, "_run_process", fake_run)
+
+    output = transcoder.transcode_video_to_container(
+        source,
+        target_height=1080,
+        max_size_bytes=10 * 1024 * 1024,
+        container=OutputContainer.WEBM,
+    )
+
+    assert output.suffix == ".webm"
+    assert "libvpx-vp9" in commands[0]
+    assert "libopus" in commands[0]

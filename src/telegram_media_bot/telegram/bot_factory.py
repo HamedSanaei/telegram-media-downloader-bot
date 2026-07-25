@@ -44,7 +44,11 @@ def create_telegram_runtime(
         manager = LocalBotApiManager(settings)
         endpoint = manager.active_endpoint()
         if endpoint == "local":
-            handle = manager.ensure_started() if manage_lifecycle else None
+            application_owns_lifecycle = local_config.lifecycle_owner == "application"
+            if manage_lifecycle and application_owns_lifecycle:
+                handle = manager.ensure_started()
+            elif manage_lifecycle and not manager.endpoint_reachable():
+                raise ValueError("Configured Local Telegram API service is unreachable")
     else:
         endpoint = "local" if settings.telegram.local_api_base_url else "cloud"
     runtime_settings = effective_settings(settings, endpoint)

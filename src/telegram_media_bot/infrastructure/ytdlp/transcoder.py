@@ -13,6 +13,7 @@ from telegram_media_bot.domain.errors import (
     MediaTooLargeError,
     PostProcessingError,
 )
+from telegram_media_bot.domain.models import OutputContainer
 
 _SIZE_MARGIN = 0.88
 _MUX_OVERHEAD_BITS_PER_SECOND = 16_000
@@ -26,6 +27,20 @@ class VideoProbe:
     duration_seconds: float
     height: int
     has_audio: bool
+    video_codec: str = "h264"
+    audio_codec: str | None = "aac"
+
+
+def is_compatible_video(source: Path, container: OutputContainer) -> bool:
+    ffprobe = _find_executable("ffprobe")
+    if ffprobe is None:
+        raise PostProcessingError("ffprobe is required for container validation")
+    probe = _probe_video(ffprobe, source)
+    if container is OutputContainer.MP4:
+        return probe.video_codec == "h264" and (not probe.has_audio or probe.audio_codec == "aac")
+    if container is OutputContainer.WEBM:
+        return probe.video_codec == "vp9" and (not probe.has_audio or probe.audio_codec == "opus")
+    return False
 
 
 def transcode_video_to_limit(
@@ -36,6 +51,24 @@ def transcode_video_to_limit(
     is_cancelled: Callable[[], bool] | None = None,
 ) -> Path:
     """Encode H.264 at the selected resolution below the delivery ceiling."""
+    return transcode_video_to_container(
+        source,
+        target_height=target_height,
+        max_size_bytes=max_size_bytes,
+        container=OutputContainer.MP4,
+        is_cancelled=is_cancelled,
+    )
+
+
+def transcode_video_to_container(
+    source: Path,
+    *,
+    target_height: int,
+    max_size_bytes: int,
+    container: OutputContainer,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> Path:
+    """Encode a bounded MP4 or WebM while preserving height and at most 60 FPS."""
 
     ffmpeg = _find_executable("ffmpeg")
     ffprobe = _find_executable("ffprobe")
@@ -53,7 +86,9 @@ def transcode_video_to_limit(
     if video_bitrate < _MIN_VIDEO_BITRATE:
         raise MediaTooLargeError("Video is too long to transcode safely below the size limit")
 
-    output = source.with_name(f"{source.stem}.telegram.mp4")
+    if container not in {OutputContainer.MP4, OutputContainer.WEBM}:
+        raise PostProcessingError("Unsupported video output container")
+    output = source.with_name(f"{source.stem}.telegram.{container.value}")
     video_filter = (
         f"scale=-2:{output_height}:flags=lanczos,fps=fps='min(source_fps,60)',format=yuv420p"
     )
@@ -70,11 +105,11 @@ def transcode_video_to_limit(
         "0:v:0",
         "-vf",
         video_filter,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
     ]
+    if container is OutputContainer.MP4:
+        common.extend(["-c:v", "libx264", "-preset", "veryfast"])
+    else:
+        common.extend(["-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "2"])
     for _attempt in range(2):
         output.unlink(missing_ok=True)
         command = [*common, "-b:v", str(video_bitrate)]
@@ -84,12 +119,14 @@ def transcode_video_to_limit(
                     "-map",
                     "0:a:0?",
                     "-c:a",
-                    "aac",
+                    "aac" if container is OutputContainer.MP4 else "libopus",
                     "-b:a",
                     str(audio_bitrate),
                 ]
             )
-        command.extend(["-movflags", "+faststart", str(output)])
+        if container is OutputContainer.MP4:
+            command.extend(["-movflags", "+faststart"])
+        command.append(str(output))
         _run_process(command, is_cancelled)
         if not output.is_file() or output.stat().st_size <= 0:
             raise PostProcessingError("ffmpeg completed without a transcoded output")
@@ -152,10 +189,23 @@ def _probe_video(ffprobe: str, source: Path) -> VideoProbe:
         raise PostProcessingError("Video duration or height is unavailable") from exc
     if duration <= 0 or height <= 0:
         raise PostProcessingError("Video duration or height is invalid")
-    has_audio = any(
-        isinstance(item, Mapping) and item.get("codec_type") == "audio" for item in stream_items
+    audio = next(
+        (
+            item
+            for item in stream_items
+            if isinstance(item, Mapping) and item.get("codec_type") == "audio"
+        ),
+        None,
     )
-    return VideoProbe(duration_seconds=duration, height=height, has_audio=has_audio)
+    video_codec = str(video.get("codec_name") or "") if isinstance(video, Mapping) else ""
+    audio_codec = str(audio.get("codec_name") or "") if isinstance(audio, Mapping) else None
+    return VideoProbe(
+        duration_seconds=duration,
+        height=height,
+        has_audio=audio is not None,
+        video_codec=video_codec,
+        audio_codec=audio_codec,
+    )
 
 
 def _run_process(args: list[str], is_cancelled: Callable[[], bool] | None) -> None:

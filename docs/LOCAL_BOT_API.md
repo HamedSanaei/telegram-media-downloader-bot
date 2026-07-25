@@ -1,5 +1,12 @@
 # Telegram Local Bot API
 
+The release Docker image compiles the official server from pinned
+`tdlib/telegram-bot-api` source and Compose can run it under the `local-api` profile. Set
+`local_bot_api.lifecycle_owner: service`, bind the server to `0.0.0.0`, and use
+`local_api_base_url: http://local-api:8081`. Bare-metal managed/external modes remain supported.
+Credentials stay only in ignored YAML and are injected into the official child environment, never
+Compose environment or a process command line.
+
 The Local Bot API is optional and is not a Userbot. It uses only the bot token plus Telegram
 application `api_id`/`api_hash`. It never uses a phone number, login code, two-step password, user
 session, or MTProto user account.

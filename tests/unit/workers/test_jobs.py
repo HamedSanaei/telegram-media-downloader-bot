@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -155,6 +157,11 @@ async def test_worker_download_persists_receipt_and_cleans(
     assert record.delivery_file_id == "file-id"
     assert service.calls == 1
     assert delivery.deliveries == 1
+    with closing(sqlite3.connect(repository._path)) as connection:
+        usage = connection.execute(
+            "SELECT successful_download_count, delivered_bytes FROM users WHERE user_id = 20"
+        ).fetchone()
+    assert usage == (1, 5)
     assert not (cast(Settings, context["settings"]).storage.downloads_path() / job_id).exists()
 
 
@@ -213,3 +220,27 @@ async def test_ambiguous_delivery_is_quarantined_with_specific_user_message(
     assert record is not None
     assert record.status is JobStatus.DELIVERY_UNCERTAIN
     assert any("دانلود کامل شد" in text for text in delivery.edits)
+
+
+async def test_completion_persistence_failure_never_retries_delivery(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context, repository, _service, delivery = worker_context
+
+    def fail_completion(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("database write failed")
+
+    monkeypatch.setattr(repository, "complete_download", fail_completion)
+    result = await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media",
+        mode=DownloadMode.BEST.value,
+    )
+
+    assert result == str(context["job_id"])
+    record = repository.get_job(JobId(result))
+    assert record is not None and record.status is JobStatus.DELIVERY_UNCERTAIN
+    assert delivery.deliveries == 1

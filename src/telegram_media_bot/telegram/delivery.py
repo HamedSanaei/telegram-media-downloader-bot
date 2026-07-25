@@ -212,7 +212,11 @@ class TelegramDeliveryGateway(DeliveryGateway):
         )
 
     def _preferred_method(self, result: DownloadResult) -> DeliveryMethod:
-        if self._settings.telegram.upload_as_document or result.kind is MediaKind.PLAYLIST:
+        if (
+            self._settings.telegram.upload_as_document
+            or result.kind is MediaKind.PLAYLIST
+            or result.file_path.suffix.casefold() == ".webm"
+        ):
             return DeliveryMethod.DOCUMENT
         if result.kind is MediaKind.AUDIO:
             return DeliveryMethod.AUDIO
@@ -238,6 +242,31 @@ class RoutedDeliveryGateway(DeliveryGateway):
         progress: DeliveryProgressSink | None = None,
         item_delivered: DeliveryItemSink | None = None,
     ) -> DeliveryReceipt:
+        if result.artifacts:
+            return await self._deliver_artifacts(
+                chat_id=chat_id,
+                result=result,
+                caption=caption,
+                progress=progress,
+                item_delivered=item_delivered,
+            )
+        return await self._deliver_one(
+            chat_id=chat_id,
+            result=result,
+            caption=caption,
+            progress=progress,
+            item_delivered=item_delivered,
+        )
+
+    async def _deliver_one(
+        self,
+        *,
+        chat_id: int,
+        result: DownloadResult,
+        caption: str,
+        progress: DeliveryProgressSink | None,
+        item_delivered: DeliveryItemSink | None,
+    ) -> DeliveryReceipt:
         direct_limit = self._settings.telegram.max_upload_size_mb * 1024 * 1024
         if result.file_size_bytes <= direct_limit:
             return await self._direct.deliver(
@@ -256,6 +285,75 @@ class RoutedDeliveryGateway(DeliveryGateway):
             progress=progress,
             item_delivered=item_delivered,
         )
+
+    async def _deliver_artifacts(
+        self,
+        *,
+        chat_id: int,
+        result: DownloadResult,
+        caption: str,
+        progress: DeliveryProgressSink | None,
+        item_delivered: DeliveryItemSink | None,
+    ) -> DeliveryReceipt:
+        receipts: list[DeliveryItemReceipt] = []
+        completed_bytes = 0
+        total_bytes = result.total_file_size_bytes
+        for artifact_index, artifact in enumerate(result.artifacts, start=1):
+            child = DownloadResult(
+                job_id=result.job_id,
+                media_id=result.media_id,
+                title=artifact.title or f"{result.title} {artifact_index}",
+                source=result.source,
+                kind=artifact.kind,
+                file_path=artifact.file_path,
+                file_size_bytes=artifact.file_size_bytes,
+                duration_seconds=result.duration_seconds,
+                mime_type=artifact.mime_type,
+            )
+            ordinal_offset = len(receipts)
+
+            def map_progress(
+                event: DeliveryProgressEvent,
+                *,
+                completed: int = completed_bytes,
+                item_number: int = artifact_index,
+            ) -> None:
+                if progress is None:
+                    return
+                progress(
+                    replace(
+                        event,
+                        transferred_bytes=min(
+                            total_bytes,
+                            completed + event.transferred_bytes,
+                        ),
+                        total_bytes=total_bytes,
+                        item_ordinal=item_number,
+                        item_count=len(result.artifacts),
+                    )
+                )
+
+            async def persist_item(
+                item: DeliveryItemReceipt,
+                *,
+                offset: int = ordinal_offset,
+            ) -> None:
+                mapped = replace(item, ordinal=offset + item.ordinal)
+                if item_delivered is not None:
+                    await item_delivered(mapped)
+
+            child_receipt = await self._deliver_one(
+                chat_id=chat_id,
+                result=child,
+                caption=f"{caption}\nویدئو {artifact_index} از {len(result.artifacts)}",
+                progress=map_progress,
+                item_delivered=persist_item,
+            )
+            receipts.extend(
+                replace(item, ordinal=ordinal_offset + item.ordinal) for item in child_receipt.items
+            )
+            completed_bytes += artifact.file_size_bytes
+        return DeliveryReceipt(items=tuple(receipts))
 
     async def send_text(self, chat_id: int, text: str) -> int:
         return await self._direct.send_text(chat_id, text)
@@ -300,7 +398,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
             part_caption = (
                 f"{caption}\nبخش {ordinal} از {len(archive.volumes)}"
                 if path != archive.manifest
-                else "فایل manifest شامل اندازه و SHA-256 همه بخش‌ها"  # noqa: RUF001
+                else f"{caption}\nفایل manifest شامل اندازه و SHA-256 همه بخش‌ها"  # noqa: RUF001
             )
 
             def map_progress(
@@ -346,10 +444,23 @@ class RoutedDeliveryGateway(DeliveryGateway):
         return DeliveryReceipt(items=tuple(receipts))
 
 
-def render_caption(settings: Settings, result: DownloadResult) -> str:
+def render_caption(
+    settings: Settings,
+    result: DownloadResult,
+    bot_username: str = "telegram_media_bot",
+) -> str:
     title = sanitize_caption_value(result.title, 768)
     source = sanitize_caption_value(result.source, 128)
-    return settings.telegram.caption_template.format(title=title, source=source)[:1024]
+    username = sanitize_caption_value(bot_username.lstrip("@"), 64)
+    rendered = settings.telegram.caption_template.format(
+        title=title,
+        source=source,
+        bot_username=username,
+    )
+    attribution = f"@{username}"
+    if attribution.casefold() not in rendered.casefold():
+        rendered = f"{rendered}\n{attribution}"
+    return rendered[:1024]
 
 
 def sanitize_caption_value(value: str, limit: int) -> str:

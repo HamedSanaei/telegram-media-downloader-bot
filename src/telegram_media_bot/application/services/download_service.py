@@ -16,12 +16,14 @@ from telegram_media_bot.domain.errors import (
     UnsupportedSourceError,
 )
 from telegram_media_bot.domain.models import (
+    ContainerPolicy,
     DownloadMode,
     DownloadRequest,
     DownloadResult,
     JobId,
     MediaInfo,
     MediaKind,
+    OutputContainer,
 )
 
 
@@ -36,6 +38,7 @@ class DownloadService:
         playlist_max_items: int = 20,
         max_duration_seconds: int = 14400,
         max_file_size_bytes: int | None = None,
+        instagram_max_videos: int = 50,
     ) -> None:
         self._engine = engine
         self._enabled_sources = enabled_sources
@@ -44,6 +47,7 @@ class DownloadService:
         self._playlist_max_items = playlist_max_items
         self._max_duration_seconds = max_duration_seconds
         self._max_file_size_bytes = max_file_size_bytes
+        self._instagram_max_videos = instagram_max_videos
 
     def inspect(self, url: str) -> MediaInfo:
         normalized_url = self.validate_url(url)
@@ -64,6 +68,8 @@ class DownloadService:
         mode: DownloadMode,
         output_directory: Path,
         temp_directory: Path | None = None,
+        container: OutputContainer | None = None,
+        container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
     ) -> DownloadResult:
@@ -74,6 +80,9 @@ class DownloadService:
             mode=mode,
             output_directory=output_directory,
             temp_directory=temp_directory,
+            container=container,
+            container_policy=container_policy,
+            allow_collection=info.source.casefold() == "instagram",
         )
         result = self._engine.download(
             request,
@@ -104,6 +113,12 @@ class DownloadService:
 
     def _validate_limits(self, info: MediaInfo) -> None:
         if info.kind is MediaKind.PLAYLIST:
+            if info.source.casefold() == "instagram":
+                if info.item_count is None or info.item_count > self._instagram_max_videos:
+                    raise PlaylistNotAllowedError(
+                        "Instagram collection exceeds the configured video limit"
+                    )
+                return
             if not self._allow_playlists:
                 raise PlaylistNotAllowedError("Playlist download is not allowed")
             if info.item_count is None or info.item_count > self._playlist_max_items:
