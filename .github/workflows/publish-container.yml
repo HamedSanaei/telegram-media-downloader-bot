@@ -80,6 +80,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             PYTHON_VERSION=3.14.5
-            TELEGRAM_BOT_API_REF=a9966eb
           cache-from: type=gha
           cache-to: type=gha,mode=max

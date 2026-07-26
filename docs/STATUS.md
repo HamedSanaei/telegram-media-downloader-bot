@@ -51,6 +51,9 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-26: Pinned the official Telegram Bot API parent repository to the verified full commit
+  `adfd7f6a8e990272851777eeb3ae0def4216f161`, checks it out before synchronizing submodules, and
+  added static plus real Compose-build CI regression gates.
 - 2026-07-25: Made successful delivery completion and permanent byte accounting one atomic SQLite
   transaction; persistence uncertainty is quarantined without automatic Telegram retry. Added WAL
   contention coverage and backward-compatible legacy job idempotency keys.

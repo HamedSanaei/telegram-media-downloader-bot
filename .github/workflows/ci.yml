@@ -50,7 +50,8 @@ jobs:
         with:
           version: "0.11.31"
       - run: uv lock --check
-      - run: docker build --build-arg PYTHON_VERSION=3.14.5 -t telegram-media-downloader-bot:test .
+      - run: docker compose --profile local-api config
+      - run: docker compose --profile local-api build --pull
 
   installer-quality:
     strategy:

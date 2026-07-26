@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 ARG PYTHON_VERSION=3.14.5
-ARG TELEGRAM_BOT_API_REF=a9966eb
+ARG TELEGRAM_BOT_API_REF=adfd7f6a8e990272851777eeb3ae0def4216f161
 
 FROM ghcr.io/astral-sh/uv:0.11.31 AS uv
 FROM denoland/deno:bin-2.9.3 AS deno
@@ -12,7 +12,7 @@ RUN apt-get update \
         ca-certificates cmake g++ git gperf libssl-dev make zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-RUN git clone --filter=blob:none --recursive https://github.com/tdlib/telegram-bot-api.git \
+RUN git clone --filter=blob:none --no-checkout https://github.com/tdlib/telegram-bot-api.git \
     && cd telegram-bot-api \
     && git checkout --detach "${TELEGRAM_BOT_API_REF}" \
     && git submodule update --init --recursive \

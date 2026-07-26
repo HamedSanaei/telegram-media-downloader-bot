@@ -1,6 +1,11 @@
+import re
 from pathlib import Path
 
 import yaml
+
+TELEGRAM_BOT_API_PARENT_COMMIT = (
+    "adfd7f6a8e990272851777eeb3ae0def4216f161"  # pragma: allowlist secret
+)
 
 
 def test_python_build_argument_is_global() -> None:
@@ -36,3 +41,27 @@ def test_config_path_is_explicit_and_local_api_secrets_are_not_in_container_file
     for forbidden in ("api_hash", "api_id", "bot_token"):
         assert forbidden not in compose_text.casefold()
         assert forbidden not in dockerfile_text.casefold()
+
+
+def test_telegram_bot_api_uses_full_parent_commit_before_syncing_submodules() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    match = re.search(r"^ARG TELEGRAM_BOT_API_REF=(?P<ref>[0-9a-f]+)$", dockerfile, re.MULTILINE)
+
+    assert match is not None
+    assert re.fullmatch(r"[0-9a-f]{40}", match["ref"])
+    assert match["ref"] == TELEGRAM_BOT_API_PARENT_COMMIT
+    clone = "git clone --filter=blob:none --no-checkout"
+    checkout = 'git checkout --detach "${TELEGRAM_BOT_API_REF}"'
+    submodules = "git submodule update --init --recursive"
+    assert dockerfile.index(clone) < dockerfile.index(checkout) < dockerfile.index(submodules)
+    assert "git clone --filter=blob:none --recursive" not in dockerfile
+
+
+def test_bot_worker_and_local_api_share_the_pinned_application_build() -> None:
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+    common = compose["x-app-common"]
+
+    for service_name in ("bot", "worker", "local-api"):
+        service = compose["services"][service_name]
+        assert service["build"] == common["build"]
+        assert service["image"] == common["image"]
