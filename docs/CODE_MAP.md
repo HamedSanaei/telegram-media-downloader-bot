@@ -35,7 +35,7 @@
 | `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup command |
 | `scripts/tests/` | Mocked Linux/Windows release-update, backup, and recovery tests |
 | `.github/workflows/ci.yml` | Quality, security, package, plugin, installer analysis, and Docker build gates |
-| `.github/workflows/publish-container.yml` | GHCR amd64/arm64 publication plus checksummed source release assets |
+| `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication, post-push smoke test, and dependent reproducible GitHub Release assets |
 
 ## Upstream compatibility hot spots
 

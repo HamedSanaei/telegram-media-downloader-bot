@@ -6,57 +6,38 @@ on:
       - "v*"
   workflow_dispatch:
 
-permissions:
-  contents: write
-  packages: write
+permissions: {}
+
+env:
+  IMAGE_NAME: ghcr.io/hamedsanaei/telegram-media-downloader-bot
 
 jobs:
-  release-source:
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify tag matches package version
-        run: |
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml)"
-          test "$GITHUB_REF_NAME" = "v$version"
-      - name: Build reproducible source archives
-        run: |
-          git archive \
-            --format=tar.gz \
-            --prefix=telegram-media-downloader-bot/ \
-            --output=telegram-media-downloader-bot.tar.gz \
-            HEAD
-          git archive \
-            --format=zip \
-            --prefix=telegram-media-downloader-bot/ \
-            --output=telegram-media-downloader-bot.zip \
-            HEAD
-          sha256sum telegram-media-downloader-bot.tar.gz \
-            > telegram-media-downloader-bot.tar.gz.sha256
-          sha256sum telegram-media-downloader-bot.zip \
-            > telegram-media-downloader-bot.zip.sha256
-      - name: Attach checksummed source archives
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            telegram-media-downloader-bot.tar.gz
-            telegram-media-downloader-bot.tar.gz.sha256
-            telegram-media-downloader-bot.zip
-            telegram-media-downloader-bot.zip.sha256
-
   publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
-      - name: Verify tagged package version
+        with:
+          persist-credentials: false
+      - name: Verify tag matches package version
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml)"
-            test "$GITHUB_REF_NAME" = "v$version"
-          fi
-      - uses: docker/setup-qemu-action@v3
+          python - <<'PY'
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+          if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", tag):
+              raise SystemExit(f"Release tag is not valid SemVer: {tag}")
+          if tag != f"v{version}":
+              raise SystemExit(f"Tag {tag} does not match pyproject.toml version {version}")
+          PY
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -66,19 +47,86 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/hamedsanaei/telegram-media-downloader-bot
+          images: ${{ env.IMAGE_NAME }}
+          flavor: latest=false
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=raw,value=${{ github.ref_name }}
+            type=semver,pattern={{version}},value=${{ github.ref_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.sha }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             PYTHON_VERSION=3.14.5
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Pull and smoke-test published image
+        shell: bash
+        run: |
+          image="${IMAGE_NAME}:${GITHUB_REF_NAME}"
+          docker pull "$image"
+          docker run --rm "$image" telegram-media-bot --help
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.ref }}
+      - name: Build and verify reproducible source archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="telegram-media-downloader-bot/"
+          commit="${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "$commit"
+
+          git archive --format=tar --prefix="$prefix" "$commit" \
+            | gzip -n -9 > telegram-media-downloader-bot.tar.gz
+          git archive --format=zip --prefix="$prefix" \
+            --output=telegram-media-downloader-bot.zip "$commit"
+
+          mkdir reproducibility-check
+          git archive --format=tar --prefix="$prefix" "$commit" \
+            | gzip -n -9 > reproducibility-check/telegram-media-downloader-bot.tar.gz
+          git archive --format=zip --prefix="$prefix" \
+            --output=reproducibility-check/telegram-media-downloader-bot.zip "$commit"
+          cmp telegram-media-downloader-bot.tar.gz \
+            reproducibility-check/telegram-media-downloader-bot.tar.gz
+          cmp telegram-media-downloader-bot.zip \
+            reproducibility-check/telegram-media-downloader-bot.zip
+
+          sha256sum telegram-media-downloader-bot.tar.gz \
+            > telegram-media-downloader-bot.tar.gz.sha256
+          sha256sum telegram-media-downloader-bot.zip \
+            > telegram-media-downloader-bot.zip.sha256
+          sha256sum --check telegram-media-downloader-bot.tar.gz.sha256
+          sha256sum --check telegram-media-downloader-bot.zip.sha256
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            telegram-media-downloader-bot.tar.gz
+            telegram-media-downloader-bot.tar.gz.sha256
+            telegram-media-downloader-bot.zip
+            telegram-media-downloader-bot.zip.sha256

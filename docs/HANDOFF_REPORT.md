@@ -1,6 +1,6 @@
 # Handoff verification report
 
-Generated: 2026-07-25
+Generated: 2026-07-26
 
 ## Release scope
 
@@ -20,7 +20,7 @@ This release keeps the application insulated from yt-dlp internals while adding:
   API, paths, providers, or exception details to end users;
 - Docker-first one-line Linux and Windows installers, an interactive `tmb` lifecycle command, a
   dedicated Local Bot API service built from pinned official source, and version-pinned GHCR
-  amd64/arm64 images;
+  amd64 images;
 - SHA-256-verified release archives for install/update, generated and attached by tag CI;
 - state-aware `tmb update`: only previously running application writers stop/restart, Redis and
   its ARQ queue stay online, SQLite/WAL is backed up consistently, and failed downloads/checksums
@@ -71,8 +71,8 @@ interactive configuration output.
 ## Checks not executable on this host
 
 - Docker Desktop/Engine is not installed, so an actual Compose startup or final Docker build could
-  not run locally. CI has a required image build and the release workflow has required multi-arch
-  publication.
+  not run locally. CI has a required image build and the release workflow publishes the supported
+  amd64 image only after a matching version tag.
 - ShellCheck and PSScriptAnalyzer are not installed locally. Bash/PowerShell parsers passed, and CI
   now has required Linux ShellCheck and Windows PSScriptAnalyzer jobs.
 - Fresh Ubuntu VM and Windows Sandbox end-to-end installer runs need Docker and release credentials

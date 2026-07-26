@@ -6,6 +6,9 @@ import yaml
 TELEGRAM_BOT_API_PARENT_COMMIT = (
     "adfd7f6a8e990272851777eeb3ae0def4216f161"  # pragma: allowlist secret
 )
+PRODUCTION_RELEASE_CONDITION = (
+    "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+)
 
 
 def test_python_build_argument_is_global() -> None:
@@ -73,3 +76,73 @@ def test_powershell_analysis_invokes_each_script_with_a_scalar_path() -> None:
     assert "Invoke-ScriptAnalyzer -Path install.ps1,scripts/tmb.ps1" not in workflow
     assert 'issues = @("install.ps1", "scripts/tmb.ps1") | ForEach-Object' in workflow
     assert "Invoke-ScriptAnalyzer -Path $_ -Recurse" in workflow
+
+
+def test_release_workflow_is_tag_only_and_least_privilege() -> None:
+    workflow = yaml.load(
+        Path(".github/workflows/publish-container.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+    assert workflow["on"]["push"]["tags"] == ["v*"]
+    assert "workflow_dispatch" in workflow["on"]
+    assert workflow["permissions"] == {}
+    assert workflow["jobs"]["publish"]["if"] == PRODUCTION_RELEASE_CONDITION
+    assert workflow["jobs"]["release"]["if"] == PRODUCTION_RELEASE_CONDITION
+    assert workflow["jobs"]["publish"]["permissions"] == {
+        "contents": "read",
+        "packages": "write",
+    }
+    assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
+    assert workflow["jobs"]["release"]["needs"] == "publish"
+
+
+def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
+    workflow = Path(".github/workflows/publish-container.yml").read_text(encoding="utf-8")
+    image = "ghcr.io/hamedsanaei/telegram-media-downloader-bot"
+
+    def expected_tags(tag: str) -> list[str]:
+        version = tag.removeprefix("v")
+        major, minor, _patch = version.split(".", maxsplit=2)
+        tags = [f"{image}:{tag}", f"{image}:{version}", f"{image}:{major}.{minor}"]
+        if "-" not in version:
+            tags.append(f"{image}:latest")
+        return tags
+
+    assert expected_tags("v1.0.0") == [
+        f"{image}:v1.0.0",
+        f"{image}:1.0.0",
+        f"{image}:1.0",
+        f"{image}:latest",
+    ]
+    assert f"{image}:latest" not in expected_tags("v1.1.0-beta.1")
+    assert "type=raw,value=${{ github.ref_name }}" in workflow
+    assert "type=semver,pattern={{version}},value=${{ github.ref_name }}" in workflow
+    assert "type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}" in workflow
+    assert "type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}" in workflow
+    assert "platforms: linux/amd64" in workflow
+    assert "linux/arm64" not in workflow
+
+
+def test_release_waits_for_published_image_smoke_test_and_attaches_verified_assets() -> None:
+    workflow = Path(".github/workflows/publish-container.yml").read_text(encoding="utf-8")
+
+    assert 'if tag != f"v{version}":' in workflow
+    assert "Tag {tag} does not match pyproject.toml version {version}" in workflow
+    assert 'docker run --rm "$image" telegram-media-bot --help' in workflow
+    assert "generate_release_notes: true" in workflow
+    assert "sha256sum --check telegram-media-downloader-bot.tar.gz.sha256" in workflow
+    assert "sha256sum --check telegram-media-downloader-bot.zip.sha256" in workflow
+    for label in (
+        "org.opencontainers.image.source",
+        "org.opencontainers.image.version",
+        "org.opencontainers.image.revision",
+    ):
+        assert label in workflow
+    for asset in (
+        "telegram-media-downloader-bot.tar.gz",
+        "telegram-media-downloader-bot.tar.gz.sha256",
+        "telegram-media-downloader-bot.zip",
+        "telegram-media-downloader-bot.zip.sha256",
+    ):
+        assert asset in workflow

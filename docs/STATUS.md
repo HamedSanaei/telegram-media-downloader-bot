@@ -37,7 +37,7 @@ Telegram delivery -> terminal state and cleanup.
 - Permanent SQLite user profiles, daily counters, and job-idempotent delivery byte accounting.
 - Docker-first Linux/Windows installers with SHA-256-verified release archives, version-pinned
   images, interactive `tmb` management, official pinned Local Bot API source build, dedicated
-  Local API service, and GHCR amd64/arm64 release workflow.
+  Local API service, and a tag-gated GHCR amd64 release workflow.
 - Failed interactive configuration writes remove their secret-bearing temporary file; the exact
   temporary filename is also ignored by Git.
 - `tmb update` now preserves Redis/ARQ state, backs up SQLite/WAL only after graceful writer
@@ -51,6 +51,9 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-26: Restricted production container publication and GitHub Releases to matching `v*`
+  tag pushes, added stable/prerelease-aware GHCR tags, post-push image smoke testing, and verified
+  reproducible source assets. Manual branch dispatches now publish nothing.
 - 2026-07-26: Made managed Local Bot API process flags type-safe on non-Windows hosts and fixed
   the Windows CI analyzer to pass each management script as a scalar PSScriptAnalyzer path.
 - 2026-07-26: Pinned the official Telegram Bot API parent repository to the verified full commit
