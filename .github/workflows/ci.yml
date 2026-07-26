@@ -74,8 +74,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $issues = Invoke-ScriptAnalyzer -Path install.ps1,scripts/tmb.ps1 `
-            -Recurse
+          $issues = @("install.ps1", "scripts/tmb.ps1") | ForEach-Object {
+            Invoke-ScriptAnalyzer -Path $_ -Recurse
+          }
           $issues | Format-Table
           $errors = $issues | Where-Object Severity -eq Error
           if ($errors) { throw "PSScriptAnalyzer reported installer errors." }

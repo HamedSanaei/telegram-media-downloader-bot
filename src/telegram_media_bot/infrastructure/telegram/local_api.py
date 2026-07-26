@@ -269,7 +269,9 @@ class LocalBotApiManager:
         creationflags = 0
         start_new_session = False
         if os.name == "nt":
-            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            creationflags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)) | int(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            )
         else:
             start_new_session = True
         try:

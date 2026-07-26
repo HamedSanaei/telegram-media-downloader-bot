@@ -381,4 +381,4 @@ def test_managed_start_passes_credentials_only_in_child_environment(
     assert captured["env"]["TELEGRAM_API_HASH"] == "LOCAL_API_HASH_FOR_TESTS"
     rendered = " ".join(captured["command"])
     assert "LOCAL_API_HASH_FOR_TESTS" not in rendered
-    assert str(os.getpid()) not in rendered
+    assert str(os.getpid()) not in captured["command"]

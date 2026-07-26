@@ -51,6 +51,8 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-26: Made managed Local Bot API process flags type-safe on non-Windows hosts and fixed
+  the Windows CI analyzer to pass each management script as a scalar PSScriptAnalyzer path.
 - 2026-07-26: Pinned the official Telegram Bot API parent repository to the verified full commit
   `adfd7f6a8e990272851777eeb3ae0def4216f161`, checks it out before synchronizing submodules, and
   added static plus real Compose-build CI regression gates.

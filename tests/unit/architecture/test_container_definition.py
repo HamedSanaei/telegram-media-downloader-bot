@@ -65,3 +65,11 @@ def test_bot_worker_and_local_api_share_the_pinned_application_build() -> None:
         service = compose["services"][service_name]
         assert service["build"] == common["build"]
         assert service["image"] == common["image"]
+
+
+def test_powershell_analysis_invokes_each_script_with_a_scalar_path() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "Invoke-ScriptAnalyzer -Path install.ps1,scripts/tmb.ps1" not in workflow
+    assert 'issues = @("install.ps1", "scripts/tmb.ps1") | ForEach-Object' in workflow
+    assert "Invoke-ScriptAnalyzer -Path $_ -Recurse" in workflow
