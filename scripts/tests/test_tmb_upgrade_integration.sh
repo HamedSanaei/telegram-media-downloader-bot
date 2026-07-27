@@ -50,6 +50,9 @@ sed -i \
 rm -f "$INSTALL_ROOT/scripts/tmb.sh" "$INSTALL_ROOT/scripts/tmb-current.sh"
 git -C "$SOURCE_ROOT" show "v${PREVIOUS_VERSION}:scripts/tmb.sh" \
   >"$INSTALL_ROOT/scripts/tmb.sh"
+sed -i \
+  "s|^IMAGE_REPOSITORY=.*|IMAGE_REPOSITORY=\"${IMAGE_REPOSITORY}\"|" \
+  "$INSTALL_ROOT/scripts/tmb.sh"
 chmod 755 "$INSTALL_ROOT/scripts/tmb.sh"
 cp "$INSTALL_ROOT/config.example.yaml" "$INSTALL_ROOT/config.yaml"
 cat >"$INSTALL_ROOT/.env" <<EOF
@@ -94,6 +97,33 @@ docker tag telegram-media-downloader-bot:ci "${IMAGE_REPOSITORY}:${RELEASE_VERSI
 docker push "${IMAGE_REPOSITORY}:${PREVIOUS_VERSION}" >/dev/null
 docker push "${IMAGE_REPOSITORY}:${RELEASE_VERSION}" >/dev/null
 
+# The exact v1.0.2 updater has a fixed GitHub release URL. Redirect only its two release downloads
+# to the locally generated, checksummed assets; Docker, filesystem, ownership, and SQLite stay real.
+cat >"$BIN_ROOT/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+url=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o)
+      output="$2"
+      shift 2
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      url="$1"
+      shift
+      ;;
+  esac
+done
+[[ -n "$output" && -n "$url" ]]
+cp "$TMB_TEST_ASSET_ROOT/${url##*/}" "$output"
+EOF
+chmod 755 "$BIN_ROOT/curl"
+
 # Reproduce unusable production ownership/modes. The release tar deliberately carries a symlinked
 # executable updater so v1.0.2 cannot truncate its own executing inode during `cp -a`.
 sudo chown -R 0:0 "$INSTALL_ROOT/data" "$INSTALL_ROOT/backups"
@@ -103,9 +133,9 @@ sudo find "$INSTALL_ROOT/data" "$INSTALL_ROOT/backups" -type f -exec chmod 400 {
 sudo env \
   "PATH=$BIN_ROOT:$PATH" \
   "TMB_BIN_DIR=$BIN_ROOT" \
-  "TMB_RELEASE_ROOT=file://$TEST_ROOT/releases" \
   "TMB_RELEASE_TAG=v${RELEASE_VERSION}" \
   "TMB_IMAGE_REPOSITORY=$IMAGE_REPOSITORY" \
+  "TMB_TEST_ASSET_ROOT=$ASSET_ROOT" \
   bash -c "cd '$INSTALL_ROOT' && bash scripts/tmb.sh update"
 
 PATH="$BIN_ROOT:$PATH" command -v tmb >/dev/null

@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-07-27
+Last updated: 2026-07-28
 
 ## Release state
 
@@ -8,10 +8,9 @@ Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
-Hotfix release `1.0.3` is prepared for the updater self-replacement, executable-mode, SQLite
-permission, transactional rollback, and crash-loop regressions found in published `1.0.2`.
-Existing v1.0.0/v1.0.1/v1.0.2 configuration and durable runtime state remain upgrade-compatible;
-no `1.0.3` commit, tag, push, or release has been created.
+Hotfix release `1.0.3` addresses the updater self-replacement, executable-mode, SQLite permission,
+transactional rollback, and crash-loop regressions found in published `1.0.2`. Existing
+v1.0.0/v1.0.1/v1.0.2 configuration and durable runtime state remain upgrade-compatible.
 
 ## Implemented production controls
 

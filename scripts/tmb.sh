@@ -117,7 +117,7 @@ install_prepared_release() {
     if [[ -e "$ROOT_DIR/$name" || -L "$ROOT_DIR/$name" ]]; then
       if ! mv "$ROOT_DIR/$name" "$APPLICATION_ROLLBACK_DIRECTORY/$name"; then
         cp -a "$ROOT_DIR/$name" "$APPLICATION_ROLLBACK_DIRECTORY/$name" || return 1
-        rm -rf -- "$ROOT_DIR/$name" || return 1
+        rm -rf -- "${ROOT_DIR:?}/$name" || return 1
       fi
     fi
     if ! mv "$source" "$ROOT_DIR/$name"; then
@@ -142,7 +142,7 @@ rollback_application_files() {
   for ((index=${#APPLICATION_ENTRIES[@]} - 1; index >= 0; index--)); do
     name="${APPLICATION_ENTRIES[$index]}"
     [[ "$name" != "." && "$name" != ".." && "$name" != */* ]] || continue
-    rm -rf -- "$ROOT_DIR/$name"
+    rm -rf -- "${ROOT_DIR:?}/$name"
     if [[ -e "$APPLICATION_ROLLBACK_DIRECTORY/$name" || \
       -L "$APPLICATION_ROLLBACK_DIRECTORY/$name" ]]; then
       mv "$APPLICATION_ROLLBACK_DIRECTORY/$name" "$ROOT_DIR/$name"
