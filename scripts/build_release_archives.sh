@@ -11,6 +11,10 @@ mkdir -p "$OUTPUT_DIRECTORY" "$TEMPORARY_DIRECTORY/tree"
 git archive --format=tar --prefix="$PREFIX/" "$COMMIT" \
   | tar -xf - -C "$TEMPORARY_DIRECTORY/tree"
 
+# The v1.0.2 updater applies runtime ownership before `cp -a`. Omitting tracked data placeholders
+# prevents that final copy from resetting the repaired ownership/modes of persistent state.
+rm -rf -- "${TEMPORARY_DIRECTORY:?}/tree/$PREFIX/data"
+
 # v1.0.2 replaces its own script with `cp -a` while Bash is still reading it. Shipping the Linux
 # command as a symlink makes cp unlink the pathname instead of truncating the executing inode.
 mv \

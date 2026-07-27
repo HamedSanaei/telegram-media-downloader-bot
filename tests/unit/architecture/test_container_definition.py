@@ -304,6 +304,7 @@ def test_linux_release_archive_bootstraps_safely_from_v1_0_2_updater() -> None:
     assert '"$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tmb.sh"' in builder
     assert "ln -s tmb-current.sh" in builder
     assert "scripts/tmb-current.sh" in builder
+    assert '"${TEMPORARY_DIRECTORY:?}/tree/$PREFIX/data"' in builder
     assert "chmod 755" in builder
     assert "--sort=name" in builder
     assert "gzip -n -9" in builder

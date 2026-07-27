@@ -176,8 +176,10 @@ Compose exposes an optional worker CPU quota without imposing one on every insta
 
 Linux updates execute from a temporary copy so replacing `scripts/tmb.sh` cannot truncate the
 script Bash is reading. Release archives carry the command through an executable symlink target to
-bootstrap safely from the published v1.0.2 updater. Complete staged Bash scripts, Compose, and the
-existing configuration are validated before application writers stop.
+bootstrap safely from the published v1.0.2 updater. Linux release archives omit tracked `data/`
+placeholders so the old updater's final `cp -a` cannot reset freshly migrated state ownership.
+Complete staged Bash scripts, Compose, and the existing configuration are validated before
+application writers stop.
 
 Top-level application entries are replaced with a rollback snapshot while `.env`, `config.yaml`,
 data, backups, cookies, downloads, Redis, and Local API state remain outside replacement. Before
