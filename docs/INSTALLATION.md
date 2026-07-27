@@ -67,11 +67,11 @@ excluded from archives to avoid duplicating multi-gigabyte media.
 For a release rollback, select the previous tag and run the same verified updater:
 
 ```bash
-TMB_RELEASE_TAG=v1.0.0 tmb update
+TMB_RELEASE_TAG=v1.0.1 tmb update
 ```
 
 ```powershell
-$env:TMB_RELEASE_TAG = "v1.0.0"; tmb update
+$env:TMB_RELEASE_TAG = "v1.0.1"; tmb update
 ```
 
 Restore the timestamped archive under `backups/` only when state rollback is also required, and

@@ -8,6 +8,10 @@ Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
+Patch release `1.0.1` is prepared for the Instagram `best_original` size-inflation fix. Existing
+v1.0.0 configuration and durable runtime state remain upgrade-compatible; no tag or release has
+been created from this preparation.
+
 ## Implemented production controls
 
 - Python 3.14.5, committed `uv.lock`, immutable Docker build, non-root/read-only app containers, and

@@ -1,0 +1,154 @@
+app:
+  environment: production
+  log_level: INFO
+  log_format: json
+  language: fa
+  timezone: Asia/Tehran
+
+telegram:
+  bot_token: CHANGE_ME
+  admin_ids: []
+  support_username: null
+  polling_timeout_seconds: 30
+  upload_as_document: true
+  max_upload_size_mb: 49
+  upload_timeout_seconds: 14400
+  upload_chunk_size_kb: 1024
+  upload_heartbeat_interval_seconds: 30
+  caption_template: "{title}\nمنبع: {source}\nدریافت‌شده با @{bot_username}"
+  filename_max_length: 96
+  local_api_base_url: null
+  local_api_is_local: false
+  local_bot_api:
+    enabled: false
+    mode: managed
+    executable: CHANGE_ME
+    api_id: 0
+    api_hash: CHANGE_ME
+    host: 127.0.0.1
+    port: 8081
+    local_mode: true
+    working_directory: ./data/telegram-bot-api
+    temp_directory: ./data/telegram-bot-api/temp
+    log_file: ./data/telegram-bot-api/telegram-bot-api.log
+    verbosity: 2
+    auto_start: true
+    lifecycle_owner: application
+    startup_timeout_seconds: 30
+    shutdown_timeout_seconds: 20
+    migration:
+      auto_logout_from_cloud: false
+      state_file: ./data/state/telegram-api-migration.json
+  required_channels:
+    enabled: false
+    positive_cache_ttl_seconds: 300
+    negative_cache_ttl_seconds: 30
+    channels:
+      - chat_id: -1001234567890
+        title: "کانال اصلی"
+        join_url: "https://t.me/CHANGE_ME"
+  progress_min_interval_seconds: 3.0
+  progress_min_percent_delta: 5.0
+
+redis:
+  url: redis://redis:6379/0
+  queue_name: media-downloads
+
+queue:
+  max_jobs: 3
+  job_timeout_seconds: 1800
+  max_tries: 2
+  keep_result_seconds: 3600
+  retry_delay_seconds: 15
+
+storage:
+  root_directory: /data
+  downloads_directory: downloads
+  temp_directory: temp
+  state_directory: state
+  delete_after_upload: true
+  orphan_grace_seconds: 300
+  job_retention_days: 30
+
+media:
+  enabled_sources:
+    - youtube
+    - soundcloud
+    - instagram
+    - twitter
+    - pinterest
+    - tiktok
+  enabled_modes:
+    - best
+    - best_original
+    - video_2160
+    - video_1440
+    - video_1080
+    - video_720
+    - video_480
+    - audio_best
+    - audio_mp3
+  default_mode: best
+  allow_playlists: false
+  playlist_max_items: 20
+  max_file_size_mb: 49
+  max_source_size_mb: 1024
+  max_duration_seconds: 14400
+  formats:
+    best: bv*+ba/b
+    best_original: bv*+ba/b
+    video_2160: bv*[height<=2160]+ba/b[height<=2160]
+    video_1440: bv*[height<=1440]+ba/b[height<=1440]
+    video_1080: bv*[height<=1080]+ba/b[height<=1080]
+    video_720: bv*[height<=720]+ba/b[height<=720]
+    video_480: bv*[height<=480]+ba/b[height<=480]
+    audio_best: ba/b
+    audio_mp3: ba/b
+  instagram:
+    auto_download: true
+    force_mp4: true
+    ignore_images: true
+    max_videos: 50
+    max_total_size_mb: 4096
+
+multipart:
+  enabled: true
+  seven_zip_executable: 7zz
+  part_size_mb: 1850
+  max_total_size_mb: 4096
+  compression_level: 0
+
+yt_dlp:
+  cookies_file: /data/cookies/cookies.txt
+  proxy_enabled: false
+  proxy: null
+  socket_timeout_seconds: 30
+  retries: 5
+  fragment_retries: 10
+  concurrent_fragments: 4
+  extractor_retries: 3
+  restrict_filenames: true
+  write_thumbnail: false
+  embed_metadata: true
+  embed_thumbnail: false
+  audio_format: mp3
+  audio_quality: "192"
+  user_agent: null
+  javascript_runtime: deno
+
+security:
+  allowed_user_ids: []
+  blocked_user_ids: []
+  requests_per_minute: 5
+  reject_private_network_urls: true
+
+persistence:
+  database_filename: jobs.sqlite3
+  selection_ttl_seconds: 600
+  cleanup_interval_seconds: 60
+
+observability:
+  health_host: 0.0.0.0
+  health_port: 8080
+  telegram_readiness_check: true
+  metrics_enabled: true

@@ -1,7 +1,10 @@
 import re
+import tomllib
 from pathlib import Path
 
 import yaml
+
+from telegram_media_bot import __version__
 
 TELEGRAM_BOT_API_PARENT_COMMIT = (
     "adfd7f6a8e990272851777eeb3ae0def4216f161"  # pragma: allowlist secret
@@ -109,9 +112,9 @@ def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
             tags.append(f"{image}:latest")
         return tags
 
-    assert expected_tags("v1.0.0") == [
-        f"{image}:v1.0.0",
-        f"{image}:1.0.0",
+    assert expected_tags("v1.0.1") == [
+        f"{image}:v1.0.1",
+        f"{image}:1.0.1",
         f"{image}:1.0",
         f"{image}:latest",
     ]
@@ -122,6 +125,19 @@ def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
     assert "type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}" in workflow
     assert "platforms: linux/amd64" in workflow
     assert "linux/arm64" not in workflow
+
+
+def test_v1_0_1_release_tag_exactly_matches_project_version() -> None:
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    workflow = Path(".github/workflows/publish-container.yml").read_text(encoding="utf-8")
+    version = project["project"]["version"]
+    tag = f"v{version}"
+
+    assert version == "1.0.1"
+    assert __version__ == version
+    assert tag == "v1.0.1"
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
+    assert 'if tag != f"v{version}":' in workflow
 
 
 def test_release_waits_for_published_image_smoke_test_and_attaches_verified_assets() -> None:

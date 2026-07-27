@@ -21,11 +21,13 @@ prepare_case() {
     "$case_root/data/downloads" \
     "$case_root/data/temp"
   cp "$SOURCE_ROOT/scripts/tmb.sh" "$case_root/scripts/tmb.sh"
-  printf 'telegram:\n  bot_token: CHANGE_ME\n' >"$case_root/config.yaml"
-  printf 'TMB_IMAGE=example.invalid/tmb:1.0.0\n' >"$case_root/.env"
+  printf 'telegram:\n  bot_token: V1_CONFIG_SENTINEL\n' >"$case_root/config.yaml"
+  printf 'TMB_IMAGE=example.invalid/tmb:1.0.0\nCOMPOSE_PROFILES=local-api\n' \
+    >"$case_root/.env"
   printf 'version = "1.0.0"\n' >"$case_root/pyproject.toml"
-  printf 'db' >"$case_root/data/state/jobs.sqlite3"
-  printf 'runtime-media' >"$case_root/data/downloads/large.mp4"
+  printf 'sqlite-v1-state' >"$case_root/data/state/jobs.sqlite3"
+  printf 'cookies-v1-state' >"$case_root/data/cookies/cookies.txt"
+  printf 'runtime-media-v1' >"$case_root/data/downloads/large.mp4"
 
   cat >"$case_root/fake-bin/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -75,8 +77,12 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 [[ -n "$destination" ]]
-printf 'version = "2.0.0"\n' >"$destination/pyproject.toml"
+printf 'version = "1.0.1"\n' >"$destination/pyproject.toml"
 printf 'services: {}\n' >"$destination/docker-compose.yml"
+mkdir -p "$destination/data/state" "$destination/data/cookies" "$destination/data/downloads"
+printf 'release-placeholder' >"$destination/data/state/.gitkeep"
+printf 'release-placeholder' >"$destination/data/cookies/README.md"
+printf 'release-placeholder' >"$destination/data/downloads/.gitkeep"
 EOF
   chmod +x "$case_root/fake-bin/"*
 }
@@ -91,8 +97,19 @@ run_success_case() {
       bash scripts/tmb.sh update
   )
 
-  grep -q '^TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:2.0.0$' \
+  grep -q '^TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.1$' \
     "$case_root/.env" || fail "successful update did not pin the verified version"
+  diff -u <(
+    printf 'TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.1\nCOMPOSE_PROFILES=local-api\n'
+  ) "$case_root/.env" || fail "update changed .env beyond TMB_IMAGE"
+  grep -q 'V1_CONFIG_SENTINEL' "$case_root/config.yaml" \
+    || fail "successful update overwrote config.yaml"
+  grep -q '^sqlite-v1-state$' "$case_root/data/state/jobs.sqlite3" \
+    || fail "successful update overwrote SQLite state"
+  grep -q '^cookies-v1-state$' "$case_root/data/cookies/cookies.txt" \
+    || fail "successful update overwrote cookies"
+  grep -q '^runtime-media-v1$' "$case_root/data/downloads/large.mp4" \
+    || fail "successful update overwrote existing downloads"
   grep -q 'docker .* stop -t 45 bot worker local-api' "$log" \
     || fail "application writers were not stopped before backup"
   if grep -q 'stop .*redis' "$log"; then

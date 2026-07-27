@@ -23,6 +23,7 @@
 | `src/telegram_media_bot/workers/` | ARQ worker settings and job functions |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, and composition roots |
 | `tests/unit/` | Fast deterministic tests |
+| `tests/fixtures/` | Versioned configuration fixtures for backward-compatibility regression tests |
 | `tests/integration/` | Local integration tests with fakes/Redis where available |
 | `tests/integration/test_local_api_large_upload.py` | Explicit opt-in real Local API upload over 200 MB |
 | `tests/contracts/` | Opt-in external yt-dlp smoke tests |

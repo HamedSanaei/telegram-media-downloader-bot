@@ -30,12 +30,12 @@ function Invoke-UpdateCase {
     $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText(
         (Join-Path $CaseRoot "config.yaml"),
-        "telegram:`n  bot_token: CHANGE_ME",
+        "telegram:`n  bot_token: V1_CONFIG_SENTINEL",
         $Utf8NoBom
     )
     [System.IO.File]::WriteAllText(
         (Join-Path $CaseRoot ".env"),
-        "TMB_IMAGE=example.invalid/tmb:1.0.0",
+        "TMB_IMAGE=example.invalid/tmb:1.0.0`nCOMPOSE_PROFILES=local-api`n",
         $Utf8NoBom
     )
     [System.IO.File]::WriteAllText(
@@ -43,8 +43,11 @@ function Invoke-UpdateCase {
         'version = "1.0.0"',
         $Utf8NoBom
     )
-    "db" | Set-Content -Encoding ascii (Join-Path $CaseRoot "data/state/jobs.sqlite3")
-    "runtime-media" | Set-Content -Encoding ascii `
+    "sqlite-v1-state" | Set-Content -Encoding ascii `
+        (Join-Path $CaseRoot "data/state/jobs.sqlite3")
+    "cookies-v1-state" | Set-Content -Encoding ascii `
+        (Join-Path $CaseRoot "data/cookies/cookies.txt")
+    "runtime-media-v1" | Set-Content -Encoding ascii `
         (Join-Path $CaseRoot "data/downloads/large.mp4")
 
     $PreviousLocation = Get-Location
@@ -101,10 +104,20 @@ function Invoke-UpdateCase {
                 $null = $LiteralPath, $Force
                 $Payload = Join-Path $DestinationPath "telegram-media-downloader-bot"
                 New-Item -ItemType Directory -Force $Payload | Out-Null
-                'version = "2.0.0"' | Set-Content -Encoding utf8 `
+                'version = "1.0.1"' | Set-Content -Encoding utf8 `
                     (Join-Path $Payload "pyproject.toml")
                 "services: {}" | Set-Content -Encoding utf8 `
                     (Join-Path $Payload "docker-compose.yml")
+                foreach ($DataDirectory in @("state", "cookies", "downloads")) {
+                    New-Item -ItemType Directory -Force `
+                        (Join-Path $Payload "data/$DataDirectory") | Out-Null
+                }
+                "release-placeholder" | Set-Content -Encoding ascii `
+                    (Join-Path $Payload "data/state/.gitkeep")
+                "release-placeholder" | Set-Content -Encoding ascii `
+                    (Join-Path $Payload "data/cookies/README.md")
+                "release-placeholder" | Set-Content -Encoding ascii `
+                    (Join-Path $Payload "data/downloads/.gitkeep")
             }
 
             function Compress-Archive {
@@ -144,8 +157,29 @@ function Invoke-UpdateCase {
             "previous stack was not restarted"
         return
     }
-    Assert-True ($EnvironmentText -match "telegram-media-downloader-bot:2\.0\.0") `
+    Assert-True ($EnvironmentText -match "telegram-media-downloader-bot:1\.0\.1") `
         "successful update did not pin the verified version"
+    $NormalizedEnvironment = $EnvironmentText.Replace("`r`n", "`n").TrimEnd()
+    Assert-True (
+        $NormalizedEnvironment -eq
+        "TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.1`nCOMPOSE_PROFILES=local-api"
+    ) "update changed .env beyond TMB_IMAGE"
+    Assert-True (
+        (Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "config.yaml")) -match
+        "V1_CONFIG_SENTINEL"
+    ) "successful update overwrote config.yaml"
+    Assert-True (
+        (Get-Content -Raw -Encoding ascii (Join-Path $CaseRoot "data/state/jobs.sqlite3")) -match
+        "sqlite-v1-state"
+    ) "successful update overwrote SQLite state"
+    Assert-True (
+        (Get-Content -Raw -Encoding ascii (Join-Path $CaseRoot "data/cookies/cookies.txt")) -match
+        "cookies-v1-state"
+    ) "successful update overwrote cookies"
+    Assert-True (
+        (Get-Content -Raw -Encoding ascii (Join-Path $CaseRoot "data/downloads/large.mp4")) -match
+        "runtime-media-v1"
+    ) "successful update overwrote existing downloads"
     Assert-True ([bool]($Log -match " stop -t 45 bot worker local-api$")) `
         "application writers were not stopped"
     Assert-True (-not ($Log -match "stop .*redis")) "Redis was stopped before backup"
