@@ -23,6 +23,7 @@ from telegram_media_bot.domain.models import (
     ProgressEvent,
 )
 from telegram_media_bot.infrastructure.ytdlp import engine as engine_module
+from telegram_media_bot.infrastructure.ytdlp.transcoder import VideoProbe
 
 
 class FakeYoutubeDL:
@@ -207,7 +208,11 @@ def test_instagram_collection_returns_ordered_mp4_video_artifacts(
             return dict(self.info)
 
     monkeypatch.setattr(engine_module, "YoutubeDL", InstagramYoutubeDL)
-    monkeypatch.setattr(engine_module, "is_compatible_video", lambda *_args: True)
+    monkeypatch.setattr(
+        engine_module,
+        "is_guaranteed_container_compatible",
+        lambda *_args: True,
+    )
     configured = _without_dns_checks(settings)
 
     result = engine_module.YtDlpEngine(configured).download(
@@ -229,6 +234,70 @@ def test_instagram_collection_returns_ordered_mp4_video_artifacts(
         "second.mp4",
     ]
     assert result.total_file_size_bytes == 11
+
+
+def test_best_original_vp9_mp4_under_limit_never_transcodes(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class InstagramReelYoutubeDL(FakeYoutubeDL):
+        info: ClassVar[dict[str, Any]] = {
+            "id": "DbQqWqBDLXS",
+            "title": "Instagram Reel",
+            "extractor_key": "Instagram",
+            "webpage_url": "https://example.test/reel/DbQqWqBDLXS",
+            "vcodec": "vp09.00.41.08",
+            "acodec": "mp4a.40.2",
+            "ext": "mp4",
+            "height": 1920,
+            "duration": 30,
+            "requested_formats": [
+                {"format_id": "990651570467829v", "vcodec": "vp9", "acodec": "none"},
+                {"format_id": "989654117234241a", "vcodec": "none", "acodec": "aac"},
+            ],
+        }
+
+        def extract_info(self, _url: str, *, download: bool) -> dict[str, Any]:
+            if download:
+                output = Path(self.options["paths"]["home"])
+                output.mkdir(parents=True, exist_ok=True)
+                (output / "DbQqWqBDLXS.mp4").write_bytes(b"x" * (7 * 1024 * 1024))
+            return dict(self.info)
+
+    def unexpected_transcode(*_args: object, **_kwargs: object) -> Path:
+        raise AssertionError("BEST_ORIGINAL must never enter the transcoder")
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", InstagramReelYoutubeDL)
+    monkeypatch.setattr(engine_module, "transcode_video_to_container", unexpected_transcode)
+    monkeypatch.setattr(engine_module, "transcode_video_to_limit", unexpected_transcode)
+    monkeypatch.setattr(
+        engine_module,
+        "probe_video",
+        lambda _path: VideoProbe(
+            30.0,
+            1920,
+            True,
+            video_codec="vp9",
+            audio_codec="aac",
+            source_container="mov,mp4,m4a,3gp,3g2,mj2",
+        ),
+    )
+    configured = _without_dns_checks(settings)
+
+    result = engine_module.YtDlpEngine(configured).download(
+        DownloadRequest(
+            job_id=JobId("instagram-original"),
+            url="https://example.test/reel/DbQqWqBDLXS",
+            mode=DownloadMode.BEST_ORIGINAL,
+            output_directory=configured.storage.downloads_path() / "instagram-original",
+            container=OutputContainer.MP4,
+            container_policy=ContainerPolicy.GUARANTEED,
+            allow_collection=True,
+        )
+    )
+
+    assert result.file_path.suffix == ".mp4"
+    assert result.file_size_bytes == 7 * 1024 * 1024
 
 
 def test_download_rejects_output_outside_storage(settings: Settings, tmp_path: Path) -> None:

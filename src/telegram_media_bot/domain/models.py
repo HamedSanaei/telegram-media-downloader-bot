@@ -33,6 +33,16 @@ class ContainerPolicy(StrEnum):
     GUARANTEED = "guaranteed"
 
 
+def normalize_container_policy(
+    mode: DownloadMode,
+    policy: ContainerPolicy,
+) -> ContainerPolicy:
+    """Keep original-quality downloads outside every codec transcoding contract."""
+    if mode is DownloadMode.BEST_ORIGINAL:
+        return ContainerPolicy.NATIVE_ONLY
+    return policy
+
+
 class MediaKind(StrEnum):
     VIDEO = "video"
     AUDIO = "audio"
@@ -151,6 +161,13 @@ class DownloadRequest:
     container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY
     allow_collection: bool = False
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "container_policy",
+            normalize_container_policy(self.mode, self.container_policy),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class DownloadArtifact:
@@ -159,6 +176,7 @@ class DownloadArtifact:
     kind: MediaKind
     mime_type: str | None = None
     title: str | None = None
+    inline_video_streamable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +191,7 @@ class DownloadResult:
     duration_seconds: int | None = None
     mime_type: str | None = None
     artifacts: tuple[DownloadArtifact, ...] = ()
+    inline_video_streamable: bool = False
 
     @property
     def delivery_artifacts(self) -> tuple[DownloadArtifact, ...]:
@@ -185,6 +204,7 @@ class DownloadResult:
                 kind=self.kind,
                 mime_type=self.mime_type,
                 title=self.title,
+                inline_video_streamable=self.inline_video_streamable,
             ),
         )
 

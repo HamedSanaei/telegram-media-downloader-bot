@@ -24,6 +24,7 @@ from telegram_media_bot.domain.models import (
     MediaInfo,
     MediaKind,
     OutputContainer,
+    normalize_container_policy,
 )
 
 
@@ -81,7 +82,7 @@ class DownloadService:
             output_directory=output_directory,
             temp_directory=temp_directory,
             container=container,
-            container_policy=container_policy,
+            container_policy=normalize_container_policy(mode, container_policy),
             allow_collection=info.source.casefold() == "instagram",
         )
         result = self._engine.download(

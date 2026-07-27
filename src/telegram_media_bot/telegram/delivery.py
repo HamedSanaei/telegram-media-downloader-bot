@@ -213,16 +213,21 @@ class TelegramDeliveryGateway(DeliveryGateway):
 
     def _preferred_method(self, result: DownloadResult) -> DeliveryMethod:
         if (
-            self._settings.telegram.upload_as_document
+            (self._settings.telegram.upload_as_document and is_document_delivery_compatible(result))
             or result.kind is MediaKind.PLAYLIST
             or result.file_path.suffix.casefold() == ".webm"
         ):
             return DeliveryMethod.DOCUMENT
         if result.kind is MediaKind.AUDIO:
             return DeliveryMethod.AUDIO
-        if result.kind is MediaKind.VIDEO:
+        if result.kind is MediaKind.VIDEO and result.inline_video_streamable:
             return DeliveryMethod.VIDEO
         return DeliveryMethod.DOCUMENT
+
+
+def is_document_delivery_compatible(result: DownloadResult) -> bool:
+    """Documents impose no media codec/profile restriction on a regular local file."""
+    return result.file_path.is_file()
 
 
 class RoutedDeliveryGateway(DeliveryGateway):
@@ -309,6 +314,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 file_size_bytes=artifact.file_size_bytes,
                 duration_seconds=result.duration_seconds,
                 mime_type=artifact.mime_type,
+                inline_video_streamable=artifact.inline_video_streamable,
             )
             ordinal_offset = len(receipts)
 

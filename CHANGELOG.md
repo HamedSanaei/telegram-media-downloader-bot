@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Prevented Instagram `best_original` VP9/MP4 downloads from being re-encoded toward the upload
+  ceiling; original mode is now always native-only in durable jobs, queue payloads, and engine
+  requests.
+- Made Instagram `force_mp4` select and merge native MP4 video plus M4A audio, while disabling it
+  preserves the source-selected container.
+- Separated native-container, inline-video, and document compatibility and route non-streamable
+  native MP4 files to document delivery.
+- Changed forced video conversion to quality-first CRF encoding with bitrate-limited fallback only
+  for actual ceiling or anti-inflation violations, with structured source/target/size logging.
+
 ## 1.0.0 - 2026-07-23
 
 - Added queued metadata inspection and owner-bound expiring semantic format selection.

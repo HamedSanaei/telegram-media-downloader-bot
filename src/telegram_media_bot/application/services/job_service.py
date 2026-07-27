@@ -13,6 +13,7 @@ from telegram_media_bot.domain.models import (
     JobRecord,
     JobStatus,
     OutputContainer,
+    normalize_container_policy,
 )
 
 
@@ -39,6 +40,7 @@ class JobService:
         container: OutputContainer | None = None,
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
     ) -> tuple[JobRecord, bool]:
+        container_policy = normalize_container_policy(mode, container_policy)
         return self._create(
             kind=JobKind.DOWNLOAD,
             chat_id=chat_id,

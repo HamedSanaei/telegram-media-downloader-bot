@@ -1,6 +1,6 @@
 # T005 - Inspection and format selection
 
-**Status:** complete (container/Instagram expansion 2026-07-25)
+**Status:** complete (container/Instagram size-safety fix 2026-07-27)
 
 Inspection runs as an ARQ worker job. Normalized metadata is stored in SQLite behind an opaque,
 owner-bound, expiring selection token. Callback data contains only the token and a configured
@@ -10,7 +10,9 @@ for download, so exact-height modes are shown only when present and cannot silen
 Each option records resolution, FPS, HDR/SDR, and exact/estimated/unknown component-summed size.
 Legacy selections without this JSON field remain readable. Ordinary videos now use an opaque
 two-step Container -> semantic-quality callback. MP4/WebM candidates state whether they are native
-or require guaranteed conversion. Instagram video URLs bypass the choice UI and enqueue best MP4.
+or require guaranteed conversion. Instagram video URLs bypass the choice UI and enqueue
+native-only `best_original`; optional MP4 forcing selects native MP4 video plus M4A and never turns
+VP9 into an implicit H.264 transcode.
 
 ## Deliverables
 

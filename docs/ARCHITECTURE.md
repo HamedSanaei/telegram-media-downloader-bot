@@ -130,6 +130,14 @@ A genuine change to the project-owned engine port requires an ADR and coordinate
 native candidate, then guarantee MP4 H.264/AAC or WebM VP9/Opus through cancellable FFmpeg
 conversion. Fixed resolution and at-most-60-FPS contracts are preserved.
 
+Container mux compatibility, Telegram inline-video streamability, and document delivery are
+separate decisions. VP9 inside MP4 is a valid native MP4 artifact and is valid for document
+delivery, but it does not satisfy the H.264/AAC inline-video profile. `best_original` normalizes
+every accidental guaranteed-container request to native-only before it reaches the adapter.
+Transcoding first uses a quality-oriented CRF pass; the configured maximum is only a ceiling, and
+bitrate limiting is a fallback when that pass exceeds the ceiling or would multiply a small
+source's size.
+
 Fixed-resolution candidates are exact-height contracts: `video_2160` is absent unless a real 2160p
 stream can be combined with audio, and download cannot silently fall back. Inspection and download
 use the same adapter-owned bounded selector. Component sizes are summed from `filesize`, then
@@ -163,5 +171,7 @@ placed in Compose environment or command arguments.
 
 Source detection remains inside the yt-dlp adapter. The worker consumes normalized `source` policy:
 Instagram collections are the approved automatic multi-artifact flow, image entries are discarded,
-and ordered video artifacts are delivered separately. Cookies remain an optional read-only operator
-file. Telegram handlers contain no extractor/domain-name dispatch chain.
+and ordered video artifacts are delivered separately. With `force_mp4`, the adapter selects the
+best native MP4 video and M4A audio and only merges/remuxes them; without it, the source-selected
+container is preserved. Cookies remain an optional read-only operator file. Telegram handlers
+contain no extractor/domain-name dispatch chain.

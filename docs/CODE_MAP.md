@@ -2,7 +2,7 @@
 
 | Path | Responsibility |
 |---|---|
-| `src/telegram_media_bot/domain/` | Stable models, enums, identifiers, and exceptions |
+| `src/telegram_media_bot/domain/` | Stable models, enums, identifiers, exceptions, and `best_original` native-only normalization |
 | `src/telegram_media_bot/application/ports/` | Interfaces required by use cases |
 | `src/telegram_media_bot/application/services/` | Orchestrates inspection, policy limits, and selected downloads |
 | `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
@@ -10,7 +10,7 @@
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic access, required-channel membership, and rate policy |
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
-| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration |
+| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, native/inline compatibility probing, and CRF-first bounded transcoding |
 | `src/telegram_media_bot/infrastructure/queue/` | ARQ queue client implementation |
 | `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL jobs, users, daily usage, delivery, block, and recovery store |
 | `src/telegram_media_bot/infrastructure/security/telegram_membership.py` | Telegram membership gateway with positive/negative Redis cache |
@@ -41,7 +41,8 @@
 
 - `infrastructure/ytdlp/engine.py`: `YoutubeDL` lifecycle and calls;
 - `infrastructure/ytdlp/options.py`: semantic mode mapping and bounded complete-stream selection;
-- `infrastructure/ytdlp/transcoder.py`: codec-verified MP4 H.264/AAC and WebM VP9/Opus conversion;
+- `infrastructure/ytdlp/transcoder.py`: separate native-container and inline-streamability probes,
+  quality-first MP4 H.264/AAC and WebM VP9/Opus conversion, and size-limited fallback;
 - `infrastructure/ytdlp/mapper.py`: upstream metadata to `MediaInfo`;
 - `infrastructure/ytdlp/error_mapper.py`: upstream errors to project exceptions.
 

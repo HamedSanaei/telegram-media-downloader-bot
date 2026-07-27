@@ -60,9 +60,18 @@ never printed.
 
 Ordinary video options carry `mp4` or `webm`. Native candidates are preferred; guaranteed fallback
 uses H.264/AAC for MP4 and VP9/Opus for WebM. `best_original` remains native-only. Instagram policy
-is configured under `media.instagram`: best MP4 is automatic, image entries are ignored, and the
-ordered video count/aggregate size are bounded. Authenticated content uses the optional local
-read-only cookies file.
+is configured under `media.instagram`: automatic downloads always use `best_original` with
+`NATIVE_ONLY`. When `force_mp4: true`, the best native `ext=mp4` video and `ext=m4a` audio are
+selected and only merged/remuxed. When `force_mp4: false`, no container is hard-coded and the
+source-selected container/codecs are preserved. Image entries are ignored, and the ordered video
+count/aggregate size are bounded. Authenticated content uses the optional local read-only cookies
+file.
+
+`telegram.upload_as_document: true` accepts native media without requiring Telegram's inline-video
+profile. In particular, VP9 inside MP4 is valid document delivery and is not converted merely
+because `send_video` prefers H.264/AAC. The media size setting is a hard ceiling, not a target:
+forced codec conversion starts with CRF (`libx264` for MP4), and only an oversized or
+disproportionately inflated quality pass activates bitrate-limited fallback.
 
 After model changes regenerate and review the schema:
 

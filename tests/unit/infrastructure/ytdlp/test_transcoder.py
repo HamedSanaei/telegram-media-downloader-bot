@@ -36,6 +36,8 @@ def test_transcode_replaces_source_below_limit(
     assert not source.exists()
     assert output.read_bytes() == b"bounded"
     assert "scale=-2:720" in calls[0][calls[0].index("-vf") + 1]
+    assert calls[0][calls[0].index("-crf") + 1] == "20"
+    assert "-b:v" not in calls[0]
 
 
 def test_transcode_rejects_duration_that_cannot_fit(
@@ -62,7 +64,7 @@ def test_transcode_retries_once_when_first_output_is_oversized(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "source.webm"
-    source.write_bytes(b"source")
+    source.write_bytes(b"x" * 5_000_000)
     calls = 0
     monkeypatch.setattr(transcoder, "_find_executable", lambda name: name)
     monkeypatch.setattr(
@@ -131,3 +133,28 @@ def test_webm_transcode_uses_vp9_and_opus(
     assert output.suffix == ".webm"
     assert "libvpx-vp9" in commands[0]
     assert "libopus" in commands[0]
+
+
+def test_vp9_mp4_is_native_but_not_inline_streamable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "native.mp4"
+    source.write_bytes(b"media")
+    monkeypatch.setattr(transcoder, "_find_executable", lambda name: name)
+    monkeypatch.setattr(
+        transcoder,
+        "_probe_video",
+        lambda _ffprobe, _source: transcoder.VideoProbe(
+            30.0,
+            1920,
+            True,
+            video_codec="vp9",
+            audio_codec="aac",
+            source_container="mov,mp4,m4a,3gp,3g2,mj2",
+        ),
+    )
+
+    assert transcoder.is_native_container_compatible(source, OutputContainer.MP4)
+    assert not transcoder.is_inline_video_streamable(source)
+    assert not transcoder.is_guaranteed_container_compatible(source, OutputContainer.MP4)

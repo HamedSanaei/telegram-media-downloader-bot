@@ -136,3 +136,19 @@ compiled from pinned upstream source and can be owned by a dedicated Compose ser
 share the YAML-derived endpoint; API credentials enter only the official child environment.
 Cross-platform `tmb` commands provide lifecycle, logs, doctor, configuration, checksummed release
 updates with state-aware recovery, backup, and explicit uninstall.
+
+## ADR-016: Original-quality downloads are native-only and size ceilings are not bitrate targets
+
+**Status:** accepted
+
+`best_original` is an invariant rather than a presentation hint: any accidental
+`ContainerPolicy.GUARANTEED` request is normalized to `NATIVE_ONLY` in the project-owned domain
+contract. Instagram automation uses that invariant in both durable job creation and queue payloads.
+When `media.instagram.force_mp4` is enabled, yt-dlp selects the best native MP4 video plus M4A audio
+and may merge/remux only; when disabled, no output container is imposed.
+
+Native mux compatibility, Telegram H.264/AAC inline-video streamability, and unrestricted document
+delivery are modeled as distinct decisions. A VP9 stream in MP4 is therefore retained for document
+delivery. Genuine codec conversion uses a quality-oriented CRF pass first. The file-size setting is
+a ceiling; bitrate calculation is deferred to a fallback only when the quality pass exceeds that
+ceiling or an explicit anti-inflation bound.

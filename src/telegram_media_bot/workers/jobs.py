@@ -107,14 +107,15 @@ async def process_inspection_job(
         info = await asyncio.to_thread(service.inspect, url)
         now = datetime.now(UTC)
         if info.source.casefold() == "instagram" and settings.media.instagram.auto_download:
+            instagram_container, instagram_policy = _instagram_download_contract(settings)
             download, created = await asyncio.to_thread(
                 JobService(repository).create_download,
                 chat_id=chat_id,
                 user_id=user_id,
                 url=info.webpage_url,
                 mode=DownloadMode.BEST_ORIGINAL,
-                container=OutputContainer.MP4,
-                container_policy=ContainerPolicy.GUARANTEED,
+                container=instagram_container,
+                container_policy=instagram_policy,
             )
             if record.status_message_id is not None:
                 await asyncio.to_thread(
@@ -125,7 +126,7 @@ async def process_inspection_job(
                 await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=record.status_message_id,
-                    text="بهترین نسخهٔ MP4 اینستاگرام برای دریافت آماده شد و در صف قرار گرفت.",
+                    text=("بهترین نسخهٔ اصلی اینستاگرام برای دریافت آماده شد و در صف قرار گرفت."),
                 )
             if created:
                 queue = cast(JobQueue, ctx["queue"])
@@ -135,8 +136,8 @@ async def process_inspection_job(
                     user_id=user_id,
                     url=info.webpage_url,
                     mode=DownloadMode.BEST_ORIGINAL,
-                    container=OutputContainer.MP4,
-                    container_policy=ContainerPolicy.GUARANTEED,
+                    container=instagram_container,
+                    container_policy=instagram_policy,
                 )
             await asyncio.to_thread(
                 repository.transition,
@@ -679,6 +680,13 @@ def _configured_modes_for(
         return relevant_modes
     available = {option.mode for option in options}
     return tuple(mode for mode in relevant_modes if mode in available)
+
+
+def _instagram_download_contract(
+    settings: Settings,
+) -> tuple[OutputContainer | None, ContainerPolicy]:
+    container = OutputContainer.MP4 if settings.media.instagram.force_mp4 else None
+    return container, ContainerPolicy.NATIVE_ONLY
 
 
 def _offer_progress(

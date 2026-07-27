@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
+import structlog
 from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as ytdlp_version
 
@@ -50,10 +51,14 @@ from telegram_media_bot.infrastructure.ytdlp.options import (
     video_target_height,
 )
 from telegram_media_bot.infrastructure.ytdlp.transcoder import (
-    is_compatible_video,
+    is_guaranteed_container_compatible,
+    is_inline_video_streamable,
+    probe_video,
     transcode_video_to_container,
     transcode_video_to_limit,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 class YtDlpEngine:
@@ -166,6 +171,8 @@ class YtDlpEngine:
                     raise MediaUnavailableError("Instagram collection contains no videos")
                 if non_images:
                     files = non_images
+            if request.allow_collection:
+                files = _order_collection_files(files, info)
             requested_container = request.container
             requested_video_container = requested_container in {
                 OutputContainer.MP4,
@@ -177,7 +184,7 @@ class YtDlpEngine:
                 and requested_container is not None
                 and requested_video_container
                 and request.container_policy is ContainerPolicy.GUARANTEED
-                and not is_compatible_video(files[0], requested_container)
+                and not is_guaranteed_container_compatible(files[0], requested_container)
             )
             should_transcode = (
                 len(files) == 1
@@ -200,6 +207,17 @@ class YtDlpEngine:
                     )
                 )
             )
+            transcode_reason = (
+                "guaranteed_codec_contract"
+                if incompatible_container
+                else "size_limit"
+                if should_transcode and files[0].stat().st_size > max_size
+                else "guaranteed_container_contract"
+                if should_transcode
+                else None
+            )
+            if detected_kind is MediaKind.VIDEO or request.allow_collection:
+                self._log_selected_media(info, files, request, transcode_reason)
             if should_transcode:
                 if progress is not None:
                     progress(ProgressEvent(job_id=request.job_id, status="transcoding"))
@@ -217,6 +235,7 @@ class YtDlpEngine:
                         max_size_bytes=max_size,
                         container=request.container,
                         is_cancelled=is_cancelled,
+                        reason=transcode_reason or "guaranteed_container_contract",
                     )
                 files = [transcoded]
             elif (
@@ -226,7 +245,7 @@ class YtDlpEngine:
             ):
                 converted: list[Path] = []
                 for path in files:
-                    if is_compatible_video(path, request.container):
+                    if is_guaranteed_container_compatible(path, request.container):
                         converted.append(path)
                         continue
                     if progress is not None:
@@ -238,6 +257,7 @@ class YtDlpEngine:
                             max_size_bytes=max_size,
                             container=request.container,
                             is_cancelled=is_cancelled,
+                            reason="guaranteed_collection_codec_contract",
                         )
                     )
                 files = converted
@@ -267,8 +287,9 @@ class YtDlpEngine:
                         kind=MediaKind.VIDEO,
                         mime_type=mimetypes.guess_type(path.name)[0],
                         title=f"{info.get('title') or 'Instagram'!s} {index}",
+                        inline_video_streamable=self._inline_streamable(path),
                     )
-                    for index, path in enumerate(reversed(files), start=1)
+                    for index, path in enumerate(files, start=1)
                 )
                 if is_instagram_collection
                 else ()
@@ -284,6 +305,7 @@ class YtDlpEngine:
                 duration_seconds=map_media_info(info, original_url=request.url).duration_seconds,
                 mime_type=mimetypes.guess_type(final_file.name)[0],
                 artifacts=artifacts,
+                inline_video_streamable=self._inline_streamable(final_file),
             )
         except Exception as exc:
             if isinstance(exc, MediaBotError):
@@ -474,6 +496,56 @@ class YtDlpEngine:
         self._validate_info_urls(info)
         return None
 
+    def _inline_streamable(self, path: Path) -> bool:
+        if self._settings.telegram.upload_as_document or path.suffix.casefold() != ".mp4":
+            return False
+        return is_inline_video_streamable(path)
+
+    @staticmethod
+    def _log_selected_media(
+        info: Mapping[str, Any],
+        files: list[Path],
+        request: DownloadRequest,
+        transcode_reason: str | None,
+    ) -> None:
+        selected_ids = _selected_format_ids(info)
+        target_codec = (
+            "h264"
+            if request.container is OutputContainer.MP4
+            and request.container_policy is ContainerPolicy.GUARANTEED
+            else "vp9"
+            if request.container is OutputContainer.WEBM
+            and request.container_policy is ContainerPolicy.GUARANTEED
+            else None
+        )
+        for path in files:
+            source_container: str
+            source_video_codec: str | None
+            source_audio_codec: str | None
+            try:
+                probe = probe_video(path)
+                source_container = probe.source_container or path.suffix.casefold().lstrip(".")
+                source_video_codec = probe.video_codec
+                source_audio_codec = probe.audio_codec
+            except MediaBotError:
+                source_container, source_video_codec, source_audio_codec = _metadata_codecs(
+                    info,
+                    path,
+                )
+            logger.info(
+                "downloaded_media_selected",
+                source_container=source_container,
+                source_video_codec=source_video_codec,
+                source_audio_codec=source_audio_codec,
+                source_file_size=path.stat().st_size,
+                selected_format_ids=selected_ids,
+                transcode_reason=transcode_reason,
+                target_codec=target_codec,
+                target_bitrate=None,
+                target_crf=None,
+                final_file_size=path.stat().st_size if transcode_reason is None else None,
+            )
+
     def _validate_info_urls(self, info: Mapping[str, Any]) -> None:
         if not self._settings.security.reject_private_network_urls:
             return
@@ -523,3 +595,58 @@ class YtDlpEngine:
         for path in files:
             path.unlink(missing_ok=True)
         return archive
+
+
+def _selected_format_ids(info: Mapping[str, Any]) -> tuple[str, ...]:
+    selected: list[str] = []
+    requested = info.get("requested_formats")
+    if isinstance(requested, list):
+        for item in requested:
+            if isinstance(item, Mapping) and item.get("format_id") is not None:
+                selected.append(str(item["format_id"]))
+    elif info.get("format_id") is not None:
+        selected.append(str(info["format_id"]))
+    entries = info.get("entries")
+    if isinstance(entries, list):
+        for item in entries:
+            if isinstance(item, Mapping):
+                selected.extend(_selected_format_ids(item))
+    return tuple(dict.fromkeys(selected))
+
+
+def _metadata_codecs(
+    info: Mapping[str, Any],
+    path: Path,
+) -> tuple[str, str | None, str | None]:
+    contexts: list[Mapping[str, Any]] = [info]
+    entries = info.get("entries")
+    if isinstance(entries, list):
+        contexts.extend(item for item in entries if isinstance(item, Mapping))
+    video_codec = next(
+        (str(item["vcodec"]) for item in contexts if item.get("vcodec") not in {None, "none"}),
+        None,
+    )
+    audio_codec = next(
+        (str(item["acodec"]) for item in contexts if item.get("acodec") not in {None, "none"}),
+        None,
+    )
+    source_container = next(
+        (str(item["ext"]) for item in contexts if item.get("ext") is not None),
+        path.suffix.casefold().lstrip("."),
+    )
+    return source_container, video_codec, audio_codec
+
+
+def _order_collection_files(
+    files: list[Path],
+    info: Mapping[str, Any],
+) -> list[Path]:
+    entries = info.get("entries")
+    if not isinstance(entries, list):
+        return files
+    order = {
+        str(item["id"]): index
+        for index, item in enumerate(entries)
+        if isinstance(item, Mapping) and item.get("id") is not None
+    }
+    return sorted(files, key=lambda path: order.get(path.stem, len(order)))

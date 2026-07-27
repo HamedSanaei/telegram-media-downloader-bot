@@ -1,6 +1,19 @@
 # Handoff verification report
 
-Generated: 2026-07-26
+Generated: 2026-07-27
+
+## Current change addendum
+
+- Instagram automatic downloads now create and enqueue the same native-only `best_original`
+  contract. `force_mp4` selects native MP4 video plus M4A audio for merge/remux only; disabling it
+  leaves the source container unconstrained.
+- VP9 inside MP4 is distinguished from Telegram's H.264/AAC inline-video profile and remains valid
+  for direct document delivery without encoding.
+- Forced codec conversion is CRF-first (`libx264` CRF 20/preset medium for MP4). The configured
+  maximum is a ceiling; bitrate targeting runs only after an oversized or disproportionate
+  quality-pass result.
+- Structured selection/transcode logs include source container/codecs/size, selected format IDs,
+  reason, target codec, CRF or bitrate, and final size.
 
 ## Release scope
 
@@ -41,12 +54,12 @@ session is present.
 - Ruff lint: passed.
 - Ruff format check: passed for 102 Python files.
 - Strict mypy: passed for 93 source/test files.
-- Default test suite: 204 passed, 1 explicitly destructive large-file case skipped, and 8 opt-in
+- Default test suite: 217 passed, 1 explicitly destructive large-file case skipped, and 8 opt-in
   external contracts deselected.
-- Core branch coverage: 83.67%, above the enforced 80% floor.
+- Core branch coverage: 83.90%, above the enforced 80% floor.
 - Architecture boundary check: passed; only
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
-- UTF-8/text integrity: passed for 163 text files.
+- UTF-8/text integrity: passed for 161 text files.
 - Deterministic source manifest regenerated and verified with 167 release entries.
 - SQLite migration, WAL contention, and atomic usage tests: 11 passed.
 - Linux and Windows mocked `tmb update` tests passed for success, release-download failure, and
@@ -59,6 +72,8 @@ session is present.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
 - Python sdist and wheel builds passed.
+- `docker build -t telegram-media-downloader-bot:instagram-size-fix .` could not start because no
+  Docker, Podman, or Nerdctl executable is installed on this host.
 - Local ignored `config.yaml` passed `config-check` without printing secrets.
 - `git diff --check`: passed.
 

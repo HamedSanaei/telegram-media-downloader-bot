@@ -104,6 +104,43 @@ def test_guaranteed_container_uses_native_first_then_safe_fallback(
     assert options["merge_output_format"] == container.value
 
 
+def test_best_original_normalizes_guaranteed_policy_to_native_only(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    request = DownloadRequest(
+        job_id=JobId("original"),
+        url="https://example.test/video",
+        mode=DownloadMode.BEST_ORIGINAL,
+        output_directory=tmp_path,
+        container=OutputContainer.MP4,
+        container_policy=ContainerPolicy.GUARANTEED,
+    )
+
+    options = YtDlpOptionsFactory(settings).download_options(request)
+
+    assert request.container_policy is ContainerPolicy.NATIVE_ONLY
+    assert options["format"] == "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+    assert settings.media.formats.best_original not in options["format"]
+
+
+def test_best_original_without_forced_container_preserves_source_selector(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    request = DownloadRequest(
+        job_id=JobId("native-original"),
+        url="https://example.test/video",
+        mode=DownloadMode.BEST_ORIGINAL,
+        output_directory=tmp_path,
+    )
+
+    options = YtDlpOptionsFactory(settings).download_options(request)
+
+    assert options["format"] == settings.media.formats.best_original
+    assert "merge_output_format" not in options
+
+
 def test_final_media_files_ignores_partial_files(tmp_path: Path) -> None:
     (tmp_path / "video.mp4").write_bytes(b"ok")
     (tmp_path / "video.mp4.part").write_bytes(b"partial")

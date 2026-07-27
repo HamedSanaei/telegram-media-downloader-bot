@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-07-25
+Last updated: 2026-07-27
 
 ## Release state
 
@@ -51,6 +51,10 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-27: Fixed Instagram `best_original` inflation by making native-only an enforced domain
+  invariant, aligning durable/queued auto-download policy, preserving native MP4+M4A or unconstrained
+  source containers according to `force_mp4`, routing non-streamable VP9 MP4 through document
+  delivery, and changing transcoding to CRF-first with size limiting only as a fallback.
 - 2026-07-26: Restricted production container publication and GitHub Releases to matching `v*`
   tag pushes, added stable/prerelease-aware GHCR tags, post-push image smoke testing, and verified
   reproducible source assets. Manual branch dispatches now publish nothing.

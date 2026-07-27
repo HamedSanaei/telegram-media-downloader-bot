@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -12,6 +13,7 @@ from aiogram.types import Audio, Chat, Document, FSInputFile, InputFile, Message
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import DeliveryError, DeliveryTooLargeError
 from telegram_media_bot.domain.models import (
+    DeliveryMethod,
     DeliveryProgressEvent,
     DeliveryProvider,
     DeliveryStage,
@@ -107,6 +109,22 @@ async def test_video_failure_falls_back_to_document(settings: Settings, tmp_path
         chat_id=1, result=_result(tmp_path, MediaKind.VIDEO), caption="caption"
     )
     assert receipt.method.value == "document"
+
+
+async def test_non_streamable_native_video_uses_document_without_encode(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    bot = FakeBot()
+    result = replace(_result(tmp_path, MediaKind.VIDEO), inline_video_streamable=False)
+
+    receipt = await TelegramDeliveryGateway(
+        cast(Bot, cast(Any, bot)),
+        _auto_delivery(settings),
+    ).deliver(chat_id=1, result=result, caption="caption")
+
+    assert receipt.method is DeliveryMethod.DOCUMENT
+    assert "document" in bot.last_upload
 
 
 async def test_webm_is_always_sent_as_document(settings: Settings, tmp_path: Path) -> None:
@@ -439,6 +457,7 @@ def _result(tmp_path: Path, kind: MediaKind) -> DownloadResult:
         kind=kind,
         file_path=path,
         file_size_bytes=5,
+        inline_video_streamable=kind is MediaKind.VIDEO,
     )
 
 

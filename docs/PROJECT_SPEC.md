@@ -24,7 +24,9 @@ Actual extraction support is determined by the installed `yt-dlp` version.
 3. Bot displays normalized title, duration, source, and only semantic formats that are actually
    selectable, including selected resolution/FPS/HDR and exact, estimated, or unknown size.
 4. For ordinary video, the user chooses MP4 or WebM and then a real semantic quality. Instagram
-   video posts, Reels, Stories, and Highlights skip both prompts and use best-quality MP4.
+   video posts, Reels, Stories, and Highlights skip both prompts and use the best original
+   streams; `media.instagram.force_mp4` may constrain the native video/audio pair to MP4 + M4A
+   without changing codecs.
 5. Worker downloads into an isolated job directory.
 6. Telegram and worker logs report throttled download/upload progress. Upload percentage covers
    bytes read into Local Bot API; the opaque Telegram phase reports only elapsed-time heartbeats.

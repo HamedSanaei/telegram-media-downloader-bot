@@ -27,8 +27,10 @@ calculated during inspection, and direct/multipart upload byte progress appears 
 message and structured console log. Telegram post-body processing is reported as elapsed time only.
 
 The official Local Bot API is compiled from a pinned upstream commit in the multi-stage image and
-can run as a separate Compose service. Ordinary video guarantees MP4 H.264/AAC or WebM VP9/Opus;
-WebM is delivered as a document. Ordered Instagram video artifacts are sent separately.
+can run as a separate Compose service. Ordinary non-original video guarantees MP4 H.264/AAC or
+WebM VP9/Opus; WebM is delivered as a document. Original-quality media is native-only, and a native
+VP9 MP4 is delivered as a document instead of being re-encoded for inline playback. Ordered
+Instagram video artifacts are sent separately.
 
 ## Deliverables
 

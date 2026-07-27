@@ -9,6 +9,7 @@ from telegram_media_bot.domain.models import (
     DownloadMode,
     JobId,
     OutputContainer,
+    normalize_container_policy,
 )
 
 
@@ -56,6 +57,7 @@ class ArqJobQueue(JobQueue):
         container: OutputContainer | None = None,
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
     ) -> JobId:
+        container_policy = normalize_container_policy(mode, container_policy)
         await self._redis.enqueue_job(
             "process_download_job",
             chat_id=chat_id,

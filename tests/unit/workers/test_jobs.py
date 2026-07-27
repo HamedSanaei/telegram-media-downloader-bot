@@ -14,6 +14,7 @@ from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import DeliveryError, RateLimitedError
 from telegram_media_bot.domain.models import (
+    ContainerPolicy,
     DeliveryMethod,
     DeliveryProgressEvent,
     DeliveryReceipt,
@@ -22,12 +23,14 @@ from telegram_media_bot.domain.models import (
     DownloadResult,
     JobId,
     JobStatus,
+    MediaInfo,
     MediaKind,
+    OutputContainer,
     ProgressEvent,
 )
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
-from telegram_media_bot.workers.jobs import process_download_job
+from telegram_media_bot.workers.jobs import process_download_job, process_inspection_job
 
 
 class FakeDownloadService:
@@ -109,6 +112,26 @@ class FakeDelivery:
         self.edits.append(text)
 
 
+class FakeInspectionService:
+    def inspect(self, url: str) -> MediaInfo:
+        return MediaInfo(
+            media_id="DbQqWqBDLXS",
+            title="Instagram Reel",
+            source="instagram",
+            kind=MediaKind.VIDEO,
+            webpage_url=url,
+        )
+
+
+class CapturingQueue:
+    def __init__(self) -> None:
+        self.download: dict[str, object] | None = None
+
+    async def enqueue_download(self, **kwargs: object) -> JobId:
+        self.download = kwargs
+        return cast(JobId, kwargs["job_id"])
+
+
 @pytest.fixture
 def worker_context(
     settings: Settings, tmp_path: Path
@@ -163,6 +186,57 @@ async def test_worker_download_persists_receipt_and_cleans(
         ).fetchone()
     assert usage == (1, 5)
     assert not (cast(Settings, context["settings"]).storage.downloads_path() / job_id).exists()
+
+
+@pytest.mark.parametrize(
+    ("force_mp4", "expected_container"),
+    [(True, OutputContainer.MP4), (False, None)],
+)
+async def test_instagram_auto_download_create_and_enqueue_share_native_policy(
+    settings: Settings,
+    tmp_path: Path,
+    force_mp4: bool,
+    expected_container: OutputContainer | None,
+) -> None:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    raw["media"]["instagram"]["force_mp4"] = force_mp4
+    configured = Settings.model_validate(raw)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    inspection, _ = JobService(repository).create_inspection(
+        chat_id=10,
+        user_id=20,
+        url="https://example.test/reel/DbQqWqBDLXS",
+    )
+    queue = CapturingQueue()
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "download_service": FakeInspectionService(),
+        "bot": object(),
+        "metrics": MetricsRegistry(),
+        "queue": queue,
+        "job_id": str(inspection.job_id),
+        "job_try": 1,
+    }
+
+    await process_inspection_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url=inspection.url,
+    )
+
+    assert queue.download is not None
+    assert queue.download["mode"] is DownloadMode.BEST_ORIGINAL
+    assert queue.download["container"] is expected_container
+    assert queue.download["container_policy"] is ContainerPolicy.NATIVE_ONLY
+    persisted = repository.get_job(cast(JobId, queue.download["job_id"]))
+    assert persisted is not None
+    assert persisted.container is expected_container
+    assert persisted.container_policy is ContainerPolicy.NATIVE_ONLY
 
 
 async def test_worker_honors_pre_start_cancellation(

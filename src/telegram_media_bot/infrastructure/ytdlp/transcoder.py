@@ -8,6 +8,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+import structlog
+
 from telegram_media_bot.domain.errors import (
     JobCancelledError,
     MediaTooLargeError,
@@ -20,6 +22,12 @@ _MUX_OVERHEAD_BITS_PER_SECOND = 16_000
 _MIN_AUDIO_BITRATE = 48_000
 _MAX_AUDIO_BITRATE = 96_000
 _MIN_VIDEO_BITRATE = 64_000
+_MP4_CRF = 20
+_WEBM_CRF = 30
+_MAX_QUALITY_PASS_GROWTH = 2.0
+_QUALITY_PASS_GROWTH_ALLOWANCE = 1024 * 1024
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,17 +37,60 @@ class VideoProbe:
     has_audio: bool
     video_codec: str = "h264"
     audio_codec: str | None = "aac"
+    source_container: str = ""
 
 
-def is_compatible_video(source: Path, container: OutputContainer) -> bool:
+def probe_video(source: Path) -> VideoProbe:
     ffprobe = _find_executable("ffprobe")
     if ffprobe is None:
         raise PostProcessingError("ffprobe is required for container validation")
-    probe = _probe_video(ffprobe, source)
+    return _probe_video(ffprobe, source)
+
+
+def is_native_container_compatible(source: Path, container: OutputContainer) -> bool:
+    """Return whether the streams can remain untouched in the requested container."""
+    probe = probe_video(source)
     if container is OutputContainer.MP4:
-        return probe.video_codec == "h264" and (not probe.has_audio or probe.audio_codec == "aac")
+        return (
+            (source.suffix.casefold() == ".mp4" or "mp4" in probe.source_container.split(","))
+            and probe.video_codec in {"h264", "hevc", "vp9", "av1"}
+            and (not probe.has_audio or probe.audio_codec in {"aac", "mp3", "ac3", "eac3", "alac"})
+        )
     if container is OutputContainer.WEBM:
-        return probe.video_codec == "vp9" and (not probe.has_audio or probe.audio_codec == "opus")
+        return (
+            (source.suffix.casefold() == ".webm" or "webm" in probe.source_container.split(","))
+            and probe.video_codec in {"vp8", "vp9", "av1"}
+            and (not probe.has_audio or probe.audio_codec in {"opus", "vorbis"})
+        )
+    return False
+
+
+def is_inline_video_streamable(source: Path) -> bool:
+    """Return whether Telegram send_video receives its preferred H.264/AAC MP4 shape."""
+    probe = probe_video(source)
+    is_mp4 = source.suffix.casefold() == ".mp4" or "mp4" in probe.source_container.split(",")
+    return (
+        is_mp4
+        and probe.video_codec == "h264"
+        and (not probe.has_audio or probe.audio_codec == "aac")
+    )
+
+
+def is_guaranteed_container_compatible(source: Path, container: OutputContainer) -> bool:
+    """Return whether a semantic guaranteed-output codec contract is already met."""
+    probe = probe_video(source)
+    if container is OutputContainer.MP4:
+        return (
+            (source.suffix.casefold() == ".mp4" or "mp4" in probe.source_container.split(","))
+            and probe.video_codec == "h264"
+            and (not probe.has_audio or probe.audio_codec == "aac")
+        )
+    if container is OutputContainer.WEBM:
+        return (
+            (source.suffix.casefold() == ".webm" or "webm" in probe.source_container.split(","))
+            and probe.video_codec == "vp9"
+            and (not probe.has_audio or probe.audio_codec == "opus")
+        )
     return False
 
 
@@ -57,6 +108,7 @@ def transcode_video_to_limit(
         max_size_bytes=max_size_bytes,
         container=OutputContainer.MP4,
         is_cancelled=is_cancelled,
+        reason="size_limit",
     )
 
 
@@ -67,8 +119,9 @@ def transcode_video_to_container(
     max_size_bytes: int,
     container: OutputContainer,
     is_cancelled: Callable[[], bool] | None = None,
+    reason: str = "container_contract",
 ) -> Path:
-    """Encode a bounded MP4 or WebM while preserving height and at most 60 FPS."""
+    """Encode for quality first, then constrain bitrate only when a ceiling requires it."""
 
     ffmpeg = _find_executable("ffmpeg")
     ffprobe = _find_executable("ffprobe")
@@ -76,18 +129,15 @@ def transcode_video_to_container(
         raise PostProcessingError("ffmpeg and ffprobe are required for bounded video transcoding")
     probe = _probe_video(ffprobe, source)
     output_height = min(target_height, probe.height)
-    total_bitrate = int(max_size_bytes * 8 * _SIZE_MARGIN / probe.duration_seconds)
-    audio_bitrate = (
-        min(_MAX_AUDIO_BITRATE, max(_MIN_AUDIO_BITRATE, total_bitrate // 5))
-        if probe.has_audio
-        else 0
-    )
-    video_bitrate = total_bitrate - audio_bitrate - _MUX_OVERHEAD_BITS_PER_SECOND
-    if video_bitrate < _MIN_VIDEO_BITRATE:
-        raise MediaTooLargeError("Video is too long to transcode safely below the size limit")
-
     if container not in {OutputContainer.MP4, OutputContainer.WEBM}:
         raise PostProcessingError("Unsupported video output container")
+    absolute_ceiling_bitrate = int(max_size_bytes * 8 * _SIZE_MARGIN / probe.duration_seconds)
+    minimum_required_bitrate = _MIN_VIDEO_BITRATE + _MUX_OVERHEAD_BITS_PER_SECOND
+    if probe.has_audio:
+        minimum_required_bitrate += _MIN_AUDIO_BITRATE
+    if absolute_ceiling_bitrate < minimum_required_bitrate:
+        raise MediaTooLargeError("Video is too long to transcode safely below the size limit")
+    source_size = source.stat().st_size
     output = source.with_name(f"{source.stem}.telegram.{container.value}")
     video_filter = (
         f"scale=-2:{output_height}:flags=lanczos,fps=fps='min(source_fps,60)',format=yuv420p"
@@ -107,38 +157,124 @@ def transcode_video_to_container(
         video_filter,
     ]
     if container is OutputContainer.MP4:
-        common.extend(["-c:v", "libx264", "-preset", "veryfast"])
+        target_codec = "h264"
+        target_crf = _MP4_CRF
+        common.extend(["-c:v", "libx264", "-preset", "medium"])
     else:
+        target_codec = "vp9"
+        target_crf = _WEBM_CRF
         common.extend(["-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "2"])
+    logger.info(
+        "video_transcode_started",
+        source_container=probe.source_container or source.suffix.casefold().lstrip("."),
+        source_video_codec=probe.video_codec,
+        source_audio_codec=probe.audio_codec,
+        source_file_size=source_size,
+        transcode_reason=reason,
+        target_codec=target_codec,
+        target_crf=target_crf,
+        target_bitrate=None,
+    )
+    quality_command = [*common, "-crf", str(target_crf)]
+    if container is OutputContainer.WEBM:
+        quality_command.extend(["-b:v", "0"])
+    _append_audio_and_output(quality_command, probe, container, output)
+    output.unlink(missing_ok=True)
+    _run_process(quality_command, is_cancelled)
+    quality_size = _validated_output_size(output)
+    growth_ceiling = max(
+        int(source_size * _MAX_QUALITY_PASS_GROWTH),
+        source_size + _QUALITY_PASS_GROWTH_ALLOWANCE,
+    )
+    fallback_ceiling = min(max_size_bytes, growth_ceiling)
+    if quality_size <= fallback_ceiling:
+        source.unlink(missing_ok=True)
+        logger.info(
+            "video_transcode_completed",
+            transcode_reason=reason,
+            target_codec=target_codec,
+            target_crf=target_crf,
+            target_bitrate=None,
+            final_file_size=quality_size,
+        )
+        return output
+
+    total_bitrate = int(fallback_ceiling * 8 * _SIZE_MARGIN / probe.duration_seconds)
+    audio_bitrate = (
+        min(_MAX_AUDIO_BITRATE, max(_MIN_AUDIO_BITRATE, total_bitrate // 5))
+        if probe.has_audio
+        else 0
+    )
+    video_bitrate = total_bitrate - audio_bitrate - _MUX_OVERHEAD_BITS_PER_SECOND
+    if video_bitrate < _MIN_VIDEO_BITRATE:
+        output.unlink(missing_ok=True)
+        raise MediaTooLargeError("Video is too long to transcode safely below the size limit")
     for _attempt in range(2):
         output.unlink(missing_ok=True)
-        command = [*common, "-b:v", str(video_bitrate)]
-        if probe.has_audio:
-            command.extend(
-                [
-                    "-map",
-                    "0:a:0?",
-                    "-c:a",
-                    "aac" if container is OutputContainer.MP4 else "libopus",
-                    "-b:a",
-                    str(audio_bitrate),
-                ]
-            )
-        if container is OutputContainer.MP4:
-            command.extend(["-movflags", "+faststart"])
-        command.append(str(output))
+        command = [*common, "-b:v", str(video_bitrate), "-maxrate", str(video_bitrate)]
+        _append_audio_and_output(
+            command,
+            probe,
+            container,
+            output,
+            audio_bitrate=audio_bitrate,
+        )
+        logger.info(
+            "video_transcode_size_fallback",
+            transcode_reason=reason,
+            target_codec=target_codec,
+            target_crf=None,
+            target_bitrate=video_bitrate,
+            size_ceiling=fallback_ceiling,
+        )
         _run_process(command, is_cancelled)
-        if not output.is_file() or output.stat().st_size <= 0:
-            raise PostProcessingError("ffmpeg completed without a transcoded output")
-        actual_size = output.stat().st_size
-        if actual_size <= max_size_bytes:
+        actual_size = _validated_output_size(output)
+        if actual_size <= fallback_ceiling:
             source.unlink(missing_ok=True)
+            logger.info(
+                "video_transcode_completed",
+                transcode_reason=reason,
+                target_codec=target_codec,
+                target_crf=None,
+                target_bitrate=video_bitrate,
+                final_file_size=actual_size,
+            )
             return output
-        video_bitrate = int(video_bitrate * max_size_bytes * 0.9 / actual_size)
+        video_bitrate = int(video_bitrate * fallback_ceiling * 0.9 / actual_size)
         if video_bitrate < _MIN_VIDEO_BITRATE:
             break
     output.unlink(missing_ok=True)
     raise MediaTooLargeError("Transcoded video exceeds configured size limit")
+
+
+def _append_audio_and_output(
+    command: list[str],
+    probe: VideoProbe,
+    container: OutputContainer,
+    output: Path,
+    *,
+    audio_bitrate: int = _MAX_AUDIO_BITRATE,
+) -> None:
+    if probe.has_audio:
+        command.extend(
+            [
+                "-map",
+                "0:a:0?",
+                "-c:a",
+                "aac" if container is OutputContainer.MP4 else "libopus",
+                "-b:a",
+                str(audio_bitrate),
+            ]
+        )
+    if container is OutputContainer.MP4:
+        command.extend(["-movflags", "+faststart"])
+    command.append(str(output))
+
+
+def _validated_output_size(output: Path) -> int:
+    if not output.is_file() or output.stat().st_size <= 0:
+        raise PostProcessingError("ffmpeg completed without a transcoded output")
+    return output.stat().st_size
 
 
 def _probe_video(ffprobe: str, source: Path) -> VideoProbe:
@@ -199,12 +335,16 @@ def _probe_video(ffprobe: str, source: Path) -> VideoProbe:
     )
     video_codec = str(video.get("codec_name") or "") if isinstance(video, Mapping) else ""
     audio_codec = str(audio.get("codec_name") or "") if isinstance(audio, Mapping) else None
+    source_container = (
+        str(format_info.get("format_name") or "") if isinstance(format_info, Mapping) else ""
+    )
     return VideoProbe(
         duration_seconds=duration,
         height=height,
         has_audio=audio is not None,
         video_codec=video_codec,
         audio_codec=audio_codec,
+        source_container=source_container,
     )
 
 
