@@ -141,7 +141,7 @@ sudo env \
 PATH="$BIN_ROOT:$PATH" command -v tmb >/dev/null
 test -x "$(readlink -f "$(PATH="$BIN_ROOT:$PATH" command -v tmb)")"
 bash -n "$INSTALL_ROOT/scripts/tmb.sh"
-PATH="$BIN_ROOT:$PATH" TMB_ROOT_DIR="$INSTALL_ROOT" tmb status >/dev/null
+sudo env "PATH=$BIN_ROOT:$PATH" "TMB_ROOT_DIR=$INSTALL_ROOT" tmb status >/dev/null
 sudo grep -q "^TMB_IMAGE=.*:${RELEASE_VERSION}$" "$INSTALL_ROOT/.env"
 sudo grep -q 'CHANGE_ME' "$INSTALL_ROOT/config.yaml"
 sudo grep -q '^cookie-sentinel$' "$INSTALL_ROOT/data/cookies/cookies.txt"
