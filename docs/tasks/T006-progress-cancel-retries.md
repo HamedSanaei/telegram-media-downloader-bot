@@ -1,6 +1,6 @@
 # T006 - Progress, cancellation, deduplication, and retries
 
-**Status:** complete (delivery/user-accounting expansion 2026-07-25)
+**Status:** complete (durable ARQ cancellation expansion 2026-07-27)
 
 The adapter maps upstream hooks to `ProgressEvent`; the worker uses a bounded latest-value queue and
 time/percentage throttling. Durable cancellation is polled by adapter hooks. Active-job SHA-256
@@ -13,6 +13,10 @@ heartbeats only. Multipart receipts are committed after every successful part. A
 failures include safe stage/byte/ordinal context and remain quarantined.
 Confirmed delivery updates permanent user/daily counters in the same short SQLite transaction,
 guarded by unique `job_id`; retries and restarts cannot double-count bytes.
+
+Cancellation now commits terminal SQLite state before official ARQ abort. Abort support is enabled
+in the worker, finalized transient keys are removed, FFmpeg process groups stop promptly, and a
+shutdown race cannot requeue an already user-cancelled job or leave an uncollected shielded future.
 
 ## Deliverables
 

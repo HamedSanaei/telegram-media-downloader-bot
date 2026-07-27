@@ -100,6 +100,13 @@ Interrupted `running` jobs are requeued on startup. Jobs interrupted during `del
 `delivery_uncertain`; automatic retry is blocked because Telegram has no upload idempotency key.
 This trades a possible manual resend for prevention of an uncontrolled duplicate.
 
+Cancellation is a durable-first state transition. The bot atomically marks an owned cancellable job
+`cancelled` with `cancel_requested=1`, then requests official ARQ abort and removes finalized
+enqueue/retry/in-progress/result state. ARQ workers enable abort support. Startup reconciliation
+always converts legacy cancelled queued/running/retrying rows to `cancelled` and never enqueues them;
+the operation is idempotent. A simultaneous user cancellation and worker shutdown resolves to user
+cancellation, while an ordinary shutdown leaves a healthy pre-delivery job recoverable.
+
 ## Update isolation
 
 Potential upstream compatibility changes are constrained to:
@@ -137,6 +144,12 @@ every accidental guaranteed-container request to native-only before it reaches t
 Transcoding first uses a quality-oriented CRF pass; the configured maximum is only a ceiling, and
 bitrate limiting is a fallback when that pass exceeds the ceiling or would multiply a small
 source's size.
+
+Heavy transcoding is separately bounded from general worker concurrency: FFmpeg receives a real
+encoder thread limit, a process-local semaphore bounds simultaneous encodes, a wall-clock timeout
+terminates the process group, and an operator may disable forced conversion. Progress is parsed from
+FFmpeg's machine-readable channel without exposing source paths. Docker can optionally add a worker
+CPU quota through `.env`.
 
 Fixed-resolution candidates are exact-height contracts: `video_2160` is absent unless a real 2160p
 stream can be combined with audio, and download cannot silently fall back. Inspection and download

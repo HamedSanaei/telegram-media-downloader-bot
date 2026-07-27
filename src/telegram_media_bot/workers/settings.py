@@ -13,7 +13,13 @@ from arq.typing import WorkerSettingsBase
 
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.bootstrap.config import Settings, load_settings
-from telegram_media_bot.domain.models import ComponentHealth, HealthReport, JobKind, JobStatus
+from telegram_media_bot.domain.models import (
+    ComponentHealth,
+    HealthReport,
+    JobKind,
+    JobStatus,
+    RecoveryDecision,
+)
 from telegram_media_bot.infrastructure.observability.health_server import HealthServer
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
@@ -77,12 +83,42 @@ async def startup(ctx: dict[str, Any]) -> None:
         )
         cutoff = datetime.now(UTC)
         recovered = await asyncio.to_thread(repository.reconcile_abandoned, cutoff)
-        for record in recovered:
+        requeued_count = 0
+        cancelled_count = 0
+        for recovery in recovered:
+            record = recovery.job
+            if recovery.decision is RecoveryDecision.SKIP_CANCELLED:
+                abort = await queue.abort_job(
+                    record.job_id,
+                    timeout_seconds=0.1,
+                    finalize_stale=True,
+                )
+                await asyncio.to_thread(
+                    _cleanup_cancelled_directories, settings, str(record.job_id)
+                )
+                cancelled_count += 1
+                await logger.ainfo(
+                    "job_recovery_decision",
+                    job_id=record.job_id,
+                    previous_status=recovery.previous_status.value,
+                    cancel_requested=True,
+                    arq_job_status=abort.previous_status.value,
+                    recovery_decision=recovery.decision.value,
+                    cancel_source="startup_reconciliation",
+                    abort_result=abort.final_status.value,
+                    redis_keys_removed=abort.redis_keys_removed,
+                    final_status=record.status.value,
+                )
+                continue
             if record.status is not JobStatus.QUEUED:
                 await logger.awarning(
                     "delivery_requires_operator_review",
                     job_id=record.job_id,
                     status=record.status.value,
+                    previous_status=recovery.previous_status.value,
+                    cancel_requested=record.cancel_requested,
+                    recovery_decision=recovery.decision.value,
+                    final_status=record.status.value,
                 )
                 continue
             if record.kind is JobKind.INSPECTION:
@@ -102,6 +138,15 @@ async def startup(ctx: dict[str, Any]) -> None:
                     container=record.container,
                     container_policy=record.container_policy,
                 )
+            requeued_count += 1
+            await logger.ainfo(
+                "job_recovery_decision",
+                job_id=record.job_id,
+                previous_status=recovery.previous_status.value,
+                cancel_requested=False,
+                recovery_decision=recovery.decision.value,
+                final_status=record.status.value,
+            )
         server = HealthServer(
             host=settings.observability.health_host,
             port=settings.observability.health_port,
@@ -112,7 +157,12 @@ async def startup(ctx: dict[str, Any]) -> None:
         )
         await server.start()
         ctx["health_server"] = server
-        await logger.ainfo("worker_started", recovered_jobs=len(recovered))
+        await logger.ainfo(
+            "worker_started",
+            recovered_jobs=len(recovered),
+            requeued_jobs=requeued_count,
+            cancelled_jobs=cancelled_count,
+        )
     except Exception:
         ctx.pop("bot", None)
         ctx.pop("telegram_runtime", None)
@@ -175,6 +225,13 @@ def _storage_writable(settings: Settings) -> bool:
     return True
 
 
+def _cleanup_cancelled_directories(settings: Settings, job_id: str) -> None:
+    for root in (settings.storage.downloads_path(), settings.storage.temp_path()):
+        target = (root / job_id).resolve()
+        if target != root.resolve() and target.is_relative_to(root.resolve()) and target.exists():
+            shutil.rmtree(target)
+
+
 _settings = load_settings(require_token=True)
 
 
@@ -191,4 +248,5 @@ class WorkerSettings(WorkerSettingsBase):
     job_timeout: int = _settings.queue.job_timeout_seconds
     max_tries: int = _settings.queue.max_tries
     keep_result: int = _settings.queue.keep_result_seconds
+    allow_abort_jobs: bool = True
     health_check_interval: int = 30

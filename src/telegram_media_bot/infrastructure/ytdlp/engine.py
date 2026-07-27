@@ -51,6 +51,7 @@ from telegram_media_bot.infrastructure.ytdlp.options import (
     video_target_height,
 )
 from telegram_media_bot.infrastructure.ytdlp.transcoder import (
+    TranscodeGate,
     is_guaranteed_container_compatible,
     is_inline_video_streamable,
     probe_video,
@@ -70,6 +71,7 @@ class YtDlpEngine:
         self._url_validator = PublicUrlValidator(
             reject_private_networks=settings.security.reject_private_network_urls
         )
+        self._transcode_gate = TranscodeGate(settings.media.transcode.max_concurrent)
 
     def inspect(self, url: str) -> MediaInfo:
         try:
@@ -227,6 +229,7 @@ class YtDlpEngine:
                         target_height=target_height or 4320,
                         max_size_bytes=max_size,
                         is_cancelled=is_cancelled,
+                        **self._transcode_options(),
                     )
                 else:
                     transcoded = transcode_video_to_container(
@@ -236,6 +239,7 @@ class YtDlpEngine:
                         container=request.container,
                         is_cancelled=is_cancelled,
                         reason=transcode_reason or "guaranteed_container_contract",
+                        **self._transcode_options(),
                     )
                 files = [transcoded]
             elif (
@@ -258,6 +262,7 @@ class YtDlpEngine:
                             container=request.container,
                             is_cancelled=is_cancelled,
                             reason="guaranteed_collection_codec_contract",
+                            **self._transcode_options(),
                         )
                     )
                 files = converted
@@ -314,6 +319,16 @@ class YtDlpEngine:
 
     def health(self) -> ComponentHealth:
         return ComponentHealth(name="yt_dlp", healthy=True, detail=ytdlp_version)
+
+    def _transcode_options(self) -> dict[str, Any]:
+        settings = self._settings.media.transcode
+        return {
+            "threads": settings.threads,
+            "timeout_seconds": settings.timeout_seconds,
+            "progress_interval_seconds": settings.progress_interval_seconds,
+            "gate": self._transcode_gate,
+            "enabled": settings.enabled,
+        }
 
     def _inspect_format_options(self, ydl: YoutubeDL, raw: Any) -> tuple[MediaFormatOption, ...]:
         if not isinstance(raw, dict):

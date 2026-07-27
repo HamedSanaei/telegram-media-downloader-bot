@@ -152,3 +152,20 @@ delivery are modeled as distinct decisions. A VP9 stream in MP4 is therefore ret
 delivery. Genuine codec conversion uses a quality-oriented CRF pass first. The file-size setting is
 a ceiling; bitrate calculation is deferred to a fallback only when the quality pass exceeds that
 ceiling or an explicit anti-inflation bound.
+
+## ADR-017: Durable-first cancellation and bounded codec conversion
+
+**Status:** accepted
+
+User cancellation is committed atomically in SQLite before transient ARQ coordination. The ARQ
+worker enables official job abort, while the queue adapter finalizes known enqueue, retry,
+in-progress, abort, and result state only after a job is no longer running. Startup reconciliation
+is authoritative: every queued/running/retrying job with `cancel_requested=1` becomes terminal
+`cancelled` and is never re-enqueued. Healthy abandoned work retains the existing recovery policy,
+and interrupted delivery remains quarantined.
+
+Codec conversion remains available for guaranteed non-original modes but is an explicitly bounded
+resource. FFmpeg receives an encoder thread count, one worker-local gate controls concurrent
+encodes, a timeout and cancellation terminate the process group, and operators may disable heavy
+conversion. Defaults are present in the strict model so older configuration files remain valid.
+Compose exposes an optional worker CPU quota without imposing one on every installation.

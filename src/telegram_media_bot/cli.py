@@ -18,6 +18,7 @@ from arq.worker import run_worker
 from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.bootstrap.logging import configure_logging
 from telegram_media_bot.domain.errors import ConfigurationError, DeliveryError, LocalBotApiError
+from telegram_media_bot.infrastructure.archive.multipart_zip import resolve_seven_zip
 from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
 
 
@@ -149,12 +150,12 @@ def _run_doctor(settings: Settings) -> None:
             print(f"{'OK  ' if healthy else 'FAIL'} local_api_{name}")
             failed = failed or not healthy
     if settings.multipart.enabled:
-        seven_zip = _resolve_executable(settings.multipart.seven_zip_executable)
+        seven_zip = resolve_seven_zip(settings.multipart.seven_zip_executable)
         if seven_zip:
-            print(f"OK   7zz: {_binary_version(seven_zip)}")
+            print(f"OK   7-Zip: {_binary_version(seven_zip)}")
         else:
             failed = True
-            print("FAIL 7zz: not found")
+            print("FAIL 7-Zip: neither configured executable nor compatible alias was found")
     required_channels = settings.telegram.required_channels
     if required_channels.enabled:
         channels_ok = asyncio.run(_required_channels_ready(settings))
@@ -194,13 +195,6 @@ def _run_config_check(settings: Settings) -> None:
         raise ConfigurationError(
             f"Local Bot API configuration checks failed: {', '.join(sorted(failed))}"
         )
-
-
-def _resolve_executable(path: Path) -> str | None:
-    expanded = path.expanduser()
-    if expanded.is_absolute():
-        return str(expanded.resolve()) if expanded.is_file() else None
-    return shutil.which(str(expanded))
 
 
 def _local_api_diagnostics(

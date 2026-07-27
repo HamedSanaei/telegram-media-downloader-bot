@@ -10,6 +10,7 @@ from typing import Any
 
 from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.domain.errors import (
+    JobCancelledError,
     JobNotFoundError,
     PersistenceError,
     SelectionExpiredError,
@@ -23,15 +24,18 @@ from telegram_media_bot.domain.models import (
     DeliveryProvider,
     DownloadMode,
     ErrorCategory,
+    JobCancellationResult,
     JobCounts,
     JobId,
     JobKind,
     JobRecord,
+    JobRecoveryRecord,
     JobStatus,
     MediaFormatOption,
     MediaInfo,
     MediaKind,
     OutputContainer,
+    RecoveryDecision,
     SelectionRecord,
     SelectionToken,
     SizeConfidence,
@@ -46,9 +50,7 @@ _ACTIVE_STATUSES = (
     JobStatus.DELIVERY_UNCERTAIN.value,
 )
 _CANCELLABLE_STATUSES = tuple(
-    status
-    for status in _ACTIVE_STATUSES
-    if status not in {JobStatus.DELIVERING.value, JobStatus.DELIVERY_UNCERTAIN.value}
+    status for status in _ACTIVE_STATUSES if status != JobStatus.DELIVERY_UNCERTAIN.value
 )
 
 
@@ -385,7 +387,33 @@ class SqliteJobRepository(JobRepository):
             values["delivery_file_unique_id"] = delivery_file_unique_id
         if attempt is not None:
             values["attempt"] = attempt
-        self._update(job_id, **values)
+        columns = ", ".join(f"{name} = ?" for name in values)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE jobs SET {columns}
+                WHERE job_id = ?
+                  AND (? = ? OR (cancel_requested = 0 AND status != ?))
+                """,
+                (
+                    *values.values(),
+                    job_id,
+                    status.value,
+                    JobStatus.CANCELLED.value,
+                    JobStatus.CANCELLED.value,
+                ),
+            )
+            if cursor.rowcount == 1:
+                return
+            row = connection.execute(
+                "SELECT status, cancel_requested FROM jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            raise JobNotFoundError("Job does not exist")
+        if bool(row["cancel_requested"]) or row["status"] == JobStatus.CANCELLED.value:
+            return
+        raise PersistenceError("Durable job transition was not applied")
 
     def complete_download(
         self,
@@ -412,7 +440,7 @@ class SqliteJobRepository(JobRepository):
                     error_category = NULL,
                     error_summary = NULL,
                     updated_at = ?
-                WHERE job_id = ?
+                WHERE job_id = ? AND cancel_requested = 0 AND status != ?
                 """,
                 (
                     JobStatus.SUCCEEDED.value,
@@ -422,10 +450,20 @@ class SqliteJobRepository(JobRepository):
                     attempt,
                     _now_text(),
                     job_id,
+                    JobStatus.CANCELLED.value,
                 ),
             )
             if cursor.rowcount != 1:
+                cancelled = connection.execute(
+                    "SELECT cancel_requested, status FROM jobs WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()
                 connection.execute("ROLLBACK")
+                if cancelled is not None and (
+                    bool(cancelled["cancel_requested"])
+                    or cancelled["status"] == JobStatus.CANCELLED.value
+                ):
+                    raise JobCancelledError("Job was cancelled before durable completion")
                 raise JobNotFoundError("Job does not exist")
             recorded = _record_usage_event(
                 connection,
@@ -439,16 +477,75 @@ class SqliteJobRepository(JobRepository):
             return recorded
 
     def request_cancel(self, job_id: JobId, owner_user_id: int) -> bool:
+        return self.cancel_job(job_id, owner_user_id).accepted
+
+    def cancel_job(self, job_id: JobId, owner_user_id: int) -> JobCancellationResult:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, cancel_requested FROM jobs WHERE job_id = ? AND user_id = ?",
+                (job_id, owner_user_id),
+            ).fetchone()
+            if row is None:
+                connection.execute("COMMIT")
+                return JobCancellationResult(False, None, None)
+            previous_status = JobStatus(str(row["status"]))
+            if previous_status is JobStatus.CANCELLED and bool(row["cancel_requested"]):
+                connection.execute("COMMIT")
+                return JobCancellationResult(
+                    True,
+                    previous_status,
+                    JobStatus.CANCELLED,
+                    already_cancelled=True,
+                )
+            if previous_status.value not in _CANCELLABLE_STATUSES:
+                connection.execute("COMMIT")
+                return JobCancellationResult(False, previous_status, previous_status)
+            connection.execute(
+                """
+                UPDATE jobs SET
+                    status = ?,
+                    cancel_requested = 1,
+                    error_category = ?,
+                    error_summary = ?,
+                    updated_at = ?
+                WHERE job_id = ? AND user_id = ?
+                """,
+                (
+                    JobStatus.CANCELLED.value,
+                    ErrorCategory.CANCELLED.value,
+                    "cancelled_by_user",
+                    _now_text(),
+                    job_id,
+                    owner_user_id,
+                ),
+            )
+            connection.execute("COMMIT")
+        return JobCancellationResult(True, previous_status, JobStatus.CANCELLED)
+
+    def finalize_cancelled(self, job_id: JobId, *, source: str) -> bool:
         placeholders = ",".join("?" for _ in _CANCELLABLE_STATUSES)
         with self._connect() as connection:
             cursor = connection.execute(
                 f"""
-                UPDATE jobs SET cancel_requested = 1, updated_at = ?
-                WHERE job_id = ? AND user_id = ? AND status IN ({placeholders})
+                UPDATE jobs SET
+                    status = ?,
+                    cancel_requested = 1,
+                    error_category = ?,
+                    error_summary = ?,
+                    updated_at = ?
+                WHERE job_id = ? AND status IN ({placeholders})
                 """,
-                (_now_text(), job_id, owner_user_id, *_CANCELLABLE_STATUSES),
+                (
+                    JobStatus.CANCELLED.value,
+                    ErrorCategory.CANCELLED.value,
+                    f"cancelled_by_{source}",
+                    _now_text(),
+                    job_id,
+                    *_CANCELLABLE_STATUSES,
+                ),
             )
-            return cursor.rowcount == 1
+        return cursor.rowcount == 1
 
     def is_cancel_requested(self, job_id: JobId) -> bool:
         with self._connect() as connection:
@@ -457,14 +554,54 @@ class SqliteJobRepository(JobRepository):
             ).fetchone()
         return row is not None and bool(row["cancel_requested"])
 
-    def reconcile_abandoned(self, older_than: datetime) -> tuple[JobRecord, ...]:
+    def reconcile_abandoned(self, older_than: datetime) -> tuple[JobRecoveryRecord, ...]:
         cutoff = _dump_datetime(older_than)
+        decisions: list[tuple[JobId, JobStatus, RecoveryDecision]] = []
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            cancelled_rows = connection.execute(
+                """
+                SELECT job_id, status FROM jobs
+                WHERE cancel_requested = 1 AND status IN (?, ?, ?, ?)
+                ORDER BY updated_at
+                """,
+                (
+                    JobStatus.QUEUED.value,
+                    JobStatus.RUNNING.value,
+                    JobStatus.RETRYING.value,
+                    JobStatus.DELIVERING.value,
+                ),
+            ).fetchall()
+            for row in cancelled_rows:
+                previous = JobStatus(str(row["status"]))
+                connection.execute(
+                    """
+                    UPDATE jobs SET
+                        status = ?,
+                        error_category = ?,
+                        error_summary = ?,
+                        updated_at = ?
+                    WHERE job_id = ?
+                    """,
+                    (
+                        JobStatus.CANCELLED.value,
+                        ErrorCategory.CANCELLED.value,
+                        "cancelled_during_recovery",
+                        _now_text(),
+                        row["job_id"],
+                    ),
+                )
+                decisions.append(
+                    (
+                        JobId(str(row["job_id"])),
+                        previous,
+                        RecoveryDecision.SKIP_CANCELLED,
+                    )
+                )
             rows = connection.execute(
                 """
                 SELECT * FROM jobs
-                WHERE status IN (?, ?) AND updated_at < ?
+                WHERE cancel_requested = 0 AND status IN (?, ?) AND updated_at < ?
                 ORDER BY updated_at
                 """,
                 (JobStatus.RUNNING.value, JobStatus.DELIVERING.value, cutoff),
@@ -487,12 +624,29 @@ class SqliteJobRepository(JobRepository):
                     """,
                     (next_status.value, category, _now_text(), row["job_id"]),
                 )
+                decisions.append(
+                    (
+                        JobId(str(row["job_id"])),
+                        JobStatus(str(row["status"])),
+                        (
+                            RecoveryDecision.QUARANTINE_DELIVERY
+                            if next_status is JobStatus.DELIVERY_UNCERTAIN
+                            else RecoveryDecision.REQUEUE_ABANDONED
+                        ),
+                    )
+                )
             connection.execute("COMMIT")
-        recovered: list[JobRecord] = []
-        for row in rows:
-            current = self.get_job(JobId(str(row["job_id"])))
+        recovered: list[JobRecoveryRecord] = []
+        for job_id, previous_status, decision in decisions:
+            current = self.get_job(job_id)
             if current is not None:
-                recovered.append(current)
+                recovered.append(
+                    JobRecoveryRecord(
+                        job=current,
+                        previous_status=previous_status,
+                        decision=decision,
+                    )
+                )
         return tuple(recovered)
 
     def purge_expired(self, now: datetime, job_retention_days: int) -> int:

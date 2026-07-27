@@ -6,9 +6,11 @@ from typing import Protocol
 from telegram_media_bot.domain.models import (
     DeliveryItemRecord,
     ErrorCategory,
+    JobCancellationResult,
     JobCounts,
     JobId,
     JobRecord,
+    JobRecoveryRecord,
     JobStatus,
     SelectionRecord,
     SelectionToken,
@@ -64,9 +66,13 @@ class JobRepository(Protocol):
 
     def request_cancel(self, job_id: JobId, owner_user_id: int) -> bool: ...
 
+    def cancel_job(self, job_id: JobId, owner_user_id: int) -> JobCancellationResult: ...
+
+    def finalize_cancelled(self, job_id: JobId, *, source: str) -> bool: ...
+
     def is_cancel_requested(self, job_id: JobId) -> bool: ...
 
-    def reconcile_abandoned(self, older_than: datetime) -> tuple[JobRecord, ...]: ...
+    def reconcile_abandoned(self, older_than: datetime) -> tuple[JobRecoveryRecord, ...]: ...
 
     def purge_expired(self, now: datetime, job_retention_days: int) -> int: ...
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
+import threading
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
@@ -12,7 +14,7 @@ from arq import Retry
 from telegram_media_bot.application.ports.delivery import DeliveryGateway
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.errors import DeliveryError, RateLimitedError
+from telegram_media_bot.domain.errors import DeliveryError, JobCancelledError, RateLimitedError
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DeliveryMethod,
@@ -256,6 +258,43 @@ async def test_worker_honors_pre_start_cancellation(
     assert record is not None and record.status is JobStatus.CANCELLED
     assert service.calls == 0
     assert delivery.deliveries == 0
+
+
+async def test_user_cancel_during_worker_shutdown_is_not_requeued(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+) -> None:
+    context, repository, _service, delivery = worker_context
+    started = threading.Event()
+    pause = threading.Event()
+
+    class BlockingDownloadService(FakeDownloadService):
+        def download(self, **kwargs: Any) -> DownloadResult:
+            started.set()
+            is_cancelled = cast(Callable[[], bool], kwargs["is_cancelled"])
+            while not is_cancelled():
+                pause.wait(0.01)
+            raise JobCancelledError("cancelled")
+
+    context["download_service"] = BlockingDownloadService()
+    task = asyncio.create_task(
+        process_download_job(
+            context,
+            chat_id=10,
+            user_id=20,
+            url="https://example.com/media",
+            mode=DownloadMode.BEST.value,
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 2)
+    job_id = JobId(str(context["job_id"]))
+    assert repository.request_cancel(job_id, 20)
+    task.cancel()
+
+    assert await task == str(job_id)
+    current = repository.get_job(job_id)
+    assert current is not None and current.status is JobStatus.CANCELLED
+    assert delivery.deliveries == 0
+    assert delivery.edits == []
 
 
 async def test_retryable_failure_is_deferred_without_delivery(

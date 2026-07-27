@@ -8,9 +8,9 @@ Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
-Patch release `1.0.1` is prepared for the Instagram `best_original` size-inflation fix. Existing
-v1.0.0 configuration and durable runtime state remain upgrade-compatible; no tag or release has
-been created from this preparation.
+Patch release `1.0.2` is prepared from the production fixes currently on `main`. Release `1.0.1`
+is already published and installed. Existing v1.0.0/v1.0.1 configuration and durable runtime state
+remain upgrade-compatible; no `1.0.2` commit, tag, push, or release has been created.
 
 ## Implemented production controls
 
@@ -41,12 +41,22 @@ been created from this preparation.
 - Permanent SQLite user profiles, daily counters, and job-idempotent delivery byte accounting.
 - Docker-first Linux/Windows installers with SHA-256-verified release archives, version-pinned
   images, interactive `tmb` management, official pinned Local Bot API source build, dedicated
-  Local API service, and a tag-gated GHCR amd64 release workflow.
+  Local API service, and a tag-gated GHCR amd64 release workflow. CI and release builds share a
+  scoped GHA BuildKit cache for the expensive Telegram API compilation stage.
 - Failed interactive configuration writes remove their secret-bearing temporary file; the exact
   temporary filename is also ignored by Git.
 - `tmb update` now preserves Redis/ARQ state, backs up SQLite/WAL only after graceful writer
   shutdown, verifies releases in staging, and restores exactly the previously running application
   services on download/checksum/pull failure.
+- User cancellation is terminal in SQLite before official ARQ abort; cancelled rows are excluded
+  from startup recovery, finalized queue keys and job directories are cleaned idempotently, and
+  shutdown races do not requeue user-cancelled FFmpeg work.
+- FFmpeg conversion defaults to two encoder threads and one concurrent encode, with configurable
+  timeout/disable controls, process-group termination, structured progress, and an optional Compose
+  worker CPU quota.
+- Linux updates repair owner-only permissions for persistent runtime paths and the global `tmb`
+  command before restart. The image guarantees `7zz`/`7z`, and CI/release execute multipart smoke
+  archives.
 
 ## Verification
 
@@ -55,6 +65,12 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-27: Made cancellation durable across SQLite/ARQ and restart-safe; bounded FFmpeg CPU,
+  concurrency, timeout, progress, and process cleanup; added automatic permission and `tmb` repair;
+  and guaranteed executable multipart 7-Zip tooling in image workflows.
+- 2026-07-27: Replaced the fresh-runner Compose image build with Buildx/build-push-action, shared
+  the `telegram-media-downloader-bot-amd64` GHA cache between CI and releases, retained Compose
+  validation, and added a loaded-image CLI smoke test plus static cache-isolation coverage.
 - 2026-07-27: Fixed Instagram `best_original` inflation by making native-only an enforced domain
   invariant, aligning durable/queued auto-download policy, preserving native MP4+M4A or unconstrained
   source containers according to `force_mp4`, routing non-streamable VP9 MP4 through document

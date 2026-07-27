@@ -371,6 +371,9 @@
         },
         "instagram": {
           "$ref": "#/$defs/InstagramSection"
+        },
+        "transcode": {
+          "$ref": "#/$defs/TranscodeSection"
         }
       },
       "required": [
@@ -798,6 +801,46 @@
         "bot_token"
       ],
       "title": "TelegramSection",
+      "type": "object"
+    },
+    "TranscodeSection": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "threads": {
+          "default": 2,
+          "maximum": 16,
+          "minimum": 1,
+          "title": "Threads",
+          "type": "integer"
+        },
+        "max_concurrent": {
+          "default": 1,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Max Concurrent",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "default": 1500,
+          "maximum": 86400,
+          "minimum": 30,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "progress_interval_seconds": {
+          "default": 10,
+          "maximum": 300,
+          "minimum": 1,
+          "title": "Progress Interval Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "TranscodeSection",
       "type": "object"
     },
     "YtDlpSection": {

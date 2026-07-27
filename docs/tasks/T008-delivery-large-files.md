@@ -1,6 +1,6 @@
 # T008 - Telegram delivery and runtime media dependencies
 
-**Status:** complete (container and bundled Local API expansion 2026-07-25)
+**Status:** complete (bounded transcode and 7-Zip image expansion 2026-07-27)
 
 Delivery is behind a project port and selects audio, video, or document with document fallback.
 Captions and filenames are sanitized, upload limits fail explicitly, and an optional local Bot API
@@ -31,6 +31,11 @@ can run as a separate Compose service. Ordinary non-original video guarantees MP
 WebM VP9/Opus; WebM is delivered as a document. Original-quality media is native-only, and a native
 VP9 MP4 is delivered as a document instead of being re-encoded for inline playback. Ordered
 Instagram video artifacts are sent separately.
+
+Heavy FFmpeg work is bounded by configurable encoder threads, one conservative concurrent encode,
+a timeout, an operator disable switch, process-tree cleanup, and structured progress. The runtime
+image guarantees compatible `7zz` and `7z` names, and CI/release smoke tests create and verify a real
+multi-volume archive.
 
 ## Deliverables
 

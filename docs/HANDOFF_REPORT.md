@@ -4,7 +4,19 @@ Generated: 2026-07-27
 
 ## Current change addendum
 
-- Project and package metadata are aligned at `1.0.1`; the lockfile changed only the editable
+- Cancellation is now durable-first: SQLite reaches terminal `cancelled` before official ARQ abort,
+  cancelled active rows are never recovered, finalized transient keys/directories are cleaned, and
+  simultaneous user cancellation plus shutdown is consumed without ARQ requeue or a shielded-future
+  warning.
+- FFmpeg is limited to two encoder threads and one simultaneous transcode by default, has a
+  25-minute timeout and disable switch, emits machine-readable progress fields, and terminates its
+  process group on cancellation/error. Compose exposes optional `TMB_WORKER_CPUS`.
+- Linux update now repairs owner-only runtime permissions from shared `APP_UID`/`APP_GID`, preserves
+  all v1 state, repairs the global `tmb` command, and leaves services stopped with the prior image
+  restored if permission migration is unsafe.
+- The runtime image guarantees both `7zz` and `7z`; CI and publication smoke tests create, split,
+  and verify a real archive rather than checking package text only.
+- Project and package metadata are aligned at `1.0.2`; the lockfile changed only the editable
   project version, with no dependency upgrade.
 - Instagram automatic downloads now create and enqueue the same native-only `best_original`
   contract. `force_mp4` selects native MP4 video plus M4A audio for merge/remux only; disabling it
@@ -16,9 +28,14 @@ Generated: 2026-07-27
   quality-pass result.
 - Structured selection/transcode logs include source container/codecs/size, selected format IDs,
   reason, target codec, CRF or bitrate, and final size.
-- The exact v1.0.0 configuration fixture loads unchanged under v1.0.1. Mocked Linux and Windows
+- The exact v1.0.0 configuration fixture and a representative v1.0.1 configuration load unchanged
+  under v1.0.2. Mocked Linux and Windows
   patch-upgrade tests confirm that only `TMB_IMAGE` changes in `.env`, while config, cookies,
   SQLite, Redis, and existing downloads remain intact.
+- CI and release image builds now share the
+  `type=gha,scope=telegram-media-downloader-bot-amd64` BuildKit cache. Static workflow tests verify
+  the loaded CI image smoke test, Compose validation, least-privilege permissions, exact shared
+  scope, and isolation of the Telegram API stage from application source changes.
 
 ## Release scope
 
@@ -57,18 +74,19 @@ session is present.
 - `uv lock --check`: passed.
 - `uv sync --frozen --group dev`: passed; 80 installed packages checked.
 - Ruff lint: passed.
-- Ruff format check: passed for 102 Python files.
-- Strict mypy: passed for 93 source/test files.
-- Default test suite: 219 passed, 1 explicitly destructive large-file case skipped, and 8 opt-in
+- Ruff format check: passed for 103 Python files.
+- Strict mypy: passed for 94 source/test files.
+- Default test suite: 235 passed, 1 explicitly destructive large-file case skipped, and 8 opt-in
   external contracts deselected.
-- Core branch coverage: 83.90%, above the enforced 80% floor.
+- Core branch coverage: 83.07%, above the enforced 80% floor.
 - Architecture boundary check: passed; only
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
-- UTF-8/text integrity: passed for 162 text files.
-- Deterministic source manifest regenerated and verified with 168 release entries.
-- SQLite migration, WAL contention, and atomic usage tests: 11 passed.
+- UTF-8/text integrity: passed for 163 text files.
+- Deterministic source manifest regenerated and verified with 169 release entries.
+- SQLite migration, WAL contention, atomic usage, and cancel-safe recovery tests passed.
 - Linux and Windows mocked `tmb update` tests passed for success, release-download failure, and
-  checksum failure, including service-state restoration and Redis preservation assertions.
+  checksum failure. Linux additionally passed permission-failure safe-stop, ownership command,
+  state preservation, global `tmb` repair, `command -v`, and `tmb status` assertions.
 - External extractor SDK: lock/sync passed; 1 default test passed and 1 contract was deselected.
 - `config.example.yaml`, Compose YAML, both workflow YAML files, and JSON schema parsed successfully.
 - PowerShell AST parsing: passed for installers, managers, and the Windows recovery test.
@@ -76,8 +94,8 @@ session is present.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
-- Python 1.0.1 sdist and wheel builds passed.
-- `docker build -t telegram-media-downloader-bot:instagram-size-fix .` could not start because no
+- Python 1.0.2 sdist and wheel builds passed.
+- `docker build -t telegram-media-downloader-bot:production-bugfix .` could not start because no
   Docker, Podman, or Nerdctl executable is installed on this host.
 - Local ignored `config.yaml` passed `config-check` without printing secrets.
 - `git diff --check`: passed.

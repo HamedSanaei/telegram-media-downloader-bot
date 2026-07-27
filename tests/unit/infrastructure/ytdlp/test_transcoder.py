@@ -1,8 +1,16 @@
+import subprocess
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
-from telegram_media_bot.domain.errors import MediaTooLargeError, PostProcessingError
+from telegram_media_bot.domain.errors import (
+    JobCancelledError,
+    MediaTooLargeError,
+    PostProcessingError,
+)
 from telegram_media_bot.domain.models import OutputContainer
 from telegram_media_bot.infrastructure.ytdlp import transcoder
 
@@ -20,7 +28,7 @@ def test_transcode_replaces_source_below_limit(
         lambda _ffprobe, _source: transcoder.VideoProbe(60.0, 1080, True),
     )
 
-    def fake_run(args: list[str], _is_cancelled: object) -> None:
+    def fake_run(args: list[str], _is_cancelled: object, **_kwargs: object) -> None:
         calls.append(args)
         Path(args[-1]).write_bytes(b"bounded")
 
@@ -37,6 +45,7 @@ def test_transcode_replaces_source_below_limit(
     assert output.read_bytes() == b"bounded"
     assert "scale=-2:720" in calls[0][calls[0].index("-vf") + 1]
     assert calls[0][calls[0].index("-crf") + 1] == "20"
+    assert calls[0][calls[0].index("-threads") + 1] == "2"
     assert "-b:v" not in calls[0]
 
 
@@ -73,7 +82,7 @@ def test_transcode_retries_once_when_first_output_is_oversized(
         lambda _ffprobe, _source: transcoder.VideoProbe(60.0, 720, True),
     )
 
-    def fake_run(args: list[str], _is_cancelled: object) -> None:
+    def fake_run(args: list[str], _is_cancelled: object, **_kwargs: object) -> None:
         nonlocal calls
         calls += 1
         Path(args[-1]).write_bytes(b"x" * (10_000_001 if calls == 1 else 9_000_000))
@@ -117,7 +126,7 @@ def test_webm_transcode_uses_vp9_and_opus(
         lambda _ffprobe, _source: transcoder.VideoProbe(60.0, 1080, True),
     )
 
-    def fake_run(args: list[str], _is_cancelled: object) -> None:
+    def fake_run(args: list[str], _is_cancelled: object, **_kwargs: object) -> None:
         commands.append(args)
         Path(args[-1]).write_bytes(b"webm")
 
@@ -158,3 +167,77 @@ def test_vp9_mp4_is_native_but_not_inline_streamable(
     assert transcoder.is_native_container_compatible(source, OutputContainer.MP4)
     assert not transcoder.is_inline_video_streamable(source)
     assert not transcoder.is_guaranteed_container_compatible(source, OutputContainer.MP4)
+
+
+def test_transcode_gate_limits_concurrent_encodes() -> None:
+    gate = transcoder.TranscodeGate(1)
+    lock = threading.Lock()
+    active = 0
+    maximum = 0
+
+    def work() -> None:
+        nonlocal active, maximum
+        with gate.slot(None):
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+            time.sleep(0.03)
+            with lock:
+                active -= 1
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(lambda _index: work(), range(4)))
+
+    assert maximum == 1
+
+
+def test_operator_can_disable_heavy_transcoding(tmp_path: Path) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+
+    with pytest.raises(PostProcessingError, match="disabled"):
+        transcoder.transcode_video_to_container(
+            source,
+            target_height=1080,
+            max_size_bytes=10 * 1024 * 1024,
+            container=OutputContainer.MP4,
+            enabled=False,
+        )
+
+
+def test_ffmpeg_process_is_terminated_when_cancelled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.pid = 123
+            self.stdout: list[str] = []
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    process = FakeProcess()
+    terminated: list[int] = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: process)
+
+    def terminate(candidate: FakeProcess) -> None:
+        if candidate.poll() is None:
+            candidate.returncode = -15
+            terminated.append(candidate.pid)
+
+    monkeypatch.setattr(transcoder, "_terminate_process_tree", terminate)
+
+    with pytest.raises(JobCancelledError):
+        transcoder._run_process(
+            ["ffmpeg", "-i", "input", str(tmp_path / "output.mp4")],
+            lambda: True,
+            output=tmp_path / "output.mp4",
+            duration_seconds=30,
+            threads=2,
+            timeout_seconds=60,
+            progress_interval_seconds=10,
+        )
+
+    assert terminated == [123]

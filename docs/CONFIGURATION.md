@@ -15,7 +15,8 @@ fail startup and `config.yaml` is ignored by Git and Docker build context.
 - `queue`: concurrency, timeout, attempts, retry delay, and ARQ result retention.
 - `storage`: contained download/temp/state paths, terminal cleanup, orphan grace, and job retention.
 - `media`: source allowlist, enabled semantic modes, default mode, playlist policy, final/source
-  size ceilings, and operator-owned semantic yt-dlp selectors.
+  size ceilings, operator-owned semantic yt-dlp selectors, Instagram policy, and bounded FFmpeg
+  transcoding controls.
 - `yt_dlp`: cookies, an explicit yt-dlp-only proxy switch, timeouts/retries, safe filename/media
   settings, audio conversion, user agent, and the selected JavaScript runtime. These are operator
   settings, never user input.
@@ -73,6 +74,15 @@ because `send_video` prefers H.264/AAC. The media size setting is a hard ceiling
 forced codec conversion starts with CRF (`libx264` for MP4), and only an oversized or
 disproportionately inflated quality pass activates bitrate-limited fallback.
 
+`media.transcode` defaults keep v1.0.0 and v1.0.1 files valid without manual edits in v1.0.2:
+`enabled: true`,
+`threads: 2`, `max_concurrent: 1`, `timeout_seconds: 1500`, and
+`progress_interval_seconds: 10`. The thread value is passed to FFmpeg itself; the concurrency gate
+is process-local to the supported single-worker topology. Disabling transcoding preserves native
+and `best_original` delivery, but a non-native `guaranteed` request that genuinely needs a codec
+conversion fails explicitly. `TMB_WORKER_CPUS` in `.env` optionally adds a persistent Docker CPU
+quota (for example `1.5`); its default `0` leaves Docker unlimited.
+
 After model changes regenerate and review the schema:
 
 ```bash
@@ -88,7 +98,8 @@ migration state machine are documented in `docs/LOCAL_BOT_API.md`.
 `best` mode remains capped at 1080p. Set both media limits to 4096 MB only when Local Bot API and
 multipart routing are operational.
 
-`multipart` owns the `7zz` path, 1850 MB volume size, 4096 MB aggregate ceiling, and store-only
-compression. Every result above `telegram.max_upload_size_mb` uses this route; no Premium account,
+`multipart` owns the preferred `7zz` path, 1850 MB volume size, 4096 MB aggregate ceiling, and
+store-only compression. A bare-metal `7z` installation is accepted as a compatible fallback, and
+the image guarantees both command names. Every result above `telegram.max_upload_size_mb` uses this route; no Premium account,
 user session, phone number, staging channel, or MTProto process is used. Setup and extraction are
 documented in `docs/MULTIPART_DELIVERY.md`.

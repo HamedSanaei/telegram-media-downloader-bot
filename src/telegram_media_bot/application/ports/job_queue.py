@@ -3,6 +3,7 @@ from typing import Protocol
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
+    JobAbortResult,
     JobId,
     OutputContainer,
 )
@@ -36,6 +37,16 @@ class JobQueue(Protocol):
 
     async def queue_depth(self) -> int:
         """Return the configured queue depth."""
+        ...
+
+    async def abort_job(
+        self,
+        job_id: JobId,
+        *,
+        timeout_seconds: float = 2,
+        finalize_stale: bool = False,
+    ) -> JobAbortResult:
+        """Abort and finalize transient queue state for one durable job."""
         ...
 
     async def healthy(self) -> bool:

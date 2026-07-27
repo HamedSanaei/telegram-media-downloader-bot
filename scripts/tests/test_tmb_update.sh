@@ -22,11 +22,12 @@ prepare_case() {
     "$case_root/data/temp"
   cp "$SOURCE_ROOT/scripts/tmb.sh" "$case_root/scripts/tmb.sh"
   printf 'telegram:\n  bot_token: V1_CONFIG_SENTINEL\n' >"$case_root/config.yaml"
-  printf 'TMB_IMAGE=example.invalid/tmb:1.0.0\nCOMPOSE_PROFILES=local-api\n' \
+  printf 'TMB_IMAGE=example.invalid/tmb:1.0.1\nCOMPOSE_PROFILES=local-api\nAPP_UID=10001\nAPP_GID=10001\nTMB_WORKER_CPUS=1.5\n' \
     >"$case_root/.env"
-  printf 'version = "1.0.0"\n' >"$case_root/pyproject.toml"
+  printf 'version = "1.0.1"\n' >"$case_root/pyproject.toml"
   printf 'sqlite-v1-state' >"$case_root/data/state/jobs.sqlite3"
   printf 'cookies-v1-state' >"$case_root/data/cookies/cookies.txt"
+  printf 'local-api-v1-state' >"$case_root/data/telegram-bot-api/state.bin"
   printf 'runtime-media-v1' >"$case_root/data/downloads/large.mp4"
 
   cat >"$case_root/fake-bin/docker" <<'EOF'
@@ -34,6 +35,10 @@ prepare_case() {
 printf 'docker %s\n' "$*" >>"$TMB_TEST_LOG"
 if [[ "$*" == *" ps --services --filter status=running"* ]]; then
   printf 'bot\nworker\nlocal-api\nredis\n'
+fi
+if [[ "$*" == *"run --rm --user 0 --entrypoint sh"* ]] \
+  && [[ "${TMB_FAIL_PERMISSIONS:-0}" == "1" ]]; then
+  exit 1
 fi
 EOF
   cat >"$case_root/fake-bin/curl" <<'EOF'
@@ -77,12 +82,29 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 [[ -n "$destination" ]]
-printf 'version = "1.0.1"\n' >"$destination/pyproject.toml"
+printf 'version = "1.0.2"\n' >"$destination/pyproject.toml"
 printf 'services: {}\n' >"$destination/docker-compose.yml"
 mkdir -p "$destination/data/state" "$destination/data/cookies" "$destination/data/downloads"
 printf 'release-placeholder' >"$destination/data/state/.gitkeep"
 printf 'release-placeholder' >"$destination/data/cookies/README.md"
 printf 'release-placeholder' >"$destination/data/downloads/.gitkeep"
+EOF
+  cat >"$case_root/fake-bin/ln" <<'EOF'
+#!/usr/bin/env bash
+target="${@: -2:1}"
+link="${@: -1}"
+mkdir -p "$(dirname "$link")"
+cp "$target" "$link"
+chmod +x "$link"
+EOF
+  cat >"$case_root/fake-bin/readlink" <<'EOF'
+#!/usr/bin/env bash
+candidate="${@: -1}"
+if [[ "$candidate" == "$TMB_CASE_ROOT/bin/tmb" ]]; then
+  printf '%s\n' "$TMB_CASE_ROOT/scripts/tmb.sh"
+else
+  /usr/bin/readlink "$@"
+fi
 EOF
   chmod +x "$case_root/fake-bin/"*
 }
@@ -94,13 +116,14 @@ run_success_case() {
   (
     cd "$case_root"
     PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
       bash scripts/tmb.sh update
   )
 
-  grep -q '^TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.1$' \
+  grep -q '^TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.2$' \
     "$case_root/.env" || fail "successful update did not pin the verified version"
   diff -u <(
-    printf 'TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.1\nCOMPOSE_PROFILES=local-api\n'
+    printf 'TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.2\nCOMPOSE_PROFILES=local-api\nAPP_UID=10001\nAPP_GID=10001\nTMB_WORKER_CPUS=1.5\n'
   ) "$case_root/.env" || fail "update changed .env beyond TMB_IMAGE"
   grep -q 'V1_CONFIG_SENTINEL' "$case_root/config.yaml" \
     || fail "successful update overwrote config.yaml"
@@ -108,6 +131,8 @@ run_success_case() {
     || fail "successful update overwrote SQLite state"
   grep -q '^cookies-v1-state$' "$case_root/data/cookies/cookies.txt" \
     || fail "successful update overwrote cookies"
+  grep -q '^local-api-v1-state$' "$case_root/data/telegram-bot-api/state.bin" \
+    || fail "successful update overwrote Local Bot API state"
   grep -q '^runtime-media-v1$' "$case_root/data/downloads/large.mp4" \
     || fail "successful update overwrote existing downloads"
   grep -q 'docker .* stop -t 45 bot worker local-api' "$log" \
@@ -120,13 +145,23 @@ run_success_case() {
   if grep -q 'tar .*data/downloads' "$log"; then
     fail "large runtime downloads were copied into the backup"
   fi
-  local stop_line backup_line download_line
+  local stop_line backup_line download_line permission_line start_line
   stop_line="$(grep -n 'docker .* stop -t 45 bot worker local-api' "$log" | head -n 1 | cut -d: -f1)"
   backup_line="$(grep -n '^tar -czf' "$log" | head -n 1 | cut -d: -f1)"
   download_line="$(grep -n '^curl ' "$log" | head -n 1 | cut -d: -f1)"
   ((stop_line < backup_line && backup_line < download_line)) \
     || fail "stop, consistent backup, and release download ordering is wrong"
   grep -q 'docker .* pull' "$log" || fail "updated images were not pulled"
+  grep -q 'docker run --rm --user 0 --entrypoint sh' "$log" \
+    || fail "runtime permissions were not normalized through the release image"
+  permission_line="$(grep -n 'docker run --rm --user 0 --entrypoint sh' "$log" | head -n 1 | cut -d: -f1)"
+  start_line="$(grep -n 'docker .* up -d --no-build --force-recreate bot worker local-api' "$log" | head -n 1 | cut -d: -f1)"
+  ((permission_line < start_line)) \
+    || fail "runtime permission migration did not finish before service start"
+  [[ -x "$case_root/bin/tmb" ]] \
+    || fail "updater did not repair the global tmb command"
+  PATH="$case_root/bin:$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+    TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" tmb status >/dev/null
   grep -q 'docker .* up -d --no-build --force-recreate bot worker local-api' "$log" \
     || fail "successful update did not recreate the stack"
 }
@@ -138,14 +173,16 @@ run_checksum_failure_case() {
   if (
     cd "$case_root"
     PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" TMB_FAIL_CHECKSUM=1 \
+      TMB_BIN_DIR="$case_root/bin" \
+      TMB_CASE_ROOT="$case_root" \
       bash scripts/tmb.sh update
   ); then
     fail "checksum mismatch unexpectedly succeeded"
   fi
 
-  grep -q '^TMB_IMAGE=example.invalid/tmb:1.0.0$' "$case_root/.env" \
+  grep -q '^TMB_IMAGE=example.invalid/tmb:1.0.1$' "$case_root/.env" \
     || fail "checksum failure did not restore the previous image pin"
-  grep -q '^version = "1.0.0"$' "$case_root/pyproject.toml" \
+  grep -q '^version = "1.0.1"$' "$case_root/pyproject.toml" \
     || fail "unverified release content was extracted"
   if grep -q 'docker .* pull' "$log"; then
     fail "image pull ran after checksum failure"
@@ -161,14 +198,16 @@ run_download_failure_case() {
   if (
     cd "$case_root"
     PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" TMB_FAIL_DOWNLOAD=1 \
+      TMB_BIN_DIR="$case_root/bin" \
+      TMB_CASE_ROOT="$case_root" \
       bash scripts/tmb.sh update
   ); then
     fail "release download failure unexpectedly succeeded"
   fi
 
-  grep -q '^TMB_IMAGE=example.invalid/tmb:1.0.0$' "$case_root/.env" \
+  grep -q '^TMB_IMAGE=example.invalid/tmb:1.0.1$' "$case_root/.env" \
     || fail "download failure did not retain the previous image pin"
-  grep -q '^version = "1.0.0"$' "$case_root/pyproject.toml" \
+  grep -q '^version = "1.0.1"$' "$case_root/pyproject.toml" \
     || fail "download failure changed installed source"
   if grep -q 'docker .* pull' "$log"; then
     fail "image pull ran after release download failure"
@@ -177,7 +216,29 @@ run_download_failure_case() {
     || fail "previous stack was not restarted after download failure"
 }
 
+run_permission_failure_case() {
+  local case_root="$TEST_ROOT/permission-failure"
+  local log="$case_root/operations.log"
+  prepare_case "$case_root"
+  if (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" TMB_FAIL_PERMISSIONS=1 \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      bash scripts/tmb.sh update
+  ); then
+    fail "permission normalization failure unexpectedly succeeded"
+  fi
+  grep -q '^TMB_IMAGE=example.invalid/tmb:1.0.1$' "$case_root/.env" \
+    || fail "permission failure did not restore the previous image"
+  if grep -q 'docker .* up -d --no-build' "$log"; then
+    fail "services restarted after unsafe permission normalization failure"
+  fi
+  grep -q '^version = "1.0.1"$' "$case_root/pyproject.toml" \
+    || fail "permission failure installed new source before rollback"
+}
+
 run_success_case
 run_checksum_failure_case
 run_download_failure_case
+run_permission_failure_case
 echo "Linux tmb update recovery tests passed."

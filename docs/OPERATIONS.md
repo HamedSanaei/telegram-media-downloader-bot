@@ -25,11 +25,18 @@ validation, or pull restores the old image and exactly the previously running ap
 Backup archives exclude downloads/temp but include configuration, SQLite/WAL state, cookies, and
 Local API state; Redis continues to use its persistent Compose volume.
 
+A user cancellation is committed to SQLite as `cancelled` before ARQ abort is requested. Pending or
+running queue work is aborted with ARQ's official API and finalized transient keys are removed.
+Startup reconciliation converts legacy `cancel_requested=1` queued/running/retrying rows to
+`cancelled`, cleans their job directories, and never enqueues them. Healthy abandoned `running`
+jobs are still requeued, while interrupted delivery remains quarantined as `delivery_uncertain`.
+
 If the Windows execution policy blocks unsigned local scripts, use
 `powershell -NoProfile -ExecutionPolicy Bypass -File .\manage.ps1 COMMAND` for the current process or
 apply the organization's approved signing policy; do not lower the machine-wide policy silently.
 
-`./manage.sh doctor` prints ffmpeg, ffprobe, and the configured JavaScript runtime versions. The
+`./manage.sh doctor` prints ffmpeg, ffprobe, the configured JavaScript runtime, and the resolved
+7-Zip executable version. The
 worker container exposes `/health`, `/ready`, and `/metrics` internally on port 8080 by default. The
 port is intentionally not host-published; query it through the container/network or an authenticated
 monitoring sidecar.
@@ -47,6 +54,10 @@ and elapsed time. After a part is streamed to Local Bot API, a 30-second heartbe
 Telegram is still processing it; no synthetic percentage is shown. The default per-part timeout is
 four hours. A network failure remains `delivery_uncertain`: check the chat, then use `/resolve`;
 never retry it automatically.
+
+FFmpeg JSON logs report PID, exit code, configured threads, elapsed/processed duration, speed,
+approximate percentage, and current output size. Cancellation terminates the FFmpeg process group;
+the worker-level concurrency gate and optional `TMB_WORKER_CPUS` quota protect shared hosts.
 
 ## Telegram administration
 

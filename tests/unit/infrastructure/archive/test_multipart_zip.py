@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from telegram_media_bot.bootstrap.config import MultipartSection
-from telegram_media_bot.infrastructure.archive.multipart_zip import MultipartZipBuilder
+from telegram_media_bot.infrastructure.archive.multipart_zip import (
+    MultipartZipBuilder,
+    resolve_seven_zip,
+)
 
 
 def test_multipart_builder_creates_ordered_manifest(
@@ -42,3 +45,14 @@ def test_multipart_builder_creates_ordered_manifest(
     assert manifest["extract_from"].endswith(".zip.001")
     assert manifest["original"]["sha256"] == hashlib.sha256(b"original-content").hexdigest()
     assert manifest["volumes"][1]["sha256"] == hashlib.sha256(b"part-two").hexdigest()
+
+
+def test_default_7zz_name_falls_back_to_distro_7z(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "telegram_media_bot.infrastructure.archive.multipart_zip.shutil.which",
+        lambda name: "/usr/bin/7z" if name == "7z" else None,
+    )
+
+    assert resolve_seven_zip(Path("7zz")) == "/usr/bin/7z"

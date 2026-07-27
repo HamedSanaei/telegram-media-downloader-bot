@@ -167,9 +167,20 @@ def test_cancel_transition_counts_and_dynamic_blocks(repository: SqliteJobReposi
     assert created
     assert repository.request_cancel(record.job_id, 2)
     assert repository.is_cancel_requested(record.job_id)
+    assert repository.request_cancel(record.job_id, 2)
     assert not repository.request_cancel(record.job_id, 3)
     repository.transition(
         record.job_id,
+        JobStatus.FAILED,
+        error_category=ErrorCategory.INTERNAL,
+        error_summary="test_failure",
+    )
+    cancelled = repository.get_job(record.job_id)
+    assert cancelled is not None and cancelled.status is JobStatus.CANCELLED
+    failed_record = _job(JobId("failed-record"), JobStatus.QUEUED, datetime.now(UTC))
+    repository.create_job(failed_record)
+    repository.transition(
+        failed_record.job_id,
         JobStatus.FAILED,
         error_category=ErrorCategory.INTERNAL,
         error_summary="test_failure",
@@ -197,9 +208,8 @@ def test_restart_reconciliation_avoids_uncertain_duplicate_delivery(
     )
     assert created
     repository.transition(delivering.job_id, JobStatus.DELIVERING)
-    assert not repository.request_cancel(delivering.job_id, delivering.user_id)
     recovered = repository.reconcile_abandoned(datetime.now(UTC) + timedelta(seconds=1))
-    statuses = {record.job_id: record.status for record in recovered}
+    statuses = {item.job.job_id: item.job.status for item in recovered}
     assert statuses[JobId("running")] is JobStatus.QUEUED
     assert statuses[delivering.job_id] is JobStatus.DELIVERY_UNCERTAIN
     duplicate, created = service.create_download(
@@ -210,6 +220,34 @@ def test_restart_reconciliation_avoids_uncertain_duplicate_delivery(
     )
     assert not created
     assert duplicate.job_id == delivering.job_id
+
+
+@pytest.mark.parametrize(
+    "initial_status",
+    [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.RETRYING],
+)
+def test_cancel_requested_jobs_are_terminal_and_never_recovered(
+    repository: SqliteJobRepository,
+    initial_status: JobStatus,
+) -> None:
+    old = datetime.now(UTC) - timedelta(hours=1)
+    record = _job(JobId(f"cancelled-{initial_status.value}"), initial_status, old)
+    repository.create_job(record)
+    with closing(sqlite3.connect(repository._path)) as connection:
+        connection.execute(
+            "UPDATE jobs SET cancel_requested = 1 WHERE job_id = ?",
+            (record.job_id,),
+        )
+        connection.commit()
+
+    decisions = repository.reconcile_abandoned(datetime.now(UTC) + timedelta(seconds=1))
+
+    current = repository.get_job(record.job_id)
+    assert current is not None
+    assert current.status is JobStatus.CANCELLED
+    assert current.cancel_requested
+    decision = next(item for item in decisions if item.job.job_id == record.job_id)
+    assert decision.job.status is JobStatus.CANCELLED
 
 
 def test_delivery_items_are_upserted_by_job_and_ordinal(

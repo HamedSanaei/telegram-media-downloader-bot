@@ -12,6 +12,7 @@ TELEGRAM_BOT_API_PARENT_COMMIT = (
 PRODUCTION_RELEASE_CONDITION = (
     "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
 )
+SHARED_BUILDKIT_CACHE = "telegram-media-downloader-bot-amd64"
 
 
 def test_python_build_argument_is_global() -> None:
@@ -33,6 +34,7 @@ def test_app_containers_are_read_only_and_drop_capabilities() -> None:
     assert common["cap_drop"] == ["ALL"]
     assert common["security_opt"] == ["no-new-privileges:true"]
     assert any(mount.startswith("/tmp:") for mount in common["tmpfs"])
+    assert compose["services"]["worker"]["cpus"] == "${TMB_WORKER_CPUS:-0}"
 
 
 def test_config_path_is_explicit_and_local_api_secrets_are_not_in_container_files() -> None:
@@ -61,6 +63,20 @@ def test_telegram_bot_api_uses_full_parent_commit_before_syncing_submodules() ->
     submodules = "git submodule update --init --recursive"
     assert dockerfile.index(clone) < dockerfile.index(checkout) < dockerfile.index(submodules)
     assert "git clone --filter=blob:none --recursive" not in dockerfile
+
+
+def test_telegram_bot_api_build_stage_is_isolated_from_application_changes() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    stage_start = dockerfile.index("FROM debian:bookworm-slim AS telegram-bot-api-build")
+    stage_end = dockerfile.index("FROM python:${PYTHON_VERSION}-slim AS runtime")
+    stage = dockerfile[stage_start:stage_end]
+
+    assert "ARG TELEGRAM_BOT_API_REF" in stage
+    assert "${PYTHON_VERSION}" not in stage
+    assert not re.search(r"^(?:COPY|ADD)\s", stage, re.MULTILINE)
+    for application_input in ("tests", "docs", "config.example.yaml", "pyproject.toml"):
+        assert application_input not in stage
+    assert "COPY --from=telegram-bot-api-build" in dockerfile[stage_end:]
 
 
 def test_bot_worker_and_local_api_share_the_pinned_application_build() -> None:
@@ -100,6 +116,67 @@ def test_release_workflow_is_tag_only_and_least_privilege() -> None:
     assert workflow["jobs"]["release"]["needs"] == "publish"
 
 
+def test_ci_builds_and_smoke_tests_runtime_with_shared_buildkit_cache() -> None:
+    workflow = yaml.load(
+        Path(".github/workflows/ci.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    steps = workflow["jobs"]["docker"]["steps"]
+    setup_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("uses") == "docker/setup-buildx-action@v3"
+    )
+    build_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("uses") == "docker/build-push-action@v6"
+    )
+    build = steps[build_index]["with"]
+    runs = [step.get("run", "") for step in steps]
+
+    assert workflow["permissions"] == {"contents": "read"}
+    assert setup_index < build_index
+    assert build["context"] == "."
+    assert build["push"] == "false"
+    assert build["load"] == "true"
+    assert build["pull"] == "true"
+    assert build["platforms"] == "linux/amd64"
+    assert build["tags"] == "telegram-media-downloader-bot:ci"
+    assert "PYTHON_VERSION=3.14.5" in build["build-args"]
+    assert build["cache-from"] == f"type=gha,scope={SHARED_BUILDKIT_CACHE}"
+    assert build["cache-to"] == f"type=gha,mode=max,scope={SHARED_BUILDKIT_CACHE}"
+    assert "docker compose --profile local-api config" in runs
+    assert any(
+        "docker run --rm telegram-media-downloader-bot:ci telegram-media-bot --help" in run
+        for run in runs
+    )
+    assert any("command -v ffmpeg" in run for run in runs)
+    assert any("command -v ffprobe" in run for run in runs)
+    assert any("command -v 7zz || command -v 7z" in run for run in runs)
+    assert any('"$seven_zip" t /tmp/smoke.zip.001' in run for run in runs)
+    assert any("telegram-media-bot doctor --config /app/config.example.yaml" in run for run in runs)
+    assert all("docker compose --profile local-api build" not in run for run in runs)
+
+
+def test_release_uses_the_same_shared_buildkit_cache_scope_as_ci() -> None:
+    workflow = yaml.load(
+        Path(".github/workflows/publish-container.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    build_step = next(
+        step
+        for step in workflow["jobs"]["publish"]["steps"]
+        if step.get("uses") == "docker/build-push-action@v6"
+    )
+    build = build_step["with"]
+
+    assert build["cache-from"] == f"type=gha,scope={SHARED_BUILDKIT_CACHE}"
+    assert build["cache-to"] == f"type=gha,mode=max,scope={SHARED_BUILDKIT_CACHE}"
+    assert build["platforms"] == "linux/amd64"
+    assert "PYTHON_VERSION=3.14.5" in build["build-args"]
+
+
 def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
     workflow = Path(".github/workflows/publish-container.yml").read_text(encoding="utf-8")
     image = "ghcr.io/hamedsanaei/telegram-media-downloader-bot"
@@ -112,9 +189,9 @@ def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
             tags.append(f"{image}:latest")
         return tags
 
-    assert expected_tags("v1.0.1") == [
-        f"{image}:v1.0.1",
-        f"{image}:1.0.1",
+    assert expected_tags("v1.0.2") == [
+        f"{image}:v1.0.2",
+        f"{image}:1.0.2",
         f"{image}:1.0",
         f"{image}:latest",
     ]
@@ -127,15 +204,15 @@ def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
     assert "linux/arm64" not in workflow
 
 
-def test_v1_0_1_release_tag_exactly_matches_project_version() -> None:
+def test_v1_0_2_release_tag_exactly_matches_project_version() -> None:
     project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     workflow = Path(".github/workflows/publish-container.yml").read_text(encoding="utf-8")
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.0.1"
+    assert version == "1.0.2"
     assert __version__ == version
-    assert tag == "v1.0.1"
+    assert tag == "v1.0.2"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
     assert 'if tag != f"v{version}":' in workflow
 
@@ -146,6 +223,11 @@ def test_release_waits_for_published_image_smoke_test_and_attaches_verified_asse
     assert 'if tag != f"v{version}":' in workflow
     assert "Tag {tag} does not match pyproject.toml version {version}" in workflow
     assert 'docker run --rm "$image" telegram-media-bot --help' in workflow
+    assert "command -v ffmpeg" in workflow
+    assert "command -v ffprobe" in workflow
+    assert "command -v 7zz || command -v 7z" in workflow
+    assert '"$seven_zip" t /tmp/smoke.zip.001' in workflow
+    assert "telegram-media-bot doctor --config /app/config.example.yaml" in workflow
     assert "generate_release_notes: true" in workflow
     assert "sha256sum --check telegram-media-downloader-bot.tar.gz.sha256" in workflow
     assert "sha256sum --check telegram-media-downloader-bot.zip.sha256" in workflow
@@ -162,3 +244,36 @@ def test_release_waits_for_published_image_smoke_test_and_attaches_verified_asse
         "telegram-media-downloader-bot.zip.sha256",
     ):
         assert asset in workflow
+
+
+def test_runtime_image_guarantees_compatible_7zip_commands_and_shared_identity() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+
+    assert "command -v 7zz >/dev/null" in dockerfile
+    assert 'ln -sfn "$(command -v 7z)" /usr/local/bin/7zz' in dockerfile
+    assert "ARG APP_UID=10001" in dockerfile
+    assert "ARG APP_GID=10001" in dockerfile
+    assert compose["x-app-common"]["build"]["args"]["APP_UID"] == "${APP_UID:-10001}"
+    assert compose["x-app-common"]["build"]["args"]["APP_GID"] == "${APP_GID:-10001}"
+
+
+def test_linux_installer_and_updater_install_command_and_repair_permissions() -> None:
+    installer = Path("install.sh").read_text(encoding="utf-8")
+    updater = Path("scripts/tmb.sh").read_text(encoding="utf-8")
+
+    assert 'sudo ln -sfn "$INSTALL_DIR/scripts/tmb.sh" "$TMB_BIN_DIR/tmb"' in installer
+    assert "repair_tmb_command" in updater
+    assert "normalize_runtime_permissions" in updater
+    assert "docker run --rm --user 0 --entrypoint sh" in updater
+    assert "find /workspace/data /workspace/backups -type f -exec chmod 600" in updater
+
+
+def test_worker_enables_official_arq_abort_support() -> None:
+    worker_settings = Path("src/telegram_media_bot/workers/settings.py").read_text(encoding="utf-8")
+    queue_adapter = Path("src/telegram_media_bot/infrastructure/queue/arq_queue.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "allow_abort_jobs: bool = True" in worker_settings
+    assert "await job.abort(" in queue_adapter

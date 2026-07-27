@@ -101,6 +101,8 @@ async def process_inspection_job(
             raise RuntimeError("Durable inspection record is missing")
         if record.status is JobStatus.SUCCEEDED:
             return str(job_id)
+        if record.status is JobStatus.CANCELLED:
+            return str(job_id)
         if repository.is_cancel_requested(job_id):
             raise JobCancelledError("Inspection was cancelled")
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
@@ -187,19 +189,45 @@ async def process_inspection_job(
         await logger.ainfo("inspection_completed", job_id=job_id, source=info.source)
         return str(job_id)
     except JobCancelledError:
-        await asyncio.to_thread(
-            repository.transition,
-            job_id,
-            JobStatus.CANCELLED,
-            error_category=ErrorCategory.CANCELLED,
-            error_summary="cancelled_by_user",
+        newly_cancelled = await asyncio.to_thread(
+            repository.finalize_cancelled, job_id, source="user"
         )
-        metrics.record_job(outcome="cancelled", error=ErrorCategory.CANCELLED.value)
+        if newly_cancelled:
+            metrics.record_job(outcome="cancelled", error=ErrorCategory.CANCELLED.value)
+        await logger.ainfo(
+            "inspection_cancelled",
+            job_id=job_id,
+            cancel_requested=True,
+            cancel_source="user",
+            final_status=JobStatus.CANCELLED.value,
+            state_changed=newly_cancelled,
+        )
         return str(job_id)
     except MediaBotError as exc:
         await _handle_controlled_failure(ctx, job_id, chat_id, exc, attempt)
         return str(job_id)
+    except asyncio.CancelledError:
+        if await asyncio.to_thread(repository.is_cancel_requested, job_id):
+            await logger.ainfo(
+                "inspection_cancelled",
+                job_id=job_id,
+                cancel_requested=True,
+                cancel_source="user",
+                final_status=JobStatus.CANCELLED.value,
+                state_changed=False,
+            )
+            return str(job_id)
+        await logger.awarning(
+            "inspection_worker_shutdown",
+            job_id=job_id,
+            cancel_source="shutdown",
+            final_status=record.status.value if record is not None else None,
+        )
+        raise
     except Exception as exc:
+        if await asyncio.to_thread(repository.is_cancel_requested, job_id):
+            await asyncio.to_thread(repository.finalize_cancelled, job_id, source="user")
+            return str(job_id)
         if attempt < settings.queue.max_tries:
             await asyncio.to_thread(
                 repository.transition,
@@ -294,6 +322,14 @@ async def process_download_job(
         if record.status is JobStatus.SUCCEEDED and record.delivery_file_id:
             await logger.ainfo("download_idempotent_skip", job_id=job_id)
             return str(job_id)
+        if record.status is JobStatus.CANCELLED:
+            await logger.ainfo(
+                "download_cancelled_skip",
+                job_id=job_id,
+                cancel_requested=True,
+                final_status=JobStatus.CANCELLED.value,
+            )
+            return str(job_id)
         if record.status is JobStatus.DELIVERY_UNCERTAIN:
             return str(job_id)
         if cancellation():
@@ -336,6 +372,9 @@ async def process_download_job(
                     )
             except TimeoutError:
                 cleanup_allowed = False
+                download_task.add_done_callback(_consume_task_exception)
+            if await asyncio.to_thread(repository.is_cancel_requested, job_id):
+                raise JobCancelledError("Download was cancelled by the user") from None
             raise
         if cancellation():
             raise JobCancelledError("Download was cancelled before delivery")
@@ -353,6 +392,8 @@ async def process_download_job(
             progress=delivery_progress_sink,
             item_delivered=persist_delivery_item,
         )
+        if cancellation():
+            raise JobCancelledError("Download was cancelled during delivery")
         try:
             await asyncio.to_thread(
                 repository.complete_download,
@@ -365,6 +406,8 @@ async def process_download_job(
                 attempt=attempt,
                 delivered_bytes=result.total_file_size_bytes,
             )
+        except JobCancelledError:
+            raise
         except Exception as exc:
             raise DeliveryError("Atomic delivery completion persistence failed") from exc
         metrics.add_bytes(result.total_file_size_bytes)
@@ -383,17 +426,26 @@ async def process_download_job(
         )
         return str(job_id)
     except JobCancelledError:
-        await asyncio.to_thread(
-            repository.transition,
-            job_id,
-            JobStatus.CANCELLED,
-            error_category=ErrorCategory.CANCELLED,
-            error_summary="cancelled_by_user",
-            attempt=attempt,
+        newly_cancelled = await asyncio.to_thread(
+            repository.finalize_cancelled, job_id, source="user"
         )
-        metrics.record_job(outcome="cancelled", error=ErrorCategory.CANCELLED.value)
-        await _notify(ctx, chat_id, record.status_message_id if record else None, CANCELLED_TEXT)
-        await logger.ainfo("download_cancelled", job_id=job_id)
+        if newly_cancelled:
+            metrics.record_job(outcome="cancelled", error=ErrorCategory.CANCELLED.value)
+            await _notify(
+                ctx,
+                chat_id,
+                record.status_message_id if record else None,
+                CANCELLED_TEXT,
+            )
+        await logger.ainfo(
+            "download_cancelled",
+            job_id=job_id,
+            previous_status=record.status.value if record else None,
+            cancel_requested=True,
+            cancel_source="user",
+            final_status=JobStatus.CANCELLED.value,
+            state_changed=newly_cancelled,
+        )
         return str(job_id)
     except DeliveryError as exc:
         quarantine_persisted = True
@@ -444,9 +496,29 @@ async def process_download_job(
         await _handle_controlled_failure(ctx, job_id, chat_id, exc, attempt)
         return str(job_id)
     except asyncio.CancelledError:
-        await logger.awarning("download_worker_shutdown", job_id=job_id)
+        cancel_requested = await asyncio.to_thread(repository.is_cancel_requested, job_id)
+        if cancel_requested:
+            await asyncio.to_thread(repository.finalize_cancelled, job_id, source="user")
+            await logger.ainfo(
+                "download_cancelled",
+                job_id=job_id,
+                cancel_requested=True,
+                cancel_source="user",
+                final_status=JobStatus.CANCELLED.value,
+            )
+            return str(job_id)
+        await logger.awarning(
+            "download_worker_shutdown",
+            job_id=job_id,
+            cancel_requested=False,
+            cancel_source="shutdown",
+            final_status=record.status.value if record else None,
+        )
         raise
     except Exception as exc:
+        if await asyncio.to_thread(repository.is_cancel_requested, job_id):
+            await asyncio.to_thread(repository.finalize_cancelled, job_id, source="user")
+            return str(job_id)
         if attempt < settings.queue.max_tries:
             await asyncio.to_thread(
                 repository.transition,
@@ -511,6 +583,16 @@ async def _handle_controlled_failure(
     metrics = cast(MetricsRegistry, ctx["metrics"])
     record = repository.get_job(job_id)
     category = error_category(exc)
+    if await asyncio.to_thread(repository.is_cancel_requested, job_id):
+        await asyncio.to_thread(repository.finalize_cancelled, job_id, source="user")
+        await logger.ainfo(
+            "job_cancelled",
+            job_id=job_id,
+            cancel_requested=True,
+            cancel_source="user",
+            final_status=JobStatus.CANCELLED.value,
+        )
+        return
     if exc.retryable and attempt < settings.queue.max_tries:
         await asyncio.to_thread(
             repository.transition,
@@ -696,6 +778,11 @@ def _offer_progress(
     if queue.full():
         queue.get_nowait()
     queue.put_nowait(event)
+
+
+def _consume_task_exception(task: asyncio.Future[Any]) -> None:
+    with suppress(asyncio.CancelledError, Exception):
+        task.exception()
 
 
 def _safe_remove(path: Path, root: Path) -> None:

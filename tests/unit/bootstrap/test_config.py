@@ -29,6 +29,23 @@ def test_v1_0_0_configuration_remains_valid_without_manual_rewrite() -> None:
     assert settings.media.instagram.force_mp4 is True
     assert settings.telegram.upload_as_document is True
     assert settings.media.formats.best_original == "bv*+ba/b"
+    assert settings.media.transcode.enabled
+    assert settings.media.transcode.threads == 2
+    assert settings.media.transcode.max_concurrent == 1
+    assert settings.media.transcode.timeout_seconds == 1500
+
+
+def test_v1_0_1_configuration_remains_valid_without_manual_rewrite() -> None:
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw["media"].pop("transcode")
+
+    settings = Settings.model_validate(raw)
+
+    assert settings.media.transcode.enabled
+    assert settings.media.transcode.threads == 2
+    assert settings.media.transcode.max_concurrent == 1
+    assert settings.media.transcode.timeout_seconds == 1500
+    assert settings.media.transcode.progress_interval_seconds == 10
 
 
 def test_unknown_configuration_key_is_rejected(tmp_path: Path) -> None:

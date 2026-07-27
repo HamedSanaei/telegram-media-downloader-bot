@@ -35,18 +35,20 @@ function Invoke-UpdateCase {
     )
     [System.IO.File]::WriteAllText(
         (Join-Path $CaseRoot ".env"),
-        "TMB_IMAGE=example.invalid/tmb:1.0.0`nCOMPOSE_PROFILES=local-api`n",
+        "TMB_IMAGE=example.invalid/tmb:1.0.1`nCOMPOSE_PROFILES=local-api`nAPP_UID=10001`nAPP_GID=10001`nTMB_WORKER_CPUS=1.5`n",
         $Utf8NoBom
     )
     [System.IO.File]::WriteAllText(
         (Join-Path $CaseRoot "pyproject.toml"),
-        'version = "1.0.0"',
+        'version = "1.0.1"',
         $Utf8NoBom
     )
     "sqlite-v1-state" | Set-Content -Encoding ascii `
         (Join-Path $CaseRoot "data/state/jobs.sqlite3")
     "cookies-v1-state" | Set-Content -Encoding ascii `
         (Join-Path $CaseRoot "data/cookies/cookies.txt")
+    "local-api-v1-state" | Set-Content -Encoding ascii `
+        (Join-Path $CaseRoot "data/telegram-bot-api/state.bin")
     "runtime-media-v1" | Set-Content -Encoding ascii `
         (Join-Path $CaseRoot "data/downloads/large.mp4")
 
@@ -104,7 +106,7 @@ function Invoke-UpdateCase {
                 $null = $LiteralPath, $Force
                 $Payload = Join-Path $DestinationPath "telegram-media-downloader-bot"
                 New-Item -ItemType Directory -Force $Payload | Out-Null
-                'version = "1.0.1"' | Set-Content -Encoding utf8 `
+                'version = "1.0.2"' | Set-Content -Encoding utf8 `
                     (Join-Path $Payload "pyproject.toml")
                 "services: {}" | Set-Content -Encoding utf8 `
                     (Join-Path $Payload "docker-compose.yml")
@@ -148,21 +150,21 @@ function Invoke-UpdateCase {
     $VersionText = Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "pyproject.toml")
     $Log = @(Get-Content -Encoding utf8 $LogPath)
     if ($FailChecksum -or $FailDownload) {
-        Assert-True ($EnvironmentText -match "example\.invalid/tmb:1\.0\.0") `
+        Assert-True ($EnvironmentText -match "example\.invalid/tmb:1\.0\.1") `
             "checksum failure did not restore the previous image"
-        Assert-True ($VersionText -match 'version = "1.0.0"') `
+        Assert-True ($VersionText -match 'version = "1.0.1"') `
             "unverified release content was installed"
         Assert-True (-not ($Log -match " pull$")) "pull ran after checksum failure"
         Assert-True ([bool]($Log -match " up -d --no-build bot worker local-api$")) `
             "previous stack was not restarted"
         return
     }
-    Assert-True ($EnvironmentText -match "telegram-media-downloader-bot:1\.0\.1") `
+    Assert-True ($EnvironmentText -match "telegram-media-downloader-bot:1\.0\.2") `
         "successful update did not pin the verified version"
     $NormalizedEnvironment = $EnvironmentText.Replace("`r`n", "`n").TrimEnd()
     Assert-True (
         $NormalizedEnvironment -eq
-        "TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.1`nCOMPOSE_PROFILES=local-api"
+        "TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.2`nCOMPOSE_PROFILES=local-api`nAPP_UID=10001`nAPP_GID=10001`nTMB_WORKER_CPUS=1.5"
     ) "update changed .env beyond TMB_IMAGE"
     Assert-True (
         (Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "config.yaml")) -match
@@ -176,6 +178,11 @@ function Invoke-UpdateCase {
         (Get-Content -Raw -Encoding ascii (Join-Path $CaseRoot "data/cookies/cookies.txt")) -match
         "cookies-v1-state"
     ) "successful update overwrote cookies"
+    Assert-True (
+        (Get-Content -Raw -Encoding ascii (
+            Join-Path $CaseRoot "data/telegram-bot-api/state.bin"
+        )) -match "local-api-v1-state"
+    ) "successful update overwrote Local Bot API state"
     Assert-True (
         (Get-Content -Raw -Encoding ascii (Join-Path $CaseRoot "data/downloads/large.mp4")) -match
         "runtime-media-v1"

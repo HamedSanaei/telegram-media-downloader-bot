@@ -259,6 +259,14 @@ class InstagramSection(StrictModel):
     max_total_size_mb: int = Field(default=4096, ge=1, le=8192)
 
 
+class TranscodeSection(StrictModel):
+    enabled: bool = True
+    threads: int = Field(default=2, ge=1, le=16)
+    max_concurrent: int = Field(default=1, ge=1, le=8)
+    timeout_seconds: int = Field(default=1500, ge=30, le=86400)
+    progress_interval_seconds: int = Field(default=10, ge=1, le=300)
+
+
 class MediaSection(StrictModel):
     enabled_sources: frozenset[str]
     enabled_modes: tuple[DownloadMode, ...] = tuple(DownloadMode)
@@ -270,6 +278,7 @@ class MediaSection(StrictModel):
     max_duration_seconds: int = Field(default=14400, ge=1)
     formats: FormatSection
     instagram: InstagramSection = Field(default_factory=InstagramSection)
+    transcode: TranscodeSection = Field(default_factory=TranscodeSection)
 
     @field_validator("enabled_sources")
     @classmethod

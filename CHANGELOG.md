@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 1.0.2 - 2026-07-27
+
+- Made user cancellation durable and idempotent across SQLite and ARQ: cancelled queued/running/
+  retrying jobs are never recovered, official ARQ abort is enabled, stale transient keys are
+  finalized, and shutdown races no longer requeue an already user-cancelled FFmpeg job.
+- Added conservative FFmpeg controls (two encoder threads, one concurrent transcode, 25-minute
+  timeout, an operator disable switch), process-tree termination without orphan FFmpeg processes,
+  structured transcode progress, and optional `TMB_WORKER_CPUS`.
+- Made `tmb update` normalize database and Local Bot API ownership/restrictive permissions before
+  restart, repair the global `tmb` command, and leave services stopped with the prior image restored
+  if permission migration fails. Existing configuration, `.env`, SQLite/Redis state, cookies,
+  downloads, and Local Bot API state remain preserved during the v1.0.1-to-v1.0.2 upgrade.
+- Guaranteed compatible `7zz`/`7z` commands in the runtime image and added a real multipart archive
+  smoke test to CI and the release workflow.
+- Shared the expensive Telegram Local Bot API BuildKit stage between CI and release builds while
+  retaining full runtime-image, Compose, dependency-doctor, and multipart smoke validation.
+
 ## 1.0.1 - 2026-07-27
 
 - Prevented Instagram `best_original` VP9/MP4 downloads from being re-encoded toward the upload

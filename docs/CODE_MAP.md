@@ -10,9 +10,9 @@
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic access, required-channel membership, and rate policy |
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
-| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, native/inline compatibility probing, and CRF-first bounded transcoding |
-| `src/telegram_media_bot/infrastructure/queue/` | ARQ queue client implementation |
-| `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL jobs, users, daily usage, delivery, block, and recovery store |
+| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, native/inline compatibility probing, and thread/concurrency/timeout-bounded CRF-first transcoding |
+| `src/telegram_media_bot/infrastructure/queue/` | ARQ enqueue plus official abort and transient-key finalization |
+| `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL jobs, durable-first cancellation, users, daily usage, delivery, block, and recovery store |
 | `src/telegram_media_bot/infrastructure/security/telegram_membership.py` | Telegram membership gateway with positive/negative Redis cache |
 | `src/telegram_media_bot/infrastructure/security/` | Public URL/DNS validation, Redis rate limiting, and membership cache |
 | `src/telegram_media_bot/infrastructure/observability/` | Health HTTP server and Prometheus metrics registry |
@@ -32,11 +32,11 @@
 | `scripts/upgrade_ytdlp.py` | Reviewed engine upgrade, verification, and report workflow |
 | `scripts/compare_canary.py` | Baseline/canary failure-rate promotion gate |
 | `scripts/generate_file_manifest.py` | Deterministic SHA-256 source-manifest generation |
-| `install.sh`, `install.ps1` | Interactive Docker-first one-line installers |
-| `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup command |
+| `install.sh`, `install.ps1` | Interactive Docker-first one-line installers and global management command setup |
+| `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup command; Linux also repairs runtime ownership and the `tmb` link |
 | `scripts/tests/` | Mocked Linux/Windows release-update, backup, and recovery tests |
-| `.github/workflows/ci.yml` | Quality, security, package, plugin, installer analysis, and Docker build gates |
-| `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication, post-push smoke test, and dependent reproducible GitHub Release assets |
+| `.github/workflows/ci.yml` | Quality/security gates, Compose validation, shared-cache Docker build, runtime dependency doctor, and CLI/multipart smoke tests |
+| `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication using the CI cache, runtime doctor/CLI/multipart smoke tests, and reproducible release assets |
 
 ## Upstream compatibility hot spots
 

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import queue
 import shutil
+import signal
 import subprocess
+import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,6 +43,23 @@ class VideoProbe:
     video_codec: str = "h264"
     audio_codec: str | None = "aac"
     source_container: str = ""
+
+
+class TranscodeGate:
+    """Process-local bound for CPU-heavy encodes in the worker."""
+
+    def __init__(self, maximum: int) -> None:
+        self._semaphore = threading.BoundedSemaphore(maximum)
+
+    @contextmanager
+    def slot(self, is_cancelled: Callable[[], bool] | None) -> Iterator[None]:
+        while not self._semaphore.acquire(timeout=0.2):
+            if is_cancelled is not None and is_cancelled():
+                raise JobCancelledError("Video transcoding was cancelled while waiting")
+        try:
+            yield
+        finally:
+            self._semaphore.release()
 
 
 def probe_video(source: Path) -> VideoProbe:
@@ -100,6 +122,11 @@ def transcode_video_to_limit(
     target_height: int,
     max_size_bytes: int,
     is_cancelled: Callable[[], bool] | None = None,
+    threads: int = 2,
+    timeout_seconds: int = 1500,
+    progress_interval_seconds: int = 10,
+    gate: TranscodeGate | None = None,
+    enabled: bool = True,
 ) -> Path:
     """Encode H.264 at the selected resolution below the delivery ceiling."""
     return transcode_video_to_container(
@@ -109,6 +136,11 @@ def transcode_video_to_limit(
         container=OutputContainer.MP4,
         is_cancelled=is_cancelled,
         reason="size_limit",
+        threads=threads,
+        timeout_seconds=timeout_seconds,
+        progress_interval_seconds=progress_interval_seconds,
+        gate=gate,
+        enabled=enabled,
     )
 
 
@@ -120,9 +152,16 @@ def transcode_video_to_container(
     container: OutputContainer,
     is_cancelled: Callable[[], bool] | None = None,
     reason: str = "container_contract",
+    threads: int = 2,
+    timeout_seconds: int = 1500,
+    progress_interval_seconds: int = 10,
+    gate: TranscodeGate | None = None,
+    enabled: bool = True,
 ) -> Path:
     """Encode for quality first, then constrain bitrate only when a ceiling requires it."""
 
+    if not enabled:
+        raise PostProcessingError("Video transcoding is disabled by operator policy")
     ffmpeg = _find_executable("ffmpeg")
     ffprobe = _find_executable("ffprobe")
     if ffmpeg is None or ffprobe is None:
@@ -153,17 +192,30 @@ def transcode_video_to_container(
         str(source),
         "-map",
         "0:v:0",
+        "-filter_threads",
+        str(threads),
         "-vf",
         video_filter,
     ]
     if container is OutputContainer.MP4:
         target_codec = "h264"
         target_crf = _MP4_CRF
-        common.extend(["-c:v", "libx264", "-preset", "medium"])
+        common.extend(["-c:v", "libx264", "-preset", "medium", "-threads", str(threads)])
     else:
         target_codec = "vp9"
         target_crf = _WEBM_CRF
-        common.extend(["-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "2"])
+        common.extend(
+            [
+                "-c:v",
+                "libvpx-vp9",
+                "-deadline",
+                "good",
+                "-cpu-used",
+                "2",
+                "-threads",
+                str(threads),
+            ]
+        )
     logger.info(
         "video_transcode_started",
         source_container=probe.source_container or source.suffix.casefold().lstrip("."),
@@ -174,13 +226,23 @@ def transcode_video_to_container(
         target_codec=target_codec,
         target_crf=target_crf,
         target_bitrate=None,
+        transcode_threads=threads,
     )
     quality_command = [*common, "-crf", str(target_crf)]
     if container is OutputContainer.WEBM:
         quality_command.extend(["-b:v", "0"])
     _append_audio_and_output(quality_command, probe, container, output)
     output.unlink(missing_ok=True)
-    _run_process(quality_command, is_cancelled)
+    with gate.slot(is_cancelled) if gate is not None else _unbounded_slot():
+        _run_process(
+            quality_command,
+            is_cancelled,
+            output=output,
+            duration_seconds=probe.duration_seconds,
+            threads=threads,
+            timeout_seconds=timeout_seconds,
+            progress_interval_seconds=progress_interval_seconds,
+        )
     quality_size = _validated_output_size(output)
     growth_ceiling = max(
         int(source_size * _MAX_QUALITY_PASS_GROWTH),
@@ -227,7 +289,16 @@ def transcode_video_to_container(
             target_bitrate=video_bitrate,
             size_ceiling=fallback_ceiling,
         )
-        _run_process(command, is_cancelled)
+        with gate.slot(is_cancelled) if gate is not None else _unbounded_slot():
+            _run_process(
+                command,
+                is_cancelled,
+                output=output,
+                duration_seconds=probe.duration_seconds,
+                threads=threads,
+                timeout_seconds=timeout_seconds,
+                progress_interval_seconds=progress_interval_seconds,
+            )
         actual_size = _validated_output_size(output)
         if actual_size <= fallback_ceiling:
             source.unlink(missing_ok=True)
@@ -348,28 +419,177 @@ def _probe_video(ffprobe: str, source: Path) -> VideoProbe:
     )
 
 
-def _run_process(args: list[str], is_cancelled: Callable[[], bool] | None) -> None:
+@contextmanager
+def _unbounded_slot() -> Iterator[None]:
+    yield
+
+
+def _run_process(
+    args: list[str],
+    is_cancelled: Callable[[], bool] | None,
+    *,
+    output: Path,
+    duration_seconds: float,
+    threads: int,
+    timeout_seconds: int,
+    progress_interval_seconds: int,
+) -> None:
+    progress_args = [*args[:-1], "-progress", "pipe:1", "-nostats", args[-1]]
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
     try:
         process = subprocess.Popen(
-            args,
+            progress_args,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            start_new_session=os.name != "nt",
+            creationflags=creationflags,
         )
     except OSError as exc:
         raise PostProcessingError("Unable to start ffmpeg") from exc
-    while process.poll() is None:
-        if is_cancelled is not None and is_cancelled():
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-            raise JobCancelledError("Video transcoding was cancelled")
-        time.sleep(0.2)
+    started = time.monotonic()
+    progress_values: queue.SimpleQueue[tuple[float | None, str | None]] = queue.SimpleQueue()
+    reader = threading.Thread(
+        target=_read_ffmpeg_progress,
+        args=(process, progress_values),
+        name=f"ffmpeg-progress-{process.pid}",
+        daemon=True,
+    )
+    reader.start()
+    next_log = started
+    processed: float | None = None
+    speed: str | None = None
+    try:
+        while process.poll() is None:
+            elapsed = time.monotonic() - started
+            latest_progress = _latest_progress(progress_values)
+            if latest_progress is not None:
+                processed, speed = latest_progress
+            if time.monotonic() >= next_log:
+                percent = (
+                    min(100.0, max(0.0, processed * 100 / duration_seconds))
+                    if processed is not None
+                    else None
+                )
+                logger.info(
+                    "video_transcode_progress",
+                    ffmpeg_pid=process.pid,
+                    ffmpeg_exit_code=None,
+                    transcode_threads=threads,
+                    transcode_elapsed=round(elapsed, 1),
+                    processed_duration=processed,
+                    speed=speed,
+                    percent=round(percent, 1) if percent is not None else None,
+                    current_output_size=output.stat().st_size if output.exists() else 0,
+                )
+                next_log = time.monotonic() + progress_interval_seconds
+            if is_cancelled is not None and is_cancelled():
+                _terminate_process_tree(process)
+                reader.join(timeout=1)
+                logger.info(
+                    "video_transcode_stopped",
+                    ffmpeg_pid=process.pid,
+                    ffmpeg_exit_code=process.returncode,
+                    transcode_threads=threads,
+                    transcode_elapsed=round(time.monotonic() - started, 1),
+                    cancel_source="user",
+                )
+                raise JobCancelledError("Video transcoding was cancelled")
+            if elapsed >= timeout_seconds:
+                _terminate_process_tree(process)
+                reader.join(timeout=1)
+                logger.warning(
+                    "video_transcode_stopped",
+                    ffmpeg_pid=process.pid,
+                    ffmpeg_exit_code=process.returncode,
+                    transcode_threads=threads,
+                    transcode_elapsed=round(time.monotonic() - started, 1),
+                    cancel_source="timeout",
+                )
+                raise PostProcessingError("ffmpeg video transcoding timed out")
+            time.sleep(0.2)
+    except BaseException:
+        _terminate_process_tree(process)
+        reader.join(timeout=1)
+        raise
+    reader.join(timeout=1)
+    logger.info(
+        "video_transcode_process_exited",
+        ffmpeg_pid=process.pid,
+        ffmpeg_exit_code=process.returncode,
+        transcode_threads=threads,
+        transcode_elapsed=round(time.monotonic() - started, 1),
+    )
     if process.returncode != 0:
         raise PostProcessingError("ffmpeg video transcoding failed")
+
+
+def _read_ffmpeg_progress(
+    process: subprocess.Popen[str],
+    values: queue.SimpleQueue[tuple[float | None, str | None]],
+) -> None:
+    if process.stdout is None:
+        return
+    processed: float | None = None
+    speed: str | None = None
+    for raw_line in process.stdout:
+        key, separator, value = raw_line.strip().partition("=")
+        if not separator:
+            continue
+        if key in {"out_time_us", "out_time_ms"}:
+            with suppress(ValueError):
+                processed = float(value) / 1_000_000
+        elif key == "speed":
+            speed = value
+        elif key == "progress":
+            values.put((processed, speed))
+
+
+def _latest_progress(
+    values: queue.SimpleQueue[tuple[float | None, str | None]],
+) -> tuple[float | None, str | None] | None:
+    latest: tuple[float | None, str | None] | None = None
+    while not values.empty():
+        latest = values.get()
+    return latest
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        if os.name != "nt":
+            kill_process_group = getattr(os, "killpg")  # noqa: B009
+            kill_process_group(process.pid, signal.SIGTERM)
+        else:
+            process.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
+        process.wait(timeout=5)
+    except OSError, subprocess.TimeoutExpired:
+        try:
+            if os.name != "nt":
+                kill_process_group = getattr(os, "killpg")  # noqa: B009
+                kill_process_group(
+                    process.pid,
+                    getattr(signal, "SIGKILL", signal.SIGTERM),
+                )
+            else:
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10,
+                )
+                if process.poll() is None:
+                    process.kill()
+        except OSError, subprocess.TimeoutExpired:
+            pass
+        with suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=10)
 
 
 def _find_executable(name: str) -> str | None:

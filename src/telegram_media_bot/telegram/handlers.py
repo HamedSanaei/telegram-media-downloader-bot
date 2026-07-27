@@ -385,15 +385,41 @@ def build_router(
     async def cancel(callback: CallbackQuery) -> None:
         if callback.from_user is None or callback.data is None:
             return
-        raw_job_id = callback.data.removeprefix("cancel:")
-        cancelled = await asyncio.to_thread(
-            repository.request_cancel, JobId(raw_job_id), callback.from_user.id
-        )
-        if not cancelled:
+        job_id = JobId(callback.data.removeprefix("cancel:"))
+        cancellation = await asyncio.to_thread(repository.cancel_job, job_id, callback.from_user.id)
+        if not cancellation.accepted:
             await callback.answer(CANNOT_CANCEL_TEXT, show_alert=True)
             return
-        if isinstance(callback.message, Message):
+        abort_result = None
+        try:
+            abort_result = await queue.abort_job(job_id)
+        except Exception as exc:
+            await logger.awarning(
+                "job_queue_abort_failed",
+                job_id=job_id,
+                cancel_source="user",
+                error_type=type(exc).__name__,
+                final_status=JobStatus.CANCELLED.value,
+            )
+        if isinstance(callback.message, Message) and not cancellation.already_cancelled:
             await callback.message.edit_text(CANCELLED_TEXT)
+        await logger.ainfo(
+            "job_cancelled",
+            job_id=job_id,
+            previous_status=(
+                cancellation.previous_status.value if cancellation.previous_status else None
+            ),
+            cancel_requested=True,
+            arq_job_status=(
+                abort_result.previous_status.value if abort_result is not None else "unknown"
+            ),
+            cancel_source="user",
+            abort_result=(
+                abort_result.final_status.value if abort_result is not None else "failed"
+            ),
+            redis_keys_removed=(abort_result.redis_keys_removed if abort_result is not None else 0),
+            final_status=JobStatus.CANCELLED.value,
+        )
         await callback.answer("درخواست لغو ثبت شد")
 
     @router.message()

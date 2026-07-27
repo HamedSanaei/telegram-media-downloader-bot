@@ -60,6 +60,13 @@ installed source untouched, restores the prior image pin, and restarts exactly t
 set. `config.yaml`, SQLite, cookies, Redis, and downloaded state are preserved. `uninstall` stops
 the stack and deletes config/data only after the literal `DELETE` confirmation.
 
+Before a successful restart, the Linux updater reads `APP_UID`/`APP_GID` from `.env`, uses the
+pulled application image as root to repair ownership of SQLite/WAL/SHM, downloads, temp, cookies,
+Local API state/files, and backups, and applies owner-only modes. It keeps `config.yaml`, `.env`,
+and cookies at mode 0600. A failed permission migration restores the prior image pin and deliberately
+leaves application services stopped. The updater also repairs `$TMB_BIN_DIR/tmb` (default
+`/usr/local/bin/tmb`) to the installed management script, including custom installation paths.
+
 Backups contain `config.yaml`, `.env`, SQLite/state, cookies, and Local API state. Large
 `data/downloads` and disposable `data/temp` content are preserved in place during update but
 excluded from archives to avoid duplicating multi-gigabyte media.
@@ -81,6 +88,11 @@ The Local API image is built from pinned official `tdlib/telegram-bot-api` sourc
 are read from mounted YAML and passed to the official process only through its child environment;
 they do not appear in Compose environment, Docker command, installer logs, shell history, or status
 output. Bot and Worker use `http://local-api:8081`.
+
+The first image build may still spend substantial time compiling Telegram Local Bot API. CI and
+release builds share the `telegram-media-downloader-bot-amd64` BuildKit cache, so later builds should
+restore that stage. Changing `TELEGRAM_BOT_API_REF`, its stage/toolchain/base image, or the relevant
+Dockerfile instructions intentionally invalidates it; application source and Python changes do not.
 
 For private Instagram Stories/Highlights, export a Netscape cookies file from an authorized account,
 place it below `data/cookies`, configure its container path, and keep it read-only. No phone number,

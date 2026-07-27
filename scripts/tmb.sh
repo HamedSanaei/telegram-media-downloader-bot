@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 RELEASE_ROOT="https://github.com/HamedSanaei/telegram-media-downloader-bot/releases"
 ARCHIVE_NAME="telegram-media-downloader-bot.tar.gz"
 IMAGE_REPOSITORY="ghcr.io/hamedsanaei/telegram-media-downloader-bot"
+TMB_BIN_DIR="${TMB_BIN_DIR:-/usr/local/bin}"
 cd "$ROOT_DIR"
 
 release_url() {
@@ -78,6 +79,65 @@ configured_image() {
     image="$(sed -n 's/^TMB_IMAGE=//p' "$ROOT_DIR/.env" | head -n 1)"
   fi
   printf '%s' "${TMB_IMAGE:-${image:-ghcr.io/hamedsanaei/telegram-media-downloader-bot:latest}}"
+}
+
+runtime_identity() {
+  local name="$1" fallback="$2" value
+  value="$(sed -n "s/^${name}=//p" "$ROOT_DIR/.env" | head -n 1)"
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    printf '%s' "$value"
+  else
+    printf '%s' "$fallback"
+  fi
+}
+
+normalize_runtime_permissions() {
+  local uid gid image
+  uid="$(runtime_identity APP_UID 10001)"
+  gid="$(runtime_identity APP_GID 10001)"
+  image="$(configured_image)"
+  if ! docker run --rm --user 0 --entrypoint sh \
+    -e "APP_UID=$uid" -e "APP_GID=$gid" \
+    -v "$ROOT_DIR:/workspace" "$image" -c '
+      set -eu
+      for path in \
+        /workspace/data/state \
+        /workspace/data/downloads \
+        /workspace/data/temp \
+        /workspace/data/cookies \
+        /workspace/data/telegram-bot-api \
+        /workspace/backups; do
+        mkdir -p "$path"
+      done
+      chown -R "$APP_UID:$APP_GID" \
+        /workspace/data /workspace/backups
+      find /workspace/data /workspace/backups -type d -exec chmod 700 {} +
+      find /workspace/data /workspace/backups -type f -exec chmod 600 {} +
+      for secret in /workspace/config.yaml /workspace/.env; do
+        if [ -e "$secret" ]; then
+          chown "$APP_UID:$APP_GID" "$secret"
+          chmod 600 "$secret"
+        fi
+      done
+    '; then
+    echo "Update cannot safely continue: runtime ownership/permission repair failed." >&2
+    return 1
+  fi
+}
+
+repair_tmb_command() {
+  local target="$ROOT_DIR/scripts/tmb.sh" link="$TMB_BIN_DIR/tmb"
+  chmod 755 "$target" || return 1
+  mkdir -p "$TMB_BIN_DIR" 2>/dev/null || true
+  if [[ -d "$TMB_BIN_DIR" && -w "$TMB_BIN_DIR" ]]; then
+    ln -sfn "$target" "$link"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo mkdir -p "$TMB_BIN_DIR" && sudo ln -sfn "$target" "$link"
+  else
+    echo "Unable to repair the global tmb command at $link." >&2
+    return 1
+  fi
+  [[ "$(readlink -f "$link")" == "$(readlink -f "$target")" ]]
 }
 
 backup() {
@@ -180,18 +240,31 @@ run() {
         compose --profile local-api stop -t 45 "${PREVIOUS_SERVICES[@]}"
       fi
       RELEASE_TEMPORARY_DIRECTORY=""
+      local permission_failed
+      permission_failed=false
       if backup \
         && prepare_verified_release \
         && set_configured_image "$IMAGE_REPOSITORY:$RELEASE_VERSION" \
         && compose --profile local-api pull \
+        && {
+          normalize_runtime_permissions || {
+            permission_failed=true
+            false
+          }
+        } \
+        && repair_tmb_command \
         && install_prepared_release; then
         cleanup_prepared_release
         start_services true "${PREVIOUS_SERVICES[@]}"
       else
         cleanup_prepared_release
         set_configured_image "$previous_image"
-        echo "Update failed; restoring the prior image and restarting the stack." >&2
-        start_services false "${PREVIOUS_SERVICES[@]}"
+        if [[ "$permission_failed" == "true" ]]; then
+          echo "Update failed; prior image restored but services remain stopped for safety." >&2
+        else
+          echo "Update failed; restoring the prior image and restarting the stack." >&2
+          start_services false "${PREVIOUS_SERVICES[@]}"
+        fi
         return 1
       fi
       ;;

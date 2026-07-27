@@ -5,6 +5,7 @@ RELEASE_ROOT="https://github.com/HamedSanaei/telegram-media-downloader-bot/relea
 ARCHIVE_NAME="telegram-media-downloader-bot.tar.gz"
 DEFAULT_INSTALL_DIR="/opt/telegram-media-downloader-bot"
 IMAGE_REPOSITORY="ghcr.io/hamedsanaei/telegram-media-downloader-bot"
+TMB_BIN_DIR="${TMB_BIN_DIR:-/usr/local/bin}"
 
 release_url() {
   if [[ -n "${TMB_RELEASE_TAG:-}" ]]; then
@@ -83,6 +84,7 @@ mkdir -p data/downloads data/temp data/state data/cookies data/telegram-bot-api
 
 docker pull "$DEFAULT_IMAGE"
 docker run --rm -it \
+  --user "$(id -u):$(id -g)" \
   -v "$INSTALL_DIR:/workspace" -w /workspace \
   "$DEFAULT_IMAGE" telegram-media-bot configure --config /workspace/config.yaml
 
@@ -95,5 +97,9 @@ fi
 docker compose --profile local-api up -d --no-build
 
 chmod +x scripts/tmb.sh
-sudo ln -sfn "$INSTALL_DIR/scripts/tmb.sh" /usr/local/bin/tmb
+sudo mkdir -p "$TMB_BIN_DIR"
+sudo ln -sfn "$INSTALL_DIR/scripts/tmb.sh" "$TMB_BIN_DIR/tmb"
+command -v tmb >/dev/null 2>&1 || {
+  echo "tmb was installed at $TMB_BIN_DIR/tmb; add that directory to PATH." >&2
+}
 echo "Installation completed. Use: tmb status, tmb logs, tmb doctor"

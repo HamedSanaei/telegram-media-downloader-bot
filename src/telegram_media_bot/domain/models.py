@@ -88,6 +88,21 @@ class JobStatus(StrEnum):
         }
 
 
+class RecoveryDecision(StrEnum):
+    REQUEUE_ABANDONED = "requeue_abandoned"
+    QUARANTINE_DELIVERY = "quarantine_delivery"
+    SKIP_CANCELLED = "skip_cancelled"
+
+
+class QueueJobStatus(StrEnum):
+    QUEUED = "queued"
+    DEFERRED = "deferred"
+    IN_PROGRESS = "in_progress"
+    COMPLETE = "complete"
+    NOT_FOUND = "not_found"
+    UNKNOWN = "unknown"
+
+
 class ErrorCategory(StrEnum):
     AUTHENTICATION = "authentication"
     CANCELLED = "cancelled"
@@ -294,6 +309,29 @@ class JobRecord:
     delivery_file_id: str | None = None
     delivery_file_unique_id: str | None = None
     attempt: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class JobCancellationResult:
+    accepted: bool
+    previous_status: JobStatus | None
+    final_status: JobStatus | None
+    already_cancelled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class JobAbortResult:
+    previous_status: QueueJobStatus
+    final_status: QueueJobStatus
+    abort_requested: bool
+    redis_keys_removed: int
+
+
+@dataclass(frozen=True, slots=True)
+class JobRecoveryRecord:
+    job: JobRecord
+    previous_status: JobStatus
+    decision: RecoveryDecision
 
 
 @dataclass(frozen=True, slots=True)

@@ -397,6 +397,7 @@ def test_oversized_selected_video_is_transcoded_at_requested_height(
         target_height: int,
         max_size_bytes: int,
         is_cancelled: object,
+        **_kwargs: object,
     ) -> Path:
         calls.append(target_height)
         output = source.with_name("bounded.mp4")

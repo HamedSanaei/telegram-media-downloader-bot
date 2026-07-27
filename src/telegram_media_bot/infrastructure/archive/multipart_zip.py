@@ -22,10 +22,7 @@ class MultipartZipBuilder:
         self._settings = settings
 
     def executable(self) -> str | None:
-        configured = self._settings.seven_zip_executable.expanduser()
-        if configured.is_absolute():
-            return str(configured.resolve()) if configured.is_file() else None
-        return shutil.which(str(configured))
+        return resolve_seven_zip(self._settings.seven_zip_executable)
 
     def build(self, source: Path) -> MultipartArchive:
         source = source.resolve()
@@ -113,3 +110,18 @@ def _sha256(path: Path) -> str:
         while chunk := stream.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def resolve_seven_zip(configured_path: Path) -> str | None:
+    configured = configured_path.expanduser()
+    if configured.is_absolute() or configured.parent != Path("."):
+        return str(configured.resolve()) if configured.is_file() else None
+    names = [str(configured)]
+    if configured.name == "7zz":
+        names.append("7z")
+    elif configured.name == "7z":
+        names.append("7zz")
+    for name in names:
+        if resolved := shutil.which(name):
+            return resolved
+    return None

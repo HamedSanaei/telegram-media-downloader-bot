@@ -51,7 +51,39 @@ jobs:
           version: "0.11.31"
       - run: uv lock --check
       - run: docker compose --profile local-api config
-      - run: docker compose --profile local-api build --pull
+      - uses: docker/setup-buildx-action@v3
+      - name: Build runtime image with shared cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          pull: true
+          platforms: linux/amd64
+          tags: telegram-media-downloader-bot:ci
+          build-args: |
+            PYTHON_VERSION=3.14.5
+          cache-from: type=gha,scope=telegram-media-downloader-bot-amd64
+          cache-to: type=gha,mode=max,scope=telegram-media-downloader-bot-amd64
+      - name: Smoke-test runtime image
+        shell: bash
+        run: |
+          docker run --rm telegram-media-downloader-bot:ci telegram-media-bot --help
+          docker run --rm --entrypoint sh telegram-media-downloader-bot:ci -c '
+            set -eu
+            command -v ffmpeg
+            command -v ffprobe
+            seven_zip="$(command -v 7zz || command -v 7z)"
+            dd if=/dev/zero of=/tmp/source.bin bs=1M count=3
+            "$seven_zip" a -tzip -mx=0 -v1m /tmp/smoke.zip /tmp/source.bin
+            test -s /tmp/smoke.zip.001
+            test -s /tmp/smoke.zip.002
+            "$seven_zip" t /tmp/smoke.zip.001
+          '
+          docker run --rm \
+            -v "${PWD}/config.example.yaml:/app/config.example.yaml:ro" \
+            telegram-media-downloader-bot:ci \
+            telegram-media-bot doctor --config /app/config.example.yaml
 
   installer-quality:
     strategy:

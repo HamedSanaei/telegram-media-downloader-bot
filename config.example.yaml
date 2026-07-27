@@ -115,6 +115,13 @@ media:
     ignore_images: true
     max_videos: 50
     max_total_size_mb: 4096
+  transcode:
+    # Guaranteed container modes may require a CPU-heavy codec conversion.
+    enabled: true
+    threads: 2
+    max_concurrent: 1
+    timeout_seconds: 1500
+    progress_interval_seconds: 10
 
 multipart:
   enabled: true

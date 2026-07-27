@@ -22,6 +22,8 @@ RUN git clone --filter=blob:none --no-checkout https://github.com/tdlib/telegram
     && cmake --build build --target install --parallel 2
 
 FROM python:${PYTHON_VERSION}-slim AS runtime
+ARG APP_UID=10001
+ARG APP_GID=10001
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -33,7 +35,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates ffmpeg 7zip tini \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && if command -v 7zz >/dev/null 2>&1; then \
+         ln -sfn "$(command -v 7zz)" /usr/local/bin/7z; \
+       elif command -v 7z >/dev/null 2>&1; then \
+         ln -sfn "$(command -v 7z)" /usr/local/bin/7zz; \
+       else \
+         echo "7-Zip executable is missing" >&2; exit 1; \
+       fi \
+    && command -v 7zz >/dev/null \
+    && command -v 7z >/dev/null
 
 COPY --from=uv /uv /uvx /bin/
 COPY --from=deno /deno /usr/local/bin/deno
@@ -47,7 +58,8 @@ COPY plugins ./plugins
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 
-RUN useradd --create-home --uid 10001 appuser \
+RUN groupadd --gid "${APP_GID}" appuser \
+    && useradd --create-home --uid "${APP_UID}" --gid "${APP_GID}" appuser \
     && mkdir -p /data/downloads /data/temp /data/state /data/cookies \
     && chown -R appuser:appuser /app /data
 
