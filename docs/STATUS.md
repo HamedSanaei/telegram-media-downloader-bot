@@ -8,9 +8,10 @@ Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
-Patch release `1.0.2` is prepared from the production fixes currently on `main`. Release `1.0.1`
-is already published and installed. Existing v1.0.0/v1.0.1 configuration and durable runtime state
-remain upgrade-compatible; no `1.0.2` commit, tag, push, or release has been created.
+Hotfix release `1.0.3` is prepared for the updater self-replacement, executable-mode, SQLite
+permission, transactional rollback, and crash-loop regressions found in published `1.0.2`.
+Existing v1.0.0/v1.0.1/v1.0.2 configuration and durable runtime state remain upgrade-compatible;
+no `1.0.3` commit, tag, push, or release has been created.
 
 ## Implemented production controls
 
@@ -57,6 +58,11 @@ remain upgrade-compatible; no `1.0.2` commit, tag, push, or release has been cre
 - Linux updates repair owner-only permissions for persistent runtime paths and the global `tmb`
   command before restart. The image guarantees `7zz`/`7z`, and CI/release execute multipart smoke
   archives.
+- Linux updates execute from an isolated runner, validate the complete staged Bash/Compose/config
+  payload before stopping services, atomically replace top-level application entries with rollback
+  snapshots, probe real runtime-user writes plus SQLite WAL, verify post-start health, and restore
+  the prior application/image/permissions/service set on failure. Container restart retries are
+  bounded to prevent a persistent permission failure from consuming CPU indefinitely.
 
 ## Verification
 
@@ -65,6 +71,9 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-27: Prepared hotfix 1.0.3 with updater self-replacement protection, mandatory archive
+  syntax/mode validation, runtime SQLite WAL probes, transactional application/image/permission
+  rollback, bounded restarts, health verification, and filesystem/privileged upgrade coverage.
 - 2026-07-27: Made cancellation durable across SQLite/ARQ and restart-safe; bounded FFmpeg CPU,
   concurrency, timeout, progress, and process cleanup; added automatic permission and `tmb` repair;
   and guaranteed executable multipart 7-Zip tooling in image workflows.

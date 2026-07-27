@@ -169,3 +169,20 @@ resource. FFmpeg receives an encoder thread count, one worker-local gate control
 encodes, a timeout and cancellation terminate the process group, and operators may disable heavy
 conversion. Defaults are present in the strict model so older configuration files remain valid.
 Compose exposes an optional worker CPU quota without imposing one on every installation.
+
+## ADR-018: Transactional Linux release updates and runtime permission probes
+
+**Status:** accepted
+
+Linux updates execute from a temporary copy so replacing `scripts/tmb.sh` cannot truncate the
+script Bash is reading. Release archives carry the command through an executable symlink target to
+bootstrap safely from the published v1.0.2 updater. Complete staged Bash scripts, Compose, and the
+existing configuration are validated before application writers stop.
+
+Top-level application entries are replaced with a rollback snapshot while `.env`, `config.yaml`,
+data, backups, cookies, downloads, Redis, and Local API state remain outside replacement. Before
+the candidate image starts, the updater resolves the Compose runtime UID/GID, normalizes private
+writable paths, performs a real runtime-user write, opens SQLite, and requires WAL mode. Candidate
+services must reach running/healthy state; a crash/restart state or timeout stops them and restores
+the prior application, image, usable permissions, command link, and previously running service set.
+Compose bounds automatic restart attempts to avoid an unbounded high-CPU crash loop.

@@ -166,6 +166,13 @@ The worker exposes internal-only `/health`, `/ready`, and Prometheus `/metrics` 
 covers Redis, SQLite, writable storage, Telegram, ffmpeg, and the engine. Compose does not publish
 the port to the host by default; the worker container health check consumes it internally.
 
+Linux release updates run from an isolated script copy and validate the complete staged Bash,
+Compose, configuration, and executable-mode payload before stopping writers. Top-level application
+entries use rollback snapshots, while local configuration/state remain outside replacement. A
+same-UID filesystem write and SQLite WAL probe must pass before candidate startup. Container
+running/health state is then mandatory; any post-stop failure restores the prior source, image,
+usable permissions, command link, and previous service set.
+
 ## Telegram endpoint control plane
 
 `infrastructure/telegram/local_api.py` owns managed server lifecycle, migration state, endpoint

@@ -21,7 +21,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
+      - name: Parse complete release Bash scripts
+        shell: bash
+        run: |
+          bash -n install.sh
+          bash -n manage.sh
+          bash -n scripts/tmb.sh
+          bash -n scripts/build_release_archives.sh
+          bash -n scripts/tests/test_tmb_update.sh
+          bash -n scripts/tests/test_tmb_upgrade_integration.sh
       - name: Verify tag matches package version
         shell: bash
         run: |
@@ -89,6 +99,12 @@ jobs:
           docker run --rm \
             -v "${PWD}/config.example.yaml:/app/config.example.yaml:ro" \
             "$image" telegram-media-bot doctor --config /app/config.example.yaml
+          docker tag "$image" telegram-media-downloader-bot:ci
+      - name: Run privileged updater filesystem and SQLite integration test
+        shell: bash
+        env:
+          RUN_PRIVILEGED_UPGRADE_TESTS: "1"
+        run: bash scripts/tests/test_tmb_upgrade_integration.sh
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -106,31 +122,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          prefix="telegram-media-downloader-bot/"
           commit="${GITHUB_SHA}"
           test "$(git rev-parse HEAD)" = "$commit"
 
-          git archive --format=tar --prefix="$prefix" "$commit" \
-            | gzip -n -9 > telegram-media-downloader-bot.tar.gz
-          git archive --format=zip --prefix="$prefix" \
-            --output=telegram-media-downloader-bot.zip "$commit"
-
           mkdir reproducibility-check
-          git archive --format=tar --prefix="$prefix" "$commit" \
-            | gzip -n -9 > reproducibility-check/telegram-media-downloader-bot.tar.gz
-          git archive --format=zip --prefix="$prefix" \
-            --output=reproducibility-check/telegram-media-downloader-bot.zip "$commit"
+          bash scripts/build_release_archives.sh "$commit" .
+          bash scripts/build_release_archives.sh "$commit" reproducibility-check
           cmp telegram-media-downloader-bot.tar.gz \
             reproducibility-check/telegram-media-downloader-bot.tar.gz
           cmp telegram-media-downloader-bot.zip \
             reproducibility-check/telegram-media-downloader-bot.zip
-
-          sha256sum telegram-media-downloader-bot.tar.gz \
-            > telegram-media-downloader-bot.tar.gz.sha256
-          sha256sum telegram-media-downloader-bot.zip \
-            > telegram-media-downloader-bot.zip.sha256
           sha256sum --check telegram-media-downloader-bot.tar.gz.sha256
           sha256sum --check telegram-media-downloader-bot.zip.sha256
+          archive_listing="$(tar -tvf telegram-media-downloader-bot.tar.gz)"
+          grep -Eq \
+            '^lrwxrwxrwx .* telegram-media-downloader-bot/scripts/tmb.sh -> tmb-current.sh$' \
+            <<<"$archive_listing"
+          grep -Eq \
+            '^-rwxr-xr-x .* telegram-media-downloader-bot/scripts/tmb-current.sh$' \
+            <<<"$archive_listing"
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

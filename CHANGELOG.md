@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 1.0.3 - 2026-07-27
+
+- Prevented the updater from replacing its own executing script, added mandatory full-script Bash
+  syntax validation, and restored executable modes plus the verified global `tmb` symlink after
+  release extraction.
+- Made updates transactional: validate staged scripts/Compose/config before stopping services,
+  replace application entries through a rollback snapshot, and restore the prior source, image,
+  usable permissions, command link, and service set after any post-stop failure.
+- Repaired SQLite/data ownership and private modes using the resolved runtime UID/GID, then added a
+  real runtime-user write probe and SQLite `PRAGMA journal_mode = WAL` probe before service start.
+- Added bounded container restart attempts and post-start Bot/Worker/Local API health verification;
+  a crash/restart state now stops the affected service and rolls the update back.
+- Added filesystem-level and privileged Docker upgrade regression coverage for lost archive modes,
+  real SQLite/WAL access, preserved config/state/media, command repair, and rollback behavior.
+
 ## 1.0.2 - 2026-07-27
 
 - Made user cancellation durable and idempotent across SQLite and ARQ: cancelled queued/running/

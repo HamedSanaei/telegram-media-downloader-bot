@@ -33,8 +33,9 @@
 | `scripts/compare_canary.py` | Baseline/canary failure-rate promotion gate |
 | `scripts/generate_file_manifest.py` | Deterministic SHA-256 source-manifest generation |
 | `install.sh`, `install.ps1` | Interactive Docker-first one-line installers and global management command setup |
-| `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup command; Linux also repairs runtime ownership and the `tmb` link |
-| `scripts/tests/` | Mocked Linux/Windows release-update, backup, and recovery tests |
+| `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup command; Linux adds isolated transactional replacement, runtime probes, health verification, rollback, and `tmb` repair |
+| `scripts/build_release_archives.sh` | Reproducible tar/ZIP assets and v1.0.2-safe executable Linux updater packaging |
+| `scripts/tests/` | Mocked recovery plus opt-in privileged filesystem/SQLite release-upgrade integration tests |
 | `.github/workflows/ci.yml` | Quality/security gates, Compose validation, shared-cache Docker build, runtime dependency doctor, and CLI/multipart smoke tests |
 | `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication using the CI cache, runtime doctor/CLI/multipart smoke tests, and reproducible release assets |
 

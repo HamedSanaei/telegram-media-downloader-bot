@@ -34,8 +34,32 @@ install_verified_release() (
     -C "$staging_directory" --strip-components=1
   [[ -f "$staging_directory/pyproject.toml" ]]
   [[ -f "$staging_directory/docker-compose.yml" ]]
+  local script
+  for script in \
+    install.sh \
+    manage.sh \
+    scripts/tmb.sh \
+    scripts/build_release_archives.sh \
+    scripts/tests/test_tmb_update.sh \
+    scripts/tests/test_tmb_upgrade_integration.sh; do
+    bash -n "$staging_directory/$script"
+  done
+  chmod 755 \
+    "$staging_directory/install.sh" \
+    "$staging_directory/manage.sh" \
+    "$staging_directory/scripts/tmb.sh" \
+    "$staging_directory/scripts/build_release_archives.sh" \
+    "$staging_directory/scripts/tests/test_tmb_update.sh" \
+    "$staging_directory/scripts/tests/test_tmb_upgrade_integration.sh"
   mkdir -p "$destination"
   cp -a "$staging_directory/." "$destination/"
+  chmod 755 \
+    "$destination/install.sh" \
+    "$destination/manage.sh" \
+    "$destination/scripts/tmb.sh" \
+    "$destination/scripts/build_release_archives.sh" \
+    "$destination/scripts/tests/test_tmb_update.sh" \
+    "$destination/scripts/tests/test_tmb_upgrade_integration.sh"
 )
 
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -96,10 +120,12 @@ if [[ "$answer" == "MIGRATE" ]]; then
 fi
 docker compose --profile local-api up -d --no-build
 
-chmod +x scripts/tmb.sh
+chmod 755 scripts/tmb.sh
 sudo mkdir -p "$TMB_BIN_DIR"
 sudo ln -sfn "$INSTALL_DIR/scripts/tmb.sh" "$TMB_BIN_DIR/tmb"
 command -v tmb >/dev/null 2>&1 || {
   echo "tmb was installed at $TMB_BIN_DIR/tmb; add that directory to PATH." >&2
 }
+test -x "$(readlink -f "$(command -v tmb)")"
+tmb status >/dev/null
 echo "Installation completed. Use: tmb status, tmb logs, tmb doctor"

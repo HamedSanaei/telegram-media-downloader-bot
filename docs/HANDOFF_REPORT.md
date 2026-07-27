@@ -4,6 +4,13 @@ Generated: 2026-07-27
 
 ## Current change addendum
 
+- The v1.0.3 updater runs from an isolated copy, validates complete staged scripts/Compose/config,
+  restores archive executable modes, installs application entries through rollback snapshots,
+  performs runtime-user filesystem and SQLite WAL probes, verifies post-start health, and restores
+  the prior application/image/permissions/link/services on failure.
+- Linux release tarballs package `scripts/tmb.sh` as a symlink to an executable
+  `scripts/tmb-current.sh`, allowing the published v1.0.2 updater to replace the pathname without
+  truncating its own executing inode. Compose restart attempts are bounded.
 - Cancellation is now durable-first: SQLite reaches terminal `cancelled` before official ARQ abort,
   cancelled active rows are never recovered, finalized transient keys/directories are cleaned, and
   simultaneous user cancellation plus shutdown is consumed without ARQ requeue or a shielded-future
@@ -16,7 +23,7 @@ Generated: 2026-07-27
   restored if permission migration is unsafe.
 - The runtime image guarantees both `7zz` and `7z`; CI and publication smoke tests create, split,
   and verify a real archive rather than checking package text only.
-- Project and package metadata are aligned at `1.0.2`; the lockfile changed only the editable
+- Project and package metadata are aligned at `1.0.3`; the lockfile changed only the editable
   project version, with no dependency upgrade.
 - Instagram automatic downloads now create and enqueue the same native-only `best_original`
   contract. `force_mp4` selects native MP4 video plus M4A audio for merge/remux only; disabling it
@@ -29,7 +36,7 @@ Generated: 2026-07-27
 - Structured selection/transcode logs include source container/codecs/size, selected format IDs,
   reason, target codec, CRF or bitrate, and final size.
 - The exact v1.0.0 configuration fixture and a representative v1.0.1 configuration load unchanged
-  under v1.0.2. Mocked Linux and Windows
+  under v1.0.3. Mocked Linux and Windows
   patch-upgrade tests confirm that only `TMB_IMAGE` changes in `.env`, while config, cookies,
   SQLite, Redis, and existing downloads remain intact.
 - CI and release image builds now share the
@@ -76,26 +83,28 @@ session is present.
 - Ruff lint: passed.
 - Ruff format check: passed for 103 Python files.
 - Strict mypy: passed for 94 source/test files.
-- Default test suite: 235 passed, 1 explicitly destructive large-file case skipped, and 8 opt-in
-  external contracts deselected.
+- Default test suite: 237 passed, 7 skipped on this Windows host (the destructive large-file case
+  plus 6 Linux-only full-script Bash parse cases), and 8 external contracts deselected.
 - Core branch coverage: 83.07%, above the enforced 80% floor.
 - Architecture boundary check: passed; only
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
-- UTF-8/text integrity: passed for 163 text files.
-- Deterministic source manifest regenerated and verified with 169 release entries.
+- UTF-8/text integrity: passed for 165 text files.
+- Deterministic source manifest regenerated and verified with 171 release entries.
 - SQLite migration, WAL contention, atomic usage, and cancel-safe recovery tests passed.
 - Linux and Windows mocked `tmb update` tests passed for success, release-download failure, and
-  checksum failure. Linux additionally passed permission-failure safe-stop, ownership command,
-  state preservation, global `tmb` repair, `command -v`, and `tmb status` assertions.
+  checksum failure. Linux additionally passed permission rollback, candidate crash-state rollback,
+  transaction ordering, lost executable-mode recovery, state preservation, global `tmb` repair,
+  `command -v`, installed-script `bash -n`, and `tmb status` assertions.
 - External extractor SDK: lock/sync passed; 1 default test passed and 1 contract was deselected.
 - `config.example.yaml`, Compose YAML, both workflow YAML files, and JSON schema parsed successfully.
 - PowerShell AST parsing: passed for installers, managers, and the Windows recovery test.
-- Bash syntax parsing: passed for installers, managers, and the Linux recovery test.
+- Bash syntax parsing: passed for every complete installer, manager, archive builder, mocked
+  recovery test, and privileged upgrade test script.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
-- Python 1.0.2 sdist and wheel builds passed.
-- `docker build -t telegram-media-downloader-bot:production-bugfix .` could not start because no
+- Python 1.0.3 sdist and wheel builds passed.
+- The privileged v1.0.2-to-v1.0.3 filesystem/SQLite/Docker upgrade test could not start because no
   Docker, Podman, or Nerdctl executable is installed on this host.
 - Local ignored `config.yaml` passed `config-check` without printing secrets.
 - `git diff --check`: passed.

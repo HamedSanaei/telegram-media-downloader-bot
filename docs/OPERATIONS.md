@@ -18,10 +18,12 @@ Production operators can instead use the Docker-first one-line installers and th
 menu/command documented in `docs/INSTALLATION.md`. The release topology additionally runs the
 official pinned Local Bot API in a dedicated Compose service.
 
-Release rollback uses `TMB_RELEASE_TAG=vX.Y.Z tmb update`; the updater verifies the selected
-release checksum, stops application writers for a consistent backup, pins the matching image, and
-preserves local configuration/data. Redis and its ARQ queue remain running; a failed download,
-validation, or pull restores the old image and exactly the previously running application services.
+Release rollback uses `TMB_RELEASE_TAG=vX.Y.Z tmb update`. The updater validates the full staged
+Bash/Compose/config payload before stopping writers, backs up state, installs application entries
+through a rollback snapshot, repairs runtime ownership/modes, and requires same-UID filesystem plus
+SQLite WAL probes. Redis and ARQ state remain online. Candidate services must be running/healthy;
+crash/restart state, timeout, probe failure, or pull failure restores the prior application, image,
+usable permissions, `tmb` command, and previous service set.
 Backup archives exclude downloads/temp but include configuration, SQLite/WAL state, cookies, and
 Local API state; Redis continues to use its persistent Compose volume.
 

@@ -51,21 +51,29 @@ tmb backup
 tmb uninstall
 ```
 
-`update` records which application services are running, gracefully stops only those
-Bot/Worker/Local API writers, and leaves Redis/its queue running. It then creates a consistent
-SQLite/WAL backup, downloads and verifies the release in an isolated staging directory, pulls the
-matching pinned image, installs the verified source, and recreates only the services that were
-previously running. A download, checksum, archive-validation, or image-pull failure leaves the
-installed source untouched, restores the prior image pin, and restarts exactly the prior service
-set. `config.yaml`, SQLite, cookies, Redis, and downloaded state are preserved. `uninstall` stops
-the stack and deletes config/data only after the literal `DELETE` confirmation.
+`update` runs from an isolated copy, validates every staged Bash script plus Compose and config
+before stopping writers, keeps Redis/ARQ online, backs up durable state, and replaces top-level
+application entries through a rollback snapshot. It repairs runtime permissions, requires actual
+same-UID filesystem and SQLite WAL writes, pulls/starts the candidate, and verifies container
+health before repairing and executing the global command. Any post-stop failure restores the prior
+source, image, usable permissions, command link, and exact previous service set. `config.yaml`,
+`.env`, SQLite, cookies, Redis, Local API state, and downloads are preserved. `uninstall` removes
+local state only after the literal `DELETE` confirmation.
 
-Before a successful restart, the Linux updater reads `APP_UID`/`APP_GID` from `.env`, uses the
-pulled application image as root to repair ownership of SQLite/WAL/SHM, downloads, temp, cookies,
-Local API state/files, and backups, and applies owner-only modes. It keeps `config.yaml`, `.env`,
-and cookies at mode 0600. A failed permission migration restores the prior image pin and deliberately
-leaves application services stopped. The updater also repairs `$TMB_BIN_DIR/tmb` (default
-`/usr/local/bin/tmb`) to the installed management script, including custom installation paths.
+Before restart, the Linux updater resolves `APP_UID`/`APP_GID` from the Compose environment or
+`.env` with fallback `10001:10001`. It repairs `data/`, SQLite/WAL/SHM, downloads, temp, cookies,
+Local API state, and backups to private runtime-owned modes. A container running as that exact
+identity must create/remove a state probe and enable SQLite WAL. The updater then guarantees
+`scripts/tmb.sh` is executable, repairs `$TMB_BIN_DIR/tmb` (default `/usr/local/bin/tmb`), resolves
+its target, and runs `tmb status`.
+
+For a damaged v1.0.2 command, restore the executable link once before selecting the hotfix:
+
+```bash
+chmod 0755 ./scripts/tmb.sh
+sudo ln -sfn "$(pwd)/scripts/tmb.sh" /usr/local/bin/tmb
+TMB_RELEASE_TAG=v1.0.3 tmb update
+```
 
 Backups contain `config.yaml`, `.env`, SQLite/state, cookies, and Local API state. Large
 `data/downloads` and disposable `data/temp` content are preserved in place during update but

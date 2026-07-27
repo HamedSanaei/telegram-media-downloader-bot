@@ -8,7 +8,8 @@ x-app-common: &app-common
       APP_UID: "${APP_UID:-10001}"
       APP_GID: "${APP_GID:-10001}"
   image: "${TMB_IMAGE:-telegram-media-downloader-bot:local}"
-  restart: unless-stopped
+  # Bound crash retries so a startup/permission failure cannot spin forever.
+  restart: "on-failure:5"
   read_only: true
   security_opt:
     - no-new-privileges:true

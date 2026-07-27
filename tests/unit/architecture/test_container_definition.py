@@ -1,7 +1,10 @@
+import os
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 
 from telegram_media_bot import __version__
@@ -13,6 +16,22 @@ PRODUCTION_RELEASE_CONDITION = (
     "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
 )
 SHARED_BUILDKIT_CACHE = "telegram-media-downloader-bot-amd64"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="release Bash parsing runs on Linux CI")
+@pytest.mark.parametrize(
+    "script",
+    [
+        "install.sh",
+        "manage.sh",
+        "scripts/tmb.sh",
+        "scripts/build_release_archives.sh",
+        "scripts/tests/test_tmb_update.sh",
+        "scripts/tests/test_tmb_upgrade_integration.sh",
+    ],
+)
+def test_complete_release_bash_script_parses(script: str) -> None:
+    subprocess.run(["bash", "-n", script], check=True)
 
 
 def test_python_build_argument_is_global() -> None:
@@ -33,6 +52,7 @@ def test_app_containers_are_read_only_and_drop_capabilities() -> None:
     assert common["read_only"] is True
     assert common["cap_drop"] == ["ALL"]
     assert common["security_opt"] == ["no-new-privileges:true"]
+    assert common["restart"] == "on-failure:5"
     assert any(mount.startswith("/tmp:") for mount in common["tmpfs"])
     assert compose["services"]["worker"]["cpus"] == "${TMB_WORKER_CPUS:-0}"
 
@@ -156,6 +176,8 @@ def test_ci_builds_and_smoke_tests_runtime_with_shared_buildkit_cache() -> None:
     assert any("command -v 7zz || command -v 7z" in run for run in runs)
     assert any('"$seven_zip" t /tmp/smoke.zip.001' in run for run in runs)
     assert any("telegram-media-bot doctor --config /app/config.example.yaml" in run for run in runs)
+    assert any("RUN_PRIVILEGED_UPGRADE_TESTS" in str(step.get("env", "")) for step in steps)
+    assert any("test_tmb_upgrade_integration.sh" in run for run in runs)
     assert all("docker compose --profile local-api build" not in run for run in runs)
 
 
@@ -189,9 +211,9 @@ def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
             tags.append(f"{image}:latest")
         return tags
 
-    assert expected_tags("v1.0.2") == [
-        f"{image}:v1.0.2",
-        f"{image}:1.0.2",
+    assert expected_tags("v1.0.3") == [
+        f"{image}:v1.0.3",
+        f"{image}:1.0.3",
         f"{image}:1.0",
         f"{image}:latest",
     ]
@@ -204,15 +226,15 @@ def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
     assert "linux/arm64" not in workflow
 
 
-def test_v1_0_2_release_tag_exactly_matches_project_version() -> None:
+def test_v1_0_3_release_tag_exactly_matches_project_version() -> None:
     project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     workflow = Path(".github/workflows/publish-container.yml").read_text(encoding="utf-8")
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.0.2"
+    assert version == "1.0.3"
     assert __version__ == version
-    assert tag == "v1.0.2"
+    assert tag == "v1.0.3"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
     assert 'if tag != f"v{version}":' in workflow
 
@@ -228,6 +250,9 @@ def test_release_waits_for_published_image_smoke_test_and_attaches_verified_asse
     assert "command -v 7zz || command -v 7z" in workflow
     assert '"$seven_zip" t /tmp/smoke.zip.001' in workflow
     assert "telegram-media-bot doctor --config /app/config.example.yaml" in workflow
+    assert "test_tmb_upgrade_integration.sh" in workflow
+    assert "scripts/build_release_archives.sh" in workflow
+    assert "tmb-current.sh" in workflow
     assert "generate_release_notes: true" in workflow
     assert "sha256sum --check telegram-media-downloader-bot.tar.gz.sha256" in workflow
     assert "sha256sum --check telegram-media-downloader-bot.zip.sha256" in workflow
@@ -267,6 +292,21 @@ def test_linux_installer_and_updater_install_command_and_repair_permissions() ->
     assert "normalize_runtime_permissions" in updater
     assert "docker run --rm --user 0 --entrypoint sh" in updater
     assert "find /workspace/data /workspace/backups -type f -exec chmod 600" in updater
+    assert 'connection.execute("PRAGMA journal_mode = WAL")' in updater
+    assert "verify_services_healthy" in updater
+    assert "rollback_application_files" in updater
+    assert 'chmod 755 "$target"' in updater
+
+
+def test_linux_release_archive_bootstraps_safely_from_v1_0_2_updater() -> None:
+    builder = Path("scripts/build_release_archives.sh").read_text(encoding="utf-8")
+
+    assert '"$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tmb.sh"' in builder
+    assert "ln -s tmb-current.sh" in builder
+    assert "scripts/tmb-current.sh" in builder
+    assert "chmod 755" in builder
+    assert "--sort=name" in builder
+    assert "gzip -n -9" in builder
 
 
 def test_worker_enables_official_arq_abort_support() -> None:
