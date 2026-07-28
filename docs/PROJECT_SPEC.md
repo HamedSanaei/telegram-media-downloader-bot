@@ -23,7 +23,9 @@ Actual extraction support is determined by the installed `yt-dlp` version.
 2. Bot validates access policy and enqueues metadata inspection.
 3. Bot displays normalized title, duration, source, and only semantic formats that are actually
    selectable, including selected resolution/FPS/HDR and exact, estimated, or unknown size.
-4. For ordinary video, the user chooses MP4 or WebM and then a real semantic quality. Instagram
+4. For ordinary video, the user chooses fast native H.264/AAC MP4, native VP9/Opus WebM, or an
+   explicitly enabled converted MP4, then a real semantic quality. Fast MP4 may disclose a lower
+   compatible native resolution and never hides AV1/VP9 transcoding. Instagram
    video posts, Reels, Stories, and Highlights skip both prompts and use the best original
    streams; `media.instagram.force_mp4` may constrain the native video/audio pair to MP4 + M4A
    without changing codecs.

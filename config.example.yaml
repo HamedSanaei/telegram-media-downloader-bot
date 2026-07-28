@@ -97,6 +97,8 @@ media:
   max_file_size_mb: 49
   max_source_size_mb: 1024
   max_duration_seconds: 14400
+  # Fast MP4 prefers native H.264/AAC; choose a lower native resolution or fail.
+  mp4_native_fallback: lower_resolution
 
   formats:
     best: bv*+ba/b
@@ -116,8 +118,10 @@ media:
     max_videos: 50
     max_total_size_mb: 4096
   transcode:
-    # Guaranteed container modes may require a CPU-heavy codec conversion.
+    # Global safety switch for explicitly requested codec conversion.
     enabled: true
+    # Expose the separate CPU-heavy "converted MP4" choice. Disabled by default.
+    explicit_mp4_enabled: false
     threads: 2
     max_concurrent: 1
     timeout_seconds: 1500

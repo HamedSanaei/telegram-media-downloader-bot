@@ -35,6 +35,10 @@ class MediaUnavailableError(MediaBotError):
     pass
 
 
+class NativeFormatUnavailableError(MediaUnavailableError):
+    """The requested native codec/container plan is not offered by the source."""
+
+
 class MediaTooLargeError(MediaBotError):
     pass
 
@@ -49,6 +53,10 @@ class DownloadFailedError(MediaBotError):
 
 class PostProcessingError(MediaBotError):
     pass
+
+
+class TranscodeRejectedError(PostProcessingError):
+    """A requested heavy conversion was rejected before FFmpeg started."""
 
 
 class AccessDeniedError(MediaBotError):

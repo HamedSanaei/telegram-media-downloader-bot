@@ -3,6 +3,7 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from telegram_media_bot.domain.models import (
+    ContainerPolicy,
     DeliveryProgressEvent,
     DeliveryStage,
     DownloadMode,
@@ -31,18 +32,30 @@ _MODE_LABELS = {
 def selection_keyboard(
     selection: SelectionRecord,
     container: OutputContainer | None = None,
+    container_policy: ContainerPolicy | None = None,
 ) -> InlineKeyboardMarkup:
     options = {
         option.mode: option
         for option in selection.media.format_options
         if option.container is container
+        and (
+            option.container_policy is container_policy
+            if container_policy is not None
+            else option.container_policy is not ContainerPolicy.EXPLICIT_TRANSCODE
+        )
     }
     rows = [
         [
             InlineKeyboardButton(
                 text=_button_label(mode, options.get(mode)),
                 callback_data=(
-                    f"fmt:{selection.token}:{container.value}:{mode.value}"
+                    (
+                        f"fmt:{selection.token}:{container.value}:"
+                        f"{container_policy.value}:{mode.value}"
+                    )
+                    if container is not None
+                    and container_policy is ContainerPolicy.EXPLICIT_TRANSCODE
+                    else f"fmt:{selection.token}:{container.value}:{mode.value}"
                     if container is not None
                     else f"fmt:{selection.token}:{mode.value}"
                 ),
@@ -56,24 +69,33 @@ def selection_keyboard(
 
 def container_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
     labels = {
-        OutputContainer.MP4: "ویدئو MP4",
-        OutputContainer.WEBM: "ویدئو WebM",
-        OutputContainer.MP3: "صوت MP3",
+        (OutputContainer.MP4, ContainerPolicy.GUARANTEED): (
+            "MP4 سریع · H.264 + AAC، بدون تبدیل سنگین"
+        ),
+        (OutputContainer.MP4, ContainerPolicy.EXPLICIT_TRANSCODE): ("MP4 تبدیل‌شده · کند و پرمصرف"),
+        (OutputContainer.WEBM, ContainerPolicy.GUARANTEED): ("WebM · VP9 + Opus، بدون تبدیل"),
+        (OutputContainer.MP3, ContainerPolicy.GUARANTEED): "صوت MP3",
     }
-    containers = tuple(
-        container
-        for container in OutputContainer
-        if any(option.container is container for option in selection.media.format_options)
+    choices = tuple(
+        dict.fromkeys(
+            (option.container, option.container_policy)
+            for option in selection.media.format_options
+            if option.container is not None
+        )
     )
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=labels[container],
-                    callback_data=f"container:{selection.token}:{container.value}",
+                    text=labels.get(choice, choice[0].value.upper()),
+                    callback_data=(
+                        f"container:{selection.token}:{choice[0].value}:{choice[1].value}"
+                        if choice[1] is ContainerPolicy.EXPLICIT_TRANSCODE
+                        else f"container:{selection.token}:{choice[0].value}"
+                    ),
                 )
             ]
-            for container in containers
+            for choice in choices
         ]
     )
 
@@ -107,6 +129,7 @@ def required_channels_keyboard(
 def render_media_info(
     info: MediaInfo,
     container: OutputContainer | None = None,
+    container_policy: ContainerPolicy | None = None,
 ) -> str:
     lines = [
         f"عنوان: {_clean(info.title, 256)}",
@@ -122,7 +145,12 @@ def render_media_info(
     matching_options = tuple(
         option
         for option in info.format_options
-        if container is None or option.container is container
+        if (container is None or option.container is container)
+        and (
+            option.container_policy is container_policy
+            if container_policy is not None
+            else option.container_policy is not ContainerPolicy.EXPLICIT_TRANSCODE
+        )
     )
     legacy_options = container is None and not any(
         option.container is not None for option in info.format_options
@@ -195,6 +223,8 @@ def _option_details(option: MediaFormatOption) -> str:
         details.append("HDR" if option.is_hdr else "SDR")
     if option.requires_transcode:
         details.append("نیازمند تبدیل")
+    elif option.fallback_reason == "exact_h264_not_available":
+        details.append("MP4 سازگار با وضوح پایین‌تر")
     elif option.container is not None:
         details.append("نسخهٔ اصلی")
     details.append(_size_label(option))

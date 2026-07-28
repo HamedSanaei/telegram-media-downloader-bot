@@ -19,6 +19,7 @@ from telegram_media_bot.domain.errors import (
     JobCancelledError,
     MediaTooLargeError,
     PostProcessingError,
+    TranscodeRejectedError,
 )
 from telegram_media_bot.domain.models import OutputContainer
 
@@ -43,6 +44,8 @@ class VideoProbe:
     video_codec: str = "h264"
     audio_codec: str | None = "aac"
     source_container: str = ""
+    width: int = 1920
+    fps: float = 30.0
 
 
 class TranscodeGate:
@@ -178,6 +181,25 @@ def transcode_video_to_container(
         raise MediaTooLargeError("Video is too long to transcode safely below the size limit")
     source_size = source.stat().st_size
     output = source.with_name(f"{source.stem}.telegram.{container.value}")
+    estimated_seconds = estimate_transcode_seconds(probe, threads=threads)
+    if estimated_seconds > timeout_seconds:
+        output.unlink(missing_ok=True)
+        logger.warning(
+            "transcode_rejected_timeout_estimate",
+            source_container=probe.source_container or source.suffix.casefold().lstrip("."),
+            source_video_codec=probe.video_codec,
+            source_audio_codec=probe.audio_codec,
+            source_file_size=source_size,
+            target_codec="h264" if container is OutputContainer.MP4 else "vp9",
+            target_bitrate=None,
+            target_crf=_MP4_CRF if container is OutputContainer.MP4 else _WEBM_CRF,
+            estimated_transcode_seconds=round(estimated_seconds),
+            transcode_timeout_seconds=timeout_seconds,
+            fallback_reason="transcode_timeout_estimate_exceeded",
+        )
+        raise TranscodeRejectedError(
+            "Estimated codec conversion time exceeds the configured transcode timeout"
+        )
     video_filter = (
         f"scale=-2:{output_height}:flags=lanczos,fps=fps='min(source_fps,60)',format=yuv420p"
     )
@@ -227,6 +249,8 @@ def transcode_video_to_container(
         target_crf=target_crf,
         target_bitrate=None,
         transcode_threads=threads,
+        estimated_transcode_seconds=round(estimated_seconds),
+        transcode_timeout_seconds=timeout_seconds,
     )
     quality_command = [*common, "-crf", str(target_crf)]
     if container is OutputContainer.WEBM:
@@ -385,6 +409,7 @@ def _probe_video(ffprobe: str, source: Path) -> VideoProbe:
     format_info = raw.get("format")
     duration_raw = format_info.get("duration") if isinstance(format_info, Mapping) else None
     height_raw = video.get("height") if isinstance(video, Mapping) else None
+    width_raw = video.get("width") if isinstance(video, Mapping) else None
     if not isinstance(duration_raw, (str, int, float)) or not isinstance(
         height_raw, (str, int, float)
     ):
@@ -409,10 +434,19 @@ def _probe_video(ffprobe: str, source: Path) -> VideoProbe:
     source_container = (
         str(format_info.get("format_name") or "") if isinstance(format_info, Mapping) else ""
     )
+    width = (
+        int(width_raw)
+        if isinstance(width_raw, (str, int, float)) and int(float(width_raw)) > 0
+        else max(2, round(height * 16 / 9))
+    )
+    fps_raw = video.get("avg_frame_rate") if isinstance(video, Mapping) else None
+    fps = _parse_frame_rate(fps_raw)
     return VideoProbe(
         duration_seconds=duration,
         height=height,
         has_audio=audio is not None,
+        width=width,
+        fps=fps,
         video_codec=video_codec,
         audio_codec=audio_codec,
         source_container=source_container,
@@ -514,6 +548,7 @@ def _run_process(
     except BaseException:
         _terminate_process_tree(process)
         reader.join(timeout=1)
+        output.unlink(missing_ok=True)
         raise
     reader.join(timeout=1)
     logger.info(
@@ -594,3 +629,49 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
 
 def _find_executable(name: str) -> str | None:
     return shutil.which(name)
+
+
+def estimate_transcode_seconds(probe: VideoProbe, *, threads: int) -> float:
+    """Conservatively estimate a quality encode before reserving the FFmpeg gate."""
+    pixels = max(1, probe.width * probe.height)
+    pixel_factor = max(0.25, pixels / (1920 * 1080))
+    codec = probe.video_codec.casefold()
+    decode_factor = (
+        1.5
+        if codec == "av1" or codec.startswith("av01")
+        else 1.3
+        if codec == "vp9" or codec.startswith("vp09")
+        else 1.0
+    )
+    effective_cpus = max(0.25, min(float(threads), _effective_cpu_capacity()))
+    estimated_fps = 12.0 * effective_cpus / pixel_factor / decode_factor
+    return probe.duration_seconds * max(1.0, probe.fps) / estimated_fps * 1.25
+
+
+def _effective_cpu_capacity() -> float:
+    host_cpus = float(os.cpu_count() or 1)
+    cpu_max = Path("/sys/fs/cgroup/cpu.max")
+    try:
+        quota_text, period_text = cpu_max.read_text(encoding="utf-8").split()[:2]
+        if quota_text != "max":
+            quota = int(quota_text)
+            period = int(period_text)
+            if quota > 0 and period > 0:
+                return min(host_cpus, quota / period)
+    except OSError, ValueError:
+        pass
+    return host_cpus
+
+
+def _parse_frame_rate(value: object) -> float:
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    if isinstance(value, str):
+        numerator, separator, denominator = value.partition("/")
+        try:
+            parsed = float(numerator) / float(denominator) if separator else float(value)
+        except ValueError, ZeroDivisionError:
+            return 30.0
+        if parsed > 0:
+            return parsed
+    return 30.0

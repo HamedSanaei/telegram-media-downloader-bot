@@ -188,3 +188,18 @@ writable paths, performs a real runtime-user write, opens SQLite, and requires W
 services must reach running/healthy state; a crash/restart state or timeout stops them and restores
 the prior application, image, usable permissions, command link, and previously running service set.
 Compose bounds automatic restart attempts to avoid an unbounded high-CPU crash loop.
+
+## ADR-019: Ordinary MP4 is a native codec contract
+
+**Status:** accepted
+
+The ordinary MP4 interaction means fast native H.264/AVC video plus AAC audio, not merely an MP4
+file extension. The yt-dlp adapter filters codecs before resolution, FPS, bitrate, and upstream
+quality ordering. Its default deterministic fallback selects the highest lower compatible
+resolution and exposes that actual height; operators may instead fail when the exact height is
+absent. WebM remains native VP9 + Opus and `best_original` remains unconstrained native-only.
+
+Heavy AV1/VP9-to-H.264 conversion is represented by `ContainerPolicy.EXPLICIT_TRANSCODE`, exposed
+only when the new default-off operator switch is enabled. A conservative estimate must fit inside
+the transcode stage timeout before FFmpeg can acquire the encode gate or spawn. Existing callback
+payloads continue to resolve to the ordinary native policy.

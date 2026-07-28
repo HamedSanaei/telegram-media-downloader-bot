@@ -10,7 +10,8 @@
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic access, required-channel membership, and rate policy |
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
-| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, native/inline compatibility probing, and thread/concurrency/timeout-bounded CRF-first transcoding |
+| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, codec-first native MP4/WebM selection, native/inline compatibility probing, and preflight/thread/concurrency/timeout-bounded explicit transcoding |
+| `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for native MP4/WebM selection, stream-copy arguments, and Best Original policy |
 | `src/telegram_media_bot/infrastructure/queue/` | ARQ enqueue plus official abort and transient-key finalization |
 | `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL jobs, durable-first cancellation, users, daily usage, delivery, block, and recovery store |
 | `src/telegram_media_bot/infrastructure/security/telegram_membership.py` | Telegram membership gateway with positive/negative Redis cache |
@@ -36,13 +37,13 @@
 | `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup command; Linux adds isolated transactional replacement, runtime probes, health verification, rollback, and `tmb` repair |
 | `scripts/build_release_archives.sh` | Reproducible tar/ZIP assets and v1.0.2-safe executable Linux updater packaging |
 | `scripts/tests/` | Mocked recovery plus opt-in privileged filesystem/SQLite release-upgrade integration tests |
-| `.github/workflows/ci.yml` | Quality/security gates, Compose validation, shared-cache Docker build, runtime dependency doctor, and CLI/multipart smoke tests |
-| `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication using the CI cache, runtime doctor/CLI/multipart smoke tests, and reproducible release assets |
+| `.github/workflows/ci.yml` | Quality/security gates, Compose validation, shared-cache Docker build, runtime dependency doctor, native-selector/remux, CLI, and multipart smoke tests |
+| `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication using the CI cache, runtime doctor/native-selector/remux/CLI/multipart smoke tests, and reproducible release assets |
 
 ## Upstream compatibility hot spots
 
 - `infrastructure/ytdlp/engine.py`: `YoutubeDL` lifecycle and calls;
-- `infrastructure/ytdlp/options.py`: semantic mode mapping and bounded complete-stream selection;
+- `infrastructure/ytdlp/options.py`: semantic mode mapping, codec-first native selection, deterministic lower-resolution policy, and bounded complete-stream selection;
 - `infrastructure/ytdlp/transcoder.py`: separate native-container and inline-streamability probes,
   quality-first MP4 H.264/AAC and WebM VP9/Opus conversion, and size-limited fallback;
 - `infrastructure/ytdlp/mapper.py`: upstream metadata to `MediaInfo`;

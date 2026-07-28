@@ -34,7 +34,9 @@ from telegram_media_bot.domain.errors import (
     MediaBotError,
     MediaTooLargeError,
     MediaUnavailableError,
+    NativeFormatUnavailableError,
     PlaylistNotAllowedError,
+    TranscodeRejectedError,
 )
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
@@ -65,6 +67,8 @@ from telegram_media_bot.telegram.texts import (
     FAILED_TEXT,
     MEDIA_TOO_LARGE_TEXT,
     MEDIA_UNAVAILABLE_TEXT,
+    NATIVE_FORMAT_UNAVAILABLE_TEXT,
+    TRANSCODE_REJECTED_TEXT,
 )
 from telegram_media_bot.telegram.ui import (
     container_keyboard,
@@ -700,8 +704,12 @@ def _controlled_failure_text(exc: MediaBotError) -> str:
         return MEDIA_TOO_LARGE_TEXT
     if isinstance(exc, PlaylistNotAllowedError):
         return COLLECTION_LIMIT_TEXT
+    if isinstance(exc, NativeFormatUnavailableError):
+        return NATIVE_FORMAT_UNAVAILABLE_TEXT
     if isinstance(exc, MediaUnavailableError):
         return MEDIA_UNAVAILABLE_TEXT
+    if isinstance(exc, TranscodeRejectedError):
+        return TRANSCODE_REJECTED_TEXT
     return FAILED_TEXT
 
 

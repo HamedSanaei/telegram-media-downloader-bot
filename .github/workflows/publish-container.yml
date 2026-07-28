@@ -85,6 +85,8 @@ jobs:
           image="${IMAGE_NAME}:${GITHUB_REF_NAME}"
           docker pull "$image"
           docker run --rm "$image" telegram-media-bot --help
+          docker run --rm "$image" \
+            python -m telegram_media_bot.infrastructure.ytdlp.native_selection_smoke
           docker run --rm --entrypoint sh "$image" -c '
             set -eu
             command -v ffmpeg

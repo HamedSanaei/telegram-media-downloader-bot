@@ -233,7 +233,7 @@ def build_router(
         await _save_callback_user(users, callback)
         try:
             await access_policy.authorize_request(callback.from_user.id, consume_rate_limit=False)
-            token, container, mode = _parse_selection_callback_full(callback.data)
+            token, container, callback_policy, mode = _parse_selection_callback_full(callback.data)
             selection = await asyncio.to_thread(
                 repository.get_selection,
                 token,
@@ -245,7 +245,13 @@ def build_router(
                 (
                     option
                     for option in selection.media.format_options
-                    if option.mode is mode and option.container is container
+                    if option.mode is mode
+                    and option.container is container
+                    and (
+                        option.container_policy is callback_policy
+                        if callback_policy is not None
+                        else option.container_policy is not ContainerPolicy.EXPLICIT_TRANSCODE
+                    )
                 ),
                 None,
             )
@@ -343,13 +349,21 @@ def build_router(
         await _save_callback_user(users, callback)
         try:
             await access_policy.authorize_request(callback.from_user.id, consume_rate_limit=False)
-            token, container = parse_container_callback(callback.data)
+            token, container, container_policy = _parse_container_callback_full(callback.data)
             selection = await asyncio.to_thread(
                 repository.get_selection,
                 token,
                 callback.from_user.id,
             )
-            if not any(option.container is container for option in selection.media.format_options):
+            if not any(
+                option.container is container
+                and (
+                    option.container_policy is container_policy
+                    if container_policy is not None
+                    else option.container_policy is not ContainerPolicy.EXPLICIT_TRANSCODE
+                )
+                for option in selection.media.format_options
+            ):
                 raise SelectionOwnershipError("Container was not offered")
         except SelectionExpiredError:
             await callback.answer(SELECTION_EXPIRED_TEXT, show_alert=True)
@@ -376,8 +390,8 @@ def build_router(
             return
         if isinstance(callback.message, Message):
             await callback.message.edit_text(
-                render_media_info(selection.media, container),
-                reply_markup=selection_keyboard(selection, container),
+                render_media_info(selection.media, container, container_policy),
+                reply_markup=selection_keyboard(selection, container, container_policy),
             )
         await callback.answer()
 
@@ -551,7 +565,7 @@ def _membership_text() -> str:
 def parse_selection_callback(
     data: str,
 ) -> tuple[SelectionToken, DownloadMode]:
-    token, container, mode = _parse_selection_callback_full(data)
+    token, container, _policy, mode = _parse_selection_callback_full(data)
     if container is not None:
         raise ValueError("Container-aware callbacks require the full parser")
     return token, mode
@@ -559,17 +573,34 @@ def parse_selection_callback(
 
 def _parse_selection_callback_full(
     data: str,
-) -> tuple[SelectionToken, OutputContainer | None, DownloadMode]:
+) -> tuple[SelectionToken, OutputContainer | None, ContainerPolicy | None, DownloadMode]:
     parts = data.split(":")
-    if len(parts) not in {3, 4} or parts[0] != "fmt" or not 10 <= len(parts[1]) <= 32:
+    if len(parts) not in {3, 4, 5} or parts[0] != "fmt" or not 10 <= len(parts[1]) <= 32:
         raise ValueError("Invalid selection callback")
     if len(parts) == 3:
-        return SelectionToken(parts[1]), None, DownloadMode(parts[2])
-    return SelectionToken(parts[1]), OutputContainer(parts[2]), DownloadMode(parts[3])
+        return SelectionToken(parts[1]), None, None, DownloadMode(parts[2])
+    if len(parts) == 4:
+        return SelectionToken(parts[1]), OutputContainer(parts[2]), None, DownloadMode(parts[3])
+    policy = ContainerPolicy(parts[3])
+    if policy is not ContainerPolicy.EXPLICIT_TRANSCODE:
+        raise ValueError("Only explicit transcode policy may appear in callback data")
+    return SelectionToken(parts[1]), OutputContainer(parts[2]), policy, DownloadMode(parts[4])
 
 
 def parse_container_callback(data: str) -> tuple[SelectionToken, OutputContainer]:
+    token, container, _policy = _parse_container_callback_full(data)
+    return token, container
+
+
+def _parse_container_callback_full(
+    data: str,
+) -> tuple[SelectionToken, OutputContainer, ContainerPolicy | None]:
     parts = data.split(":")
-    if len(parts) != 3 or parts[0] != "container" or not 10 <= len(parts[1]) <= 32:
+    if len(parts) not in {3, 4} or parts[0] != "container" or not 10 <= len(parts[1]) <= 32:
         raise ValueError("Invalid container callback")
-    return SelectionToken(parts[1]), OutputContainer(parts[2])
+    if len(parts) == 3:
+        return SelectionToken(parts[1]), OutputContainer(parts[2]), None
+    policy = ContainerPolicy(parts[3])
+    if policy is not ContainerPolicy.EXPLICIT_TRANSCODE:
+        raise ValueError("Only explicit transcode policy may appear in callback data")
+    return SelectionToken(parts[1]), OutputContainer(parts[2]), policy

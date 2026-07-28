@@ -133,9 +133,12 @@ A genuine change to the project-owned engine port requires an ADR and coordinate
 - `> telegram.max_upload_size_mb` and `<= multipart.max_total_size_mb`: stored multi-volume ZIP
   documents, each bounded by `multipart.part_size_mb` and sent through Local Bot API.
 
-`best_original` is native-only and never transcoded. Ordinary MP4 and WebM selections prefer a
-native candidate, then guarantee MP4 H.264/AAC or WebM VP9/Opus through cancellable FFmpeg
-conversion. Fixed resolution and at-most-60-FPS contracts are preserved.
+`best_original` is native-only and never transcoded. Ordinary MP4 selection is the fast native
+H.264/AVC + AAC contract: codec compatibility is filtered before quality/bitrate ranking, and the
+configured deterministic fallback either chooses the highest lower H.264 resolution or reports no
+compatible format. Ordinary WebM selects native VP9 + Opus. Neither ordinary button starts a codec
+conversion. A separately enabled explicit-MP4 policy may convert AV1/VP9 after a conservative
+duration/resolution/FPS/codec/thread/CPU timeout estimate accepts the work.
 
 Container mux compatibility, Telegram inline-video streamability, and document delivery are
 separate decisions. VP9 inside MP4 is a valid native MP4 artifact and is valid for document
@@ -151,9 +154,9 @@ terminates the process group, and an operator may disable forced conversion. Pro
 FFmpeg's machine-readable channel without exposing source paths. Docker can optionally add a worker
 CPU quota through `.env`.
 
-Fixed-resolution candidates are exact-height contracts: `video_2160` is absent unless a real 2160p
-stream can be combined with audio, and download cannot silently fall back. Inspection and download
-use the same adapter-owned bounded selector. Component sizes are summed from `filesize`, then
+Fixed-resolution candidates are exact-height contracts except for the documented fast-MP4 native
+fallback. The UI displays the actual selected height when a lower H.264 stream is used. Inspection
+and download use the same adapter-owned bounded selector. Component sizes are summed from `filesize`, then
 `filesize_approx`, then bitrate and duration; incomplete metadata remains explicitly unknown.
 
 Delivery reads through a tracked `InputFile`. Byte progress ends when the HTTP body has streamed to

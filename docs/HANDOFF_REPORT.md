@@ -1,9 +1,23 @@
 # Handoff verification report
 
-Generated: 2026-07-27
+Generated: 2026-07-28
 
 ## Current change addendum
 
+- Version 1.0.4 makes ordinary MP4 a native H.264/AVC + AAC stream-copy contract. Codec
+  compatibility is evaluated before resolution/FPS/bitrate; AV1 format 399-like candidates cannot
+  enter the fast-MP4 plan merely because their extension is MP4.
+- The default `lower_resolution` policy selects the highest lower compatible H.264 stream and
+  discloses the actual output height. `fail` rejects instead. WebM remains native VP9 + Opus and
+  `best_original` remains codec-preserving.
+- Converted MP4 uses a separate backward-compatible callback policy, is hidden by default, and
+  must pass a conservative duration/pixel/FPS/codec/thread/cgroup-CPU timeout estimate before
+  FFmpeg starts. Rejection is a non-retryable domain result with user guidance.
+- Native MP4/M4A merging explicitly supplies `-c:v copy -c:a copy -movflags +faststart`; no
+  `libx264`, scaling, FPS filter, CRF, or AAC encode argument is present on that path.
+- CI and the tag publication workflow run the same packaged, network-free selector smoke inside the
+  final runtime image, asserting `137+140`, rejecting `399`, checking native `248+251` WebM,
+  stream-copy-only merger arguments, and Best Original normalization.
 - The v1.0.3 updater runs from an isolated copy, validates complete staged scripts/Compose/config,
   restores archive executable modes, installs application entries through rollback snapshots,
   performs runtime-user filesystem and SQLite WAL probes, verifies post-start health, and restores
@@ -23,7 +37,7 @@ Generated: 2026-07-27
   restored if permission migration is unsafe.
 - The runtime image guarantees both `7zz` and `7z`; CI and publication smoke tests create, split,
   and verify a real archive rather than checking package text only.
-- Project and package metadata are aligned at `1.0.3`; the lockfile changed only the editable
+- Project and package metadata are aligned at `1.0.4`; the lockfile changed only the editable
   project version, with no dependency upgrade.
 - Instagram automatic downloads now create and enqueue the same native-only `best_original`
   contract. `force_mp4` selects native MP4 video plus M4A audio for merge/remux only; disabling it
@@ -35,8 +49,8 @@ Generated: 2026-07-27
   quality-pass result.
 - Structured selection/transcode logs include source container/codecs/size, selected format IDs,
   reason, target codec, CRF or bitrate, and final size.
-- The exact v1.0.0 configuration fixture and a representative v1.0.1 configuration load unchanged
-  under v1.0.3. Mocked Linux and Windows
+- The exact v1.0.0 configuration fixture and representative v1.0.1/v1.0.2/v1.0.3 configurations
+  load unchanged under v1.0.4. Mocked Linux and Windows
   patch-upgrade tests confirm that only `TMB_IMAGE` changes in `.env`, while config, cookies,
   SQLite, Redis, and existing downloads remain intact.
 - CI and release image builds now share the
@@ -88,8 +102,9 @@ session is present.
 - Core branch coverage: 83.07%, above the enforced 80% floor.
 - Architecture boundary check: passed; only
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
-- UTF-8/text integrity: passed for 165 text files.
-- Deterministic source manifest regenerated and verified with 171 release entries.
+- Default non-contract suite: 249 passed, 7 skipped, 9 deselected; total branch coverage 82.26%.
+- UTF-8/text integrity: passed for 168 text files.
+- Deterministic source manifest regenerated and verified with 174 release entries.
 - SQLite migration, WAL contention, atomic usage, and cancel-safe recovery tests passed.
 - Linux and Windows mocked `tmb update` tests passed for success, release-download failure, and
   checksum failure. Linux additionally passed permission rollback, candidate crash-state rollback,
@@ -103,14 +118,15 @@ session is present.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
-- Python 1.0.3 sdist and wheel builds passed.
+- Python 1.0.4 sdist and wheel builds passed.
 - The privileged v1.0.2-to-v1.0.3 filesystem/SQLite/Docker upgrade test could not start because no
   Docker, Podman, or Nerdctl executable is installed on this host.
 - Local ignored `config.yaml` passed `config-check` without printing secrets.
 - `git diff --check`: passed.
 
 Tests cover all-channel membership, administrator bypass, cache behavior, proxy schemes and legacy
-behavior, container callbacks, MP4/WebM selectors, fixed-height no-fallback behavior, WebM
+behavior, old/new container callbacks, codec-first MP4 selection, lower-resolution/fail fallback,
+native WebM, pre-spawn timeout rejection, fixed-height behavior, WebM
 conversion/delivery, dynamic attribution, multi-artifact delivery, SQLite migration and usage
 idempotency, tracked upload progress, multipart persistence, Local API migration safety, and safe
 interactive configuration output.

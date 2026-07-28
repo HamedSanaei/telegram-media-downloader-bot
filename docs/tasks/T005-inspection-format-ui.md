@@ -1,6 +1,6 @@
 # T005 - Inspection and format selection
 
-**Status:** complete (container/Instagram size-safety fix 2026-07-27)
+**Status:** complete (native MP4 codec-first regression fix 2026-07-28)
 
 Inspection runs as an ARQ worker job. Normalized metadata is stored in SQLite behind an opaque,
 owner-bound, expiring selection token. Callback data contains only the token and a configured
@@ -13,6 +13,11 @@ two-step Container -> semantic-quality callback. MP4/WebM candidates state wheth
 or require guaranteed conversion. Instagram video URLs bypass the choice UI and enqueue
 native-only `best_original`; optional MP4 forcing selects native MP4 video plus M4A and never turns
 VP9 into an implicit H.264 transcode.
+
+Fast MP4 now filters native H.264/AVC + AAC before ranking, optionally falls back to the highest
+lower compatible resolution, and reports the actual height. Native WebM remains VP9 + Opus.
+CPU-heavy MP4 conversion is a separate backward-compatible callback policy and is hidden unless
+explicitly enabled.
 
 ## Deliverables
 

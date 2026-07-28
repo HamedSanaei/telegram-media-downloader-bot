@@ -59,6 +59,13 @@ def test_container_selection_is_tokenized_and_only_offers_real_combinations() ->
                 container_policy=ContainerPolicy.GUARANTEED,
                 height=720,
             ),
+            MediaFormatOption(
+                mode=DownloadMode.VIDEO_1080,
+                container=OutputContainer.MP4,
+                container_policy=ContainerPolicy.EXPLICIT_TRANSCODE,
+                requires_transcode=True,
+                height=1080,
+            ),
         ),
     )
     selection = SelectionRecord(
@@ -73,10 +80,21 @@ def test_container_selection_is_tokenized_and_only_offers_real_combinations() ->
 
     containers = container_keyboard(selection)
     mp4 = selection_keyboard(selection, OutputContainer.MP4)
+    converted = selection_keyboard(
+        selection,
+        OutputContainer.MP4,
+        ContainerPolicy.EXPLICIT_TRANSCODE,
+    )
 
     assert containers.inline_keyboard[0][0].callback_data == ("container:opaque-token-123:mp4")
     assert len(mp4.inline_keyboard) == 1
     assert mp4.inline_keyboard[0][0].callback_data == ("fmt:opaque-token-123:mp4:video_1080")
+    assert containers.inline_keyboard[2][0].callback_data == (
+        "container:opaque-token-123:mp4:explicit_transcode"
+    )
+    assert converted.inline_keyboard[0][0].callback_data == (
+        "fmt:opaque-token-123:mp4:explicit_transcode:video_1080"
+    )
 
 
 def test_filename_and_caption_are_sanitized() -> None:
@@ -164,3 +182,28 @@ def test_delivery_progress_distinguishes_transfer_from_telegram_processing() -> 
     assert "پیشرفت کل: 50٪" in render_delivery_progress(uploading)
     assert "در حال پردازش" in render_delivery_progress(finalizing)
     assert "100٪" not in render_delivery_progress(finalizing)
+
+
+def test_fast_mp4_lower_resolution_is_disclosed_to_user() -> None:
+    info = MediaInfo(
+        media_id="id",
+        title="Title",
+        source="youtube",
+        kind=MediaKind.VIDEO,
+        webpage_url="https://example.com/media",
+        format_options=(
+            MediaFormatOption(
+                mode=DownloadMode.VIDEO_1080,
+                container=OutputContainer.MP4,
+                container_policy=ContainerPolicy.GUARANTEED,
+                height=720,
+                selection_reason="native_h264_lower_resolution",
+                fallback_reason="exact_h264_not_available",
+            ),
+        ),
+    )
+
+    text = render_media_info(info, OutputContainer.MP4)
+
+    assert "720p" in text
+    assert "MP4 سازگار با وضوح پایین‌تر" in text

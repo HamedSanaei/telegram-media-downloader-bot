@@ -10,6 +10,7 @@ from telegram_media_bot.domain.errors import (
     JobCancelledError,
     MediaTooLargeError,
     PostProcessingError,
+    TranscodeRejectedError,
 )
 from telegram_media_bot.domain.models import OutputContainer
 from telegram_media_bot.infrastructure.ytdlp import transcoder
@@ -205,6 +206,50 @@ def test_operator_can_disable_heavy_transcoding(tmp_path: Path) -> None:
         )
 
 
+def test_timeout_estimate_rejects_long_av1_without_spawning_ffmpeg(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"media")
+    spawned = False
+    monkeypatch.setattr(transcoder, "_find_executable", lambda name: name)
+    monkeypatch.setattr(transcoder, "_effective_cpu_capacity", lambda: 1.5)
+    monkeypatch.setattr(
+        transcoder,
+        "_probe_video",
+        lambda _ffprobe, _source: transcoder.VideoProbe(
+            2970.0,
+            1080,
+            True,
+            video_codec="av1",
+            audio_codec="aac",
+            source_container="mov,mp4",
+            width=1920,
+            fps=60.0,
+        ),
+    )
+
+    def unexpected_run(*_args: object, **_kwargs: object) -> None:
+        nonlocal spawned
+        spawned = True
+
+    monkeypatch.setattr(transcoder, "_run_process", unexpected_run)
+
+    with pytest.raises(TranscodeRejectedError):
+        transcoder.transcode_video_to_container(
+            source,
+            target_height=1080,
+            max_size_bytes=1024 * 1024 * 1024,
+            container=OutputContainer.MP4,
+            timeout_seconds=1500,
+            threads=2,
+        )
+
+    assert not spawned
+    assert not (tmp_path / "source.telegram.mp4").exists()
+
+
 def test_ffmpeg_process_is_terminated_when_cancelled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -228,12 +273,14 @@ def test_ffmpeg_process_is_terminated_when_cancelled(
             terminated.append(candidate.pid)
 
     monkeypatch.setattr(transcoder, "_terminate_process_tree", terminate)
+    incomplete = tmp_path / "output.mp4"
+    incomplete.write_bytes(b"partial")
 
     with pytest.raises(JobCancelledError):
         transcoder._run_process(
-            ["ffmpeg", "-i", "input", str(tmp_path / "output.mp4")],
+            ["ffmpeg", "-i", "input", str(incomplete)],
             lambda: True,
-            output=tmp_path / "output.mp4",
+            output=incomplete,
             duration_seconds=30,
             threads=2,
             timeout_seconds=60,
@@ -241,3 +288,4 @@ def test_ffmpeg_process_is_terminated_when_cancelled(
         )
 
     assert terminated == [123]
+    assert not incomplete.exists()

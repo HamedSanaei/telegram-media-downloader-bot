@@ -6,12 +6,17 @@ from pathlib import Path
 from typing import Any
 
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.errors import MediaTooLargeError
+from telegram_media_bot.domain.errors import (
+    MediaTooLargeError,
+    MediaUnavailableError,
+    NativeFormatUnavailableError,
+)
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
     DownloadRequest,
     MediaFormatOption,
+    Mp4NativeFallback,
     OutputContainer,
     SizeConfidence,
 )
@@ -80,6 +85,10 @@ class YtDlpOptionsFactory:
         )
         if request.container in {OutputContainer.MP4, OutputContainer.WEBM}:
             options["merge_output_format"] = request.container.value
+            if request.container_policy is not ContainerPolicy.EXPLICIT_TRANSCODE:
+                options["postprocessor_args"] = {
+                    "merger+ffmpeg_o": native_merge_output_args(request.container)
+                }
         if request.allow_collection:
             options["noplaylist"] = False
             options["playlistend"] = self._settings.media.instagram.max_videos
@@ -96,8 +105,8 @@ class YtDlpOptionsFactory:
         if request.container not in {OutputContainer.MP4, OutputContainer.WEBM}:
             return base
         native = native_container_selector(request.container)
-        if request.container_policy is ContainerPolicy.GUARANTEED:
-            return f"{native}/{base}"
+        if request.container_policy is ContainerPolicy.EXPLICIT_TRANSCODE:
+            return base
         return native
 
     def _base_options(self) -> dict[str, Any]:
@@ -150,12 +159,23 @@ def bounded_format_selector(
     *,
     mode: DownloadMode,
     max_size_bytes: int,
+    compatible_container: OutputContainer | None = None,
+    mp4_native_fallback: Mp4NativeFallback = Mp4NativeFallback.FAIL,
 ) -> FormatSelector:
     """Choose the best complete configured selection whose known stream sum fits."""
 
     def select(context: dict[str, Any]) -> Iterator[dict[str, Any]]:
         formats = [item for item in context.get("formats", []) if isinstance(item, dict)]
+        candidate_count = len(formats)
+        if compatible_container is not None:
+            formats = [
+                item for item in formats if _component_matches_container(item, compatible_container)
+            ]
         target_height = video_target_height(mode)
+        allow_lower_height = (
+            compatible_container is OutputContainer.MP4
+            and mp4_native_fallback is Mp4NativeFallback.LOWER_RESOLUTION
+        )
         if target_height is not None:
             formats = [
                 item
@@ -169,7 +189,7 @@ def bounded_format_selector(
                     isinstance(item.get("height"), (int, float))
                     and (
                         int(item["height"]) == target_height
-                        if mode in _FIXED_VIDEO_MODES
+                        if mode in _FIXED_VIDEO_MODES and not allow_lower_height
                         else int(item["height"]) <= target_height
                     )
                 )
@@ -241,6 +261,10 @@ def bounded_format_selector(
         if unknown is not None:
             yield unknown[1]
             return
+        if compatible_container is not None and candidate_count:
+            raise NativeFormatUnavailableError(
+                f"No native {compatible_container.value} codec-compatible format is available"
+            )
         raise MediaTooLargeError("No complete configured format fits the size limit")
 
     return select
@@ -257,6 +281,8 @@ def inspect_format_option(
     container: OutputContainer | None = None,
     container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
     requires_transcode: bool = False,
+    compatible_container: OutputContainer | None = None,
+    mp4_native_fallback: Mp4NativeFallback = Mp4NativeFallback.FAIL,
 ) -> MediaFormatOption | None:
     try:
         candidate = next(
@@ -265,11 +291,13 @@ def inspect_format_option(
                     base_selector,
                     mode=mode,
                     max_size_bytes=max_size_bytes,
+                    compatible_container=compatible_container,
+                    mp4_native_fallback=mp4_native_fallback,
                 )(context)
             ),
             None,
         )
-    except MediaTooLargeError:
+    except MediaTooLargeError, MediaUnavailableError:
         return None
     if candidate is None:
         return None
@@ -349,7 +377,7 @@ def _describe_candidate(
         or (
             container is not None
             and container in {OutputContainer.MP4, OutputContainer.WEBM}
-            and container_policy is ContainerPolicy.GUARANTEED
+            and container_policy in {ContainerPolicy.GUARANTEED, ContainerPolicy.EXPLICIT_TRANSCODE}
             and not _components_match_container(components, container)
         ),
         width=_positive_int(video.get("width")) if video is not None else None,
@@ -358,6 +386,18 @@ def _describe_candidate(
         is_hdr=any(_is_hdr(item) for item in videos),
         size_bytes=size_bytes,
         size_confidence=confidence,
+        selection_reason=_selection_reason(
+            mode=mode,
+            container=container,
+            container_policy=container_policy,
+            components=components,
+            selected_height=_positive_int(video.get("height")) if video is not None else None,
+        ),
+        fallback_reason=_fallback_reason(
+            mode=mode,
+            container=container,
+            selected_height=_positive_int(video.get("height")) if video is not None else None,
+        ),
     )
 
 
@@ -458,6 +498,14 @@ def native_container_selector(container: OutputContainer) -> str:
     return "ba/b"
 
 
+def native_merge_output_args(container: OutputContainer) -> list[str]:
+    """Return explicit stream-copy output arguments for yt-dlp's FFmpeg merger."""
+    args = ["-c:v", "copy", "-c:a", "copy"]
+    if container is OutputContainer.MP4:
+        args.extend(["-movflags", "+faststart"])
+    return args
+
+
 def _components_match_container(
     components: tuple[Mapping[str, Any], ...],
     container: OutputContainer,
@@ -479,6 +527,81 @@ def _components_match_container(
             codec == "opus" for codec in audio_codecs
         )
     return False
+
+
+def _component_matches_container(
+    item: Mapping[str, Any],
+    container: OutputContainer,
+) -> bool:
+    ext = str(item.get("ext") or item.get("container") or "").casefold()
+    video_codec = str(item.get("vcodec") or "").casefold()
+    audio_codec = str(item.get("acodec") or "").casefold()
+    has_video = video_codec not in {"", "none"}
+    has_audio = audio_codec not in {"", "none"}
+    if not has_video and not has_audio:
+        return False
+    if container is OutputContainer.MP4:
+        video_ok = not has_video or (
+            ext in {"mp4", "m4v"} and (video_codec == "h264" or video_codec.startswith("avc1"))
+        )
+        audio_ok = not has_audio or (
+            ext in {"m4a", "mp4"} and (audio_codec == "aac" or audio_codec.startswith("mp4a"))
+        )
+        return video_ok and audio_ok
+    if container is OutputContainer.WEBM:
+        video_ok = not has_video or (
+            ext == "webm" and (video_codec == "vp9" or video_codec.startswith("vp09"))
+        )
+        audio_ok = not has_audio or (ext == "webm" and audio_codec == "opus")
+        return video_ok and audio_ok
+    return False
+
+
+def _selection_reason(
+    *,
+    mode: DownloadMode,
+    container: OutputContainer | None,
+    container_policy: ContainerPolicy,
+    components: tuple[Mapping[str, Any], ...],
+    selected_height: int | None,
+) -> str | None:
+    if mode is DownloadMode.BEST_ORIGINAL:
+        return "best_original_native"
+    if container_policy is ContainerPolicy.EXPLICIT_TRANSCODE:
+        return "explicit_transcode_selected"
+    if container is OutputContainer.WEBM:
+        return "webm_native"
+    if container is not OutputContainer.MP4:
+        return None
+    target_height = video_target_height(mode)
+    if target_height is not None and selected_height == target_height:
+        return "native_h264_exact_resolution"
+    if (
+        target_height is not None
+        and selected_height is not None
+        and selected_height < target_height
+    ):
+        return "native_h264_lower_resolution"
+    if len(components) == 1:
+        return "native_combined_h264_mp4"
+    return "native_h264_exact_resolution"
+
+
+def _fallback_reason(
+    *,
+    mode: DownloadMode,
+    container: OutputContainer | None,
+    selected_height: int | None,
+) -> str | None:
+    target_height = video_target_height(mode)
+    if (
+        container is OutputContainer.MP4
+        and target_height is not None
+        and selected_height is not None
+        and selected_height < target_height
+    ):
+        return "exact_h264_not_available"
+    return None
 
 
 def final_media_files(directory: Path) -> list[Path]:

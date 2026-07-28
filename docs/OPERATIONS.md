@@ -126,3 +126,13 @@ Revert the dependency/release commit (including `uv.lock`) and rebuild the previ
 Never update packages inside a running container. `./manage.sh clean` removes only local download and
 temporary job directories; it intentionally preserves SQLite history, configuration, cookies, and
 Redis state.
+
+## Native MP4 and explicit conversion
+
+The normal MP4 button is a low-latency native path and never starts AV1/VP9-to-H.264 encoding.
+`media.mp4_native_fallback: lower_resolution` selects the highest lower H.264/AAC resolution when
+the requested height is available only as AV1/VP9; set it to `fail` to require an exact native
+height. Operators may expose the separate resource-heavy converted-MP4 choice with
+`media.transcode.explicit_mp4_enabled: true`. Rejections logged as
+`transcode_rejected_timeout_estimate` are intentional preflight safety decisions; suggest fast MP4
+at a lower resolution or Best Original instead of increasing the job timeout.

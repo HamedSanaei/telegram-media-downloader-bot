@@ -34,9 +34,11 @@ seconds. `telegram.upload_chunk_size_kb` defaults to 1024 KiB and
 timeouts. Public Bot API is capped at 50 MB; migrated Local API may use an operator ceiling up to
 1900 MB.
 
-Inspection runs each semantic selector against actual formats. Fixed modes require their exact
-height and never silently fall back. `best` remains bounded to 1080p; `best_original` is never
-transcoded. Displayed size is the selected video+audio sum: exact `filesize`, then estimated
+Inspection runs each semantic selector against actual formats. Fixed modes normally require their
+exact height. Fast MP4 alone follows `media.mp4_native_fallback`: `lower_resolution` (default)
+selects the highest lower native H.264/AAC plan and displays its actual height; `fail` offers no
+lower choice. `best` remains bounded to 1080p; `best_original` is never transcoded. Displayed size
+is the selected video+audio sum: exact `filesize`, then estimated
 `filesize_approx` or bitrate multiplied by duration. Missing data is shown as unknown instead of
 hiding the option; MP3 uses configured output bitrate and duration. Final and cumulative transfer
 limits remain authoritative.
@@ -59,8 +61,10 @@ HTTP, HTTPS, SOCKS4, SOCKS4a, SOCKS5, and SOCKS5h. A legacy configuration that h
 `proxy_enabled` remains enabled; explicit `false` always disables it. The value is a secret and is
 never printed.
 
-Ordinary video options carry `mp4` or `webm`. Native candidates are preferred; guaranteed fallback
-uses H.264/AAC for MP4 and VP9/Opus for WebM. `best_original` remains native-only. Instagram policy
+Ordinary video options carry fast `mp4` or native `webm`. Fast MP4 admits only native MP4
+H.264/AVC (`h264`/`avc1`) video plus M4A/MP4 AAC (`aac`/`mp4a`) audio before quality and bitrate
+ranking. AV1/`av01` and VP9/`vp09` in MP4 are not fast-MP4 candidates and never trigger a hidden
+conversion. Native WebM remains VP9 + Opus. `best_original` remains native-only. Instagram policy
 is configured under `media.instagram`: automatic downloads always use `best_original` with
 `NATIVE_ONLY`. When `force_mp4: true`, the best native `ext=mp4` video and `ext=m4a` audio are
 selected and only merged/remuxed. When `force_mp4: false`, no container is hard-coded and the
@@ -74,14 +78,16 @@ because `send_video` prefers H.264/AAC. The media size setting is a hard ceiling
 forced codec conversion starts with CRF (`libx264` for MP4), and only an oversized or
 disproportionately inflated quality pass activates bitrate-limited fallback.
 
-`media.transcode` defaults keep v1.0.0, v1.0.1, and v1.0.2 files valid without manual edits in
-v1.0.3:
-`enabled: true`,
+`media.transcode` and `media.mp4_native_fallback` defaults keep v1.0.0 through v1.0.3 files valid
+without manual edits in v1.0.4:
+`enabled: true`, `explicit_mp4_enabled: false`, `mp4_native_fallback: lower_resolution`,
 `threads: 2`, `max_concurrent: 1`, `timeout_seconds: 1500`, and
 `progress_interval_seconds: 10`. The thread value is passed to FFmpeg itself; the concurrency gate
-is process-local to the supported single-worker topology. Disabling transcoding preserves native
-and `best_original` delivery, but a non-native `guaranteed` request that genuinely needs a codec
-conversion fails explicitly. `TMB_WORKER_CPUS` in `.env` optionally adds a persistent Docker CPU
+is process-local to the supported single-worker topology. `explicit_mp4_enabled: true` exposes the
+separate slow converted-MP4 choice. Before FFmpeg starts, a conservative estimate uses duration,
+pixels, FPS, source codec, encoder threads, detected cgroup CPU capacity, and the stage timeout; an
+unsafe estimate is rejected with native-lower/Best Original guidance. `TMB_WORKER_CPUS` in `.env`
+optionally adds a persistent Docker CPU
 quota (for example `1.5`); its default `0` leaves Docker unlimited.
 
 After model changes regenerate and review the schema:

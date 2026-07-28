@@ -366,6 +366,10 @@
           "title": "Max Duration Seconds",
           "type": "integer"
         },
+        "mp4_native_fallback": {
+          "$ref": "#/$defs/Mp4NativeFallback",
+          "default": "lower_resolution"
+        },
         "formats": {
           "$ref": "#/$defs/FormatSection"
         },
@@ -382,6 +386,14 @@
       ],
       "title": "MediaSection",
       "type": "object"
+    },
+    "Mp4NativeFallback": {
+      "enum": [
+        "lower_resolution",
+        "fail"
+      ],
+      "title": "Mp4NativeFallback",
+      "type": "string"
     },
     "MultipartSection": {
       "additionalProperties": false,
@@ -809,6 +821,11 @@
         "enabled": {
           "default": true,
           "title": "Enabled",
+          "type": "boolean"
+        },
+        "explicit_mp4_enabled": {
+          "default": false,
+          "title": "Explicit Mp4 Enabled",
           "type": "boolean"
         },
         "threads": {

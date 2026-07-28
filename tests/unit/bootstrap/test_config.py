@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.domain.errors import ConfigurationError
+from telegram_media_bot.domain.models import Mp4NativeFallback
 
 
 def test_example_configuration_is_valid() -> None:
@@ -33,6 +34,8 @@ def test_v1_0_0_configuration_remains_valid_without_manual_rewrite() -> None:
     assert settings.media.transcode.threads == 2
     assert settings.media.transcode.max_concurrent == 1
     assert settings.media.transcode.timeout_seconds == 1500
+    assert not settings.media.transcode.explicit_mp4_enabled
+    assert settings.media.mp4_native_fallback is Mp4NativeFallback.LOWER_RESOLUTION
 
 
 def test_v1_0_1_configuration_remains_valid_without_manual_rewrite() -> None:
@@ -46,16 +49,31 @@ def test_v1_0_1_configuration_remains_valid_without_manual_rewrite() -> None:
     assert settings.media.transcode.max_concurrent == 1
     assert settings.media.transcode.timeout_seconds == 1500
     assert settings.media.transcode.progress_interval_seconds == 10
+    assert not settings.media.transcode.explicit_mp4_enabled
+    assert settings.media.mp4_native_fallback is Mp4NativeFallback.LOWER_RESOLUTION
 
 
 def test_v1_0_2_configuration_remains_valid_without_manual_rewrite() -> None:
     raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw["media"].pop("mp4_native_fallback")
+    raw["media"]["transcode"].pop("explicit_mp4_enabled")
 
     settings = Settings.model_validate(raw)
 
     assert settings.media.transcode.threads == 2
     assert settings.media.transcode.max_concurrent == 1
     assert settings.media.transcode.timeout_seconds == 1500
+
+
+def test_v1_0_3_configuration_remains_valid_without_manual_rewrite() -> None:
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw["media"].pop("mp4_native_fallback")
+    raw["media"]["transcode"].pop("explicit_mp4_enabled")
+
+    settings = Settings.model_validate(raw)
+
+    assert settings.media.mp4_native_fallback is Mp4NativeFallback.LOWER_RESOLUTION
+    assert not settings.media.transcode.explicit_mp4_enabled
 
 
 def test_unknown_configuration_key_is_rejected(tmp_path: Path) -> None:

@@ -31,6 +31,12 @@ class OutputContainer(StrEnum):
 class ContainerPolicy(StrEnum):
     NATIVE_ONLY = "native_only"
     GUARANTEED = "guaranteed"
+    EXPLICIT_TRANSCODE = "explicit_transcode"
+
+
+class Mp4NativeFallback(StrEnum):
+    LOWER_RESOLUTION = "lower_resolution"
+    FAIL = "fail"
 
 
 def normalize_container_policy(
@@ -163,6 +169,8 @@ class MediaFormatOption:
     is_hdr: bool = False
     size_bytes: int | None = None
     size_confidence: SizeConfidence = SizeConfidence.UNKNOWN
+    selection_reason: str | None = None
+    fallback_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

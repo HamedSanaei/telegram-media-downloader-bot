@@ -4,12 +4,13 @@ from typing import Any
 import pytest
 
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.errors import MediaTooLargeError
+from telegram_media_bot.domain.errors import MediaTooLargeError, MediaUnavailableError
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
     DownloadRequest,
     JobId,
+    Mp4NativeFallback,
     OutputContainer,
 )
 from telegram_media_bot.infrastructure.ytdlp.options import (
@@ -84,7 +85,7 @@ def test_explicit_proxy_disable_wins_over_configured_secret(settings: Settings) 
 
 
 @pytest.mark.parametrize("container", [OutputContainer.MP4, OutputContainer.WEBM])
-def test_guaranteed_container_uses_native_first_then_safe_fallback(
+def test_guaranteed_container_uses_only_native_compatible_selector(
     settings: Settings,
     tmp_path: Path,
     container: OutputContainer,
@@ -100,8 +101,18 @@ def test_guaranteed_container_uses_native_first_then_safe_fallback(
 
     options = YtDlpOptionsFactory(settings).download_options(request)
 
-    assert options["format"].endswith(f"/{settings.media.formats.video_1080}")
+    assert options["format"] == (
+        "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+        if container is OutputContainer.MP4
+        else "bv*[ext=webm]+ba[ext=webm]/b[ext=webm]"
+    )
+    assert settings.media.formats.video_1080 not in options["format"]
     assert options["merge_output_format"] == container.value
+    assert "libx264" not in repr(options)
+    merger_args = options["postprocessor_args"]["merger+ffmpeg_o"]
+    assert merger_args[:4] == ["-c:v", "copy", "-c:a", "copy"]
+    if container is OutputContainer.MP4:
+        assert merger_args[-2:] == ["-movflags", "+faststart"]
 
 
 def test_best_original_normalizes_guaranteed_policy_to_native_only(
@@ -264,6 +275,114 @@ def test_fixed_mode_never_falls_back_to_lower_height() -> None:
         list(selector({"formats": formats}))
 
 
+def test_mp4_prefers_h264_over_higher_bitrate_av1_at_same_height() -> None:
+    formats = [
+        _native_format("audio", ext="m4a", acodec="mp4a.40.2", size=10),
+        _native_format("h264", ext="mp4", vcodec="avc1.640028", height=1080, size=40),
+        _native_format("av1", ext="mp4", vcodec="av01.0.08M.08", height=1080, size=90),
+    ]
+    selector = bounded_format_selector(
+        _best_video_audio_selector,
+        mode=DownloadMode.VIDEO_1080,
+        max_size_bytes=200,
+        compatible_container=OutputContainer.MP4,
+        mp4_native_fallback=Mp4NativeFallback.LOWER_RESOLUTION,
+    )
+
+    selected = list(selector({"formats": formats}))
+
+    assert [item["format_id"] for item in selected[0]["requested_formats"]] == [
+        "h264",
+        "audio",
+    ]
+
+
+def test_mp4_falls_back_to_lower_native_h264_resolution() -> None:
+    formats = [
+        _native_format("audio", ext="m4a", acodec="aac", size=10),
+        _native_format("h264-720", ext="mp4", vcodec="h264", height=720, size=40),
+        _native_format("av1-1080", ext="mp4", vcodec="av1", height=1080, size=90),
+    ]
+    selector = bounded_format_selector(
+        _best_video_audio_selector,
+        mode=DownloadMode.VIDEO_1080,
+        max_size_bytes=200,
+        compatible_container=OutputContainer.MP4,
+        mp4_native_fallback=Mp4NativeFallback.LOWER_RESOLUTION,
+    )
+
+    selected = list(selector({"formats": formats}))
+
+    assert selected[0]["requested_formats"][0]["format_id"] == "h264-720"
+
+
+def test_mp4_av1_is_not_native_compatible() -> None:
+    selector = bounded_format_selector(
+        _best_video_audio_selector,
+        mode=DownloadMode.VIDEO_1080,
+        max_size_bytes=200,
+        compatible_container=OutputContainer.MP4,
+        mp4_native_fallback=Mp4NativeFallback.LOWER_RESOLUTION,
+    )
+
+    with pytest.raises(MediaUnavailableError):
+        list(
+            selector(
+                {
+                    "formats": [
+                        _native_format("audio", ext="m4a", acodec="aac", size=10),
+                        _native_format(
+                            "av1", ext="mp4", vcodec="av01.0.08M.08", height=1080, size=90
+                        ),
+                    ]
+                }
+            )
+        )
+
+
+def test_mp4_fail_fallback_does_not_select_lower_h264() -> None:
+    selector = bounded_format_selector(
+        _best_video_audio_selector,
+        mode=DownloadMode.VIDEO_1080,
+        max_size_bytes=200,
+        compatible_container=OutputContainer.MP4,
+        mp4_native_fallback=Mp4NativeFallback.FAIL,
+    )
+
+    with pytest.raises(MediaUnavailableError):
+        list(
+            selector(
+                {
+                    "formats": [
+                        _native_format("audio", ext="m4a", acodec="aac", size=10),
+                        _native_format("h264-720", ext="mp4", vcodec="h264", height=720, size=40),
+                    ]
+                }
+            )
+        )
+
+
+def test_webm_vp9_opus_remains_native() -> None:
+    selector = bounded_format_selector(
+        _best_video_audio_selector,
+        mode=DownloadMode.VIDEO_1080,
+        max_size_bytes=200,
+        compatible_container=OutputContainer.WEBM,
+    )
+    selected = list(
+        selector(
+            {
+                "formats": [
+                    _native_format("opus", ext="webm", acodec="opus", size=10),
+                    _native_format("vp9", ext="webm", vcodec="vp09.00.40.08", height=1080, size=90),
+                ]
+            }
+        )
+    )
+
+    assert [item["format_id"] for item in selected[0]["requested_formats"]] == ["vp9", "opus"]
+
+
 def test_bounded_selector_supplies_complete_ytdlp_selector_context() -> None:
     formats = [
         _format("audio", size=10, audio=True),
@@ -366,6 +485,25 @@ def _format(
         "filesize": size,
         "vcodec": "av1" if video else "none",
         "acodec": "opus" if audio else "none",
+        "height": height,
+    }
+
+
+def _native_format(
+    format_id: str,
+    *,
+    ext: str,
+    size: int,
+    vcodec: str = "none",
+    acodec: str = "none",
+    height: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "format_id": format_id,
+        "ext": ext,
+        "filesize": size,
+        "vcodec": vcodec,
+        "acodec": acodec,
         "height": height,
     }
 

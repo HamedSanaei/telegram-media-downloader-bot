@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.0.4 - 2026-07-28
+
+- Prepared patch `1.0.4`: ordinary MP4 choices now rank native H.264/AVC + AAC ahead of
+  bitrate/quality, may deterministically fall back to a lower compatible resolution, and never
+  hide an AV1/VP9-to-H.264 transcode.
+- Added an opt-in, disabled-by-default converted-MP4 choice with a conservative preflight timeout
+  estimate; native WebM and `best_original` remain codec-preserving.
+- Added structured native-selection/fallback logging and deterministic production-like fixtures
+  for MP4, WebM, stream-copy, timeout rejection, and legacy callback/config compatibility.
+
 ## 1.0.3 - 2026-07-27
 
 - Prevented the updater from replacing its own executing script, added mandatory full-script Bash

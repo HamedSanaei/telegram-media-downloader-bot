@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -10,6 +11,7 @@ from telegram_media_bot.domain.errors import (
     DownloadFailedError,
     JobCancelledError,
     MediaTooLargeError,
+    MediaUnavailableError,
     RateLimitedError,
     UnsafeUrlError,
 )
@@ -106,12 +108,14 @@ def test_inspect_offers_only_real_fixed_video_heights(
             "formats": [
                 {
                     "format_id": "audio",
+                    "ext": "webm",
                     "vcodec": "none",
                     "acodec": "opus",
                     "filesize": 10,
                 },
                 {
                     "format_id": "video-1080",
+                    "ext": "webm",
                     "vcodec": "vp9",
                     "acodec": "none",
                     "height": 1080,
@@ -213,6 +217,7 @@ def test_instagram_collection_returns_ordered_mp4_video_artifacts(
         "is_guaranteed_container_compatible",
         lambda *_args: True,
     )
+    monkeypatch.setattr(engine_module, "is_inline_video_streamable", lambda *_args: True)
     configured = _without_dns_checks(settings)
 
     result = engine_module.YtDlpEngine(configured).download(
@@ -298,6 +303,191 @@ def test_best_original_vp9_mp4_under_limit_never_transcodes(
 
     assert result.file_path.suffix == ".mp4"
     assert result.file_size_bytes == 7 * 1024 * 1024
+
+
+def test_fast_mp4_selects_native_h264_and_never_transcodes(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ProductionYoutubeDL(FakeYoutubeDL):
+        format_selector: Callable[[dict[str, Any]], Iterable[dict[str, Any]]]
+        selected_ids: ClassVar[tuple[str, ...]] = ()
+        formats: ClassVar[list[dict[str, Any]]] = [
+            {
+                "format_id": "140",
+                "ext": "m4a",
+                "vcodec": "none",
+                "acodec": "mp4a.40.2",
+                "filesize": 10,
+                "protocol": "https",
+            },
+            {
+                "format_id": "137",
+                "ext": "mp4",
+                "vcodec": "avc1.640028",
+                "acodec": "none",
+                "height": 1080,
+                "fps": 30,
+                "filesize": 40,
+                "protocol": "https",
+            },
+            {
+                "format_id": "399",
+                "ext": "mp4",
+                "vcodec": "av01.0.08M.08",
+                "acodec": "none",
+                "height": 1080,
+                "fps": 60,
+                "filesize": 80,
+                "protocol": "https",
+            },
+        ]
+
+        def __init__(self, options: dict[str, Any]) -> None:
+            super().__init__(options)
+            self.format_selector = self._select
+
+        @staticmethod
+        def _select(context: dict[str, Any]) -> list[dict[str, Any]]:
+            videos = [item for item in context["formats"] if item["vcodec"] != "none"]
+            audios = [item for item in context["formats"] if item["acodec"] != "none"]
+            if not videos or not audios:
+                return []
+            video = videos[-1]
+            audio = audios[-1]
+            return [
+                {
+                    "format_id": f"{video['format_id']}+{audio['format_id']}",
+                    "requested_formats": [video, audio],
+                    "vcodec": video["vcodec"],
+                    "acodec": audio["acodec"],
+                }
+            ]
+
+        def extract_info(self, _url: str, *, download: bool) -> dict[str, Any]:
+            selected = next(iter(self.format_selector({"formats": self.formats})))
+            type(self).selected_ids = tuple(
+                str(item["format_id"]) for item in selected["requested_formats"]
+            )
+            if download:
+                output = Path(self.options["paths"]["home"])
+                output.mkdir(parents=True, exist_ok=True)
+                (output / "video.mp4").write_bytes(b"native")
+            return {
+                "id": "video",
+                "title": "Video",
+                "extractor_key": "Youtube",
+                "webpage_url": "https://example.test/video",
+                "ext": "mp4",
+                "vcodec": selected["vcodec"],
+                "acodec": selected["acodec"],
+                "height": 1080,
+                "fps": 30,
+                "formats": self.formats,
+                "requested_formats": selected["requested_formats"],
+            }
+
+    def unexpected_transcode(*_args: object, **_kwargs: object) -> Path:
+        raise AssertionError("Fast MP4 must never start a codec transcode")
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", ProductionYoutubeDL)
+    monkeypatch.setattr(engine_module, "transcode_video_to_container", unexpected_transcode)
+    monkeypatch.setattr(
+        engine_module,
+        "is_guaranteed_container_compatible",
+        lambda *_args: True,
+    )
+    monkeypatch.setattr(engine_module, "is_inline_video_streamable", lambda *_args: True)
+    monkeypatch.setattr(
+        engine_module,
+        "probe_video",
+        lambda _path: VideoProbe(
+            2970.0,
+            1080,
+            True,
+            video_codec="h264",
+            audio_codec="aac",
+            source_container="mov,mp4",
+        ),
+    )
+    configured = _without_dns_checks(settings)
+
+    result = engine_module.YtDlpEngine(configured).download(
+        DownloadRequest(
+            job_id=JobId("native-mp4"),
+            url="https://example.test/video",
+            mode=DownloadMode.VIDEO_1080,
+            output_directory=configured.storage.downloads_path() / "native-mp4",
+            container=OutputContainer.MP4,
+            container_policy=ContainerPolicy.GUARANTEED,
+        )
+    )
+
+    assert result.file_path.name == "video.mp4"
+    assert result.file_size_bytes == len(b"native")
+    assert ProductionYoutubeDL.selected_ids == ("137", "140")
+    assert "399" not in ProductionYoutubeDL.selected_ids
+
+
+def test_fast_mp4_with_only_av1_fails_before_transcoder(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Av1OnlyYoutubeDL(FakeYoutubeDL):
+        format_selector: Callable[[dict[str, Any]], Iterable[dict[str, Any]]]
+        formats: ClassVar[list[dict[str, Any]]] = [
+            {
+                "format_id": "140",
+                "ext": "m4a",
+                "vcodec": "none",
+                "acodec": "aac",
+                "filesize": 10,
+            },
+            {
+                "format_id": "399",
+                "ext": "mp4",
+                "vcodec": "av01.0.08M.08",
+                "acodec": "none",
+                "height": 1080,
+                "filesize": 80,
+            },
+        ]
+
+        def __init__(self, options: dict[str, Any]) -> None:
+            super().__init__(options)
+            self.format_selector = self._select
+
+        @staticmethod
+        def _select(context: dict[str, Any]) -> list[dict[str, Any]]:
+            videos = [item for item in context["formats"] if item["vcodec"] != "none"]
+            audios = [item for item in context["formats"] if item["acodec"] != "none"]
+            if not videos or not audios:
+                return []
+            return [{"requested_formats": [videos[-1], audios[-1]]}]
+
+        def extract_info(self, _url: str, *, download: bool) -> dict[str, Any]:
+            assert download
+            list(self.format_selector({"formats": self.formats}))
+            raise AssertionError("The incompatible selector should have failed")
+
+    def unexpected_transcode(*_args: object, **_kwargs: object) -> Path:
+        raise AssertionError("Fast MP4 must reject before FFmpeg")
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", Av1OnlyYoutubeDL)
+    monkeypatch.setattr(engine_module, "transcode_video_to_container", unexpected_transcode)
+    configured = _without_dns_checks(settings)
+
+    with pytest.raises(MediaUnavailableError):
+        engine_module.YtDlpEngine(configured).download(
+            DownloadRequest(
+                job_id=JobId("av1-only"),
+                url="https://example.test/video",
+                mode=DownloadMode.VIDEO_1080,
+                output_directory=configured.storage.downloads_path() / "av1-only",
+                container=OutputContainer.MP4,
+                container_policy=ContainerPolicy.GUARANTEED,
+            )
+        )
 
 
 def test_download_rejects_output_outside_storage(settings: Settings, tmp_path: Path) -> None:

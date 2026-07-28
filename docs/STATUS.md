@@ -8,9 +8,10 @@ Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
-Hotfix release `1.0.3` addresses the updater self-replacement, executable-mode, SQLite permission,
-transactional rollback, and crash-loop regressions found in published `1.0.2`. Existing
-v1.0.0/v1.0.1/v1.0.2 configuration and durable runtime state remain upgrade-compatible.
+Patch `1.0.4` fixes the published v1.0.3 MP4 selector regression: normal MP4 is native H.264/AAC,
+codec compatibility ranks before bitrate, and AV1/VP9 conversion is an explicit disabled-by-default
+choice guarded by a timeout estimate. Existing v1.0.0 through v1.0.3 configuration and durable
+runtime state remain upgrade-compatible.
 
 ## Implemented production controls
 
@@ -36,7 +37,7 @@ v1.0.0/v1.0.1/v1.0.2 configuration and durable runtime state remain upgrade-comp
   independent external extractor plugin template.
 - Fail-closed all-channel membership with Redis positive/negative cache and admin bypass.
 - yt-dlp-only HTTP(S)/SOCKS proxy switching with legacy behavior and secret-safe configuration.
-- Two-stage MP4/WebM quality selection, codec-verified fallback conversion, automatic best-MP4
+- Two-stage native MP4/WebM quality selection, deterministic compatible-resolution fallback, automatic best-MP4
   Instagram multi-video delivery, and runtime bot attribution in every caption.
 - Permanent SQLite user profiles, daily counters, and job-idempotent delivery byte accounting.
 - Docker-first Linux/Windows installers with SHA-256-verified release archives, version-pinned
@@ -70,6 +71,10 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-28: Prepared 1.0.4 with codec-first native H.264/AAC MP4 ranking, deterministic
+  lower-resolution/fail policy, native VP9/Opus WebM preservation, opt-in explicit conversion,
+  pre-spawn timeout estimation, structured selection reasons, the production metadata fixture, and
+  an identical packaged native-selector/remux smoke in both CI and published-image verification.
 - 2026-07-27: Prepared hotfix 1.0.3 with updater self-replacement protection, mandatory archive
   syntax/mode validation, runtime SQLite WAL probes, transactional application/image/permission
   rollback, bounded restarts, health verification, and filesystem/privileged upgrade coverage.

@@ -155,6 +155,13 @@ class YtDlpEngine:
                     base_selector,
                     mode=request.mode,
                     max_size_bytes=transfer_limit,
+                    compatible_container=(
+                        request.container
+                        if request.container_policy is ContainerPolicy.GUARANTEED
+                        and request.container in {OutputContainer.MP4, OutputContainer.WEBM}
+                        else None
+                    ),
+                    mp4_native_fallback=self._settings.media.mp4_native_fallback,
                 )
                 raw = ydl.extract_info(request.url, download=True)
                 info = self._sanitize(ydl, raw)
@@ -185,9 +192,14 @@ class YtDlpEngine:
                 and detected_kind is MediaKind.VIDEO
                 and requested_container is not None
                 and requested_video_container
-                and request.container_policy is ContainerPolicy.GUARANTEED
+                and request.container_policy
+                in {ContainerPolicy.GUARANTEED, ContainerPolicy.EXPLICIT_TRANSCODE}
                 and not is_guaranteed_container_compatible(files[0], requested_container)
             )
+            if incompatible_container and request.container_policy is ContainerPolicy.GUARANTEED:
+                raise MediaUnavailableError(
+                    "Downloaded media does not satisfy the requested native codec contract"
+                )
             should_transcode = (
                 len(files) == 1
                 and detected_kind is MediaKind.VIDEO
@@ -195,7 +207,7 @@ class YtDlpEngine:
                     (
                         requested_container is not None
                         and requested_video_container
-                        and request.container_policy is ContainerPolicy.GUARANTEED
+                        and request.container_policy is ContainerPolicy.EXPLICIT_TRANSCODE
                         and (
                             incompatible_container
                             or files[0].suffix.casefold() != f".{requested_container.value}"
@@ -210,8 +222,9 @@ class YtDlpEngine:
                 )
             )
             transcode_reason = (
-                "guaranteed_codec_contract"
+                "explicit_transcode_selected"
                 if incompatible_container
+                and request.container_policy is ContainerPolicy.EXPLICIT_TRANSCODE
                 else "size_limit"
                 if should_transcode and files[0].stat().st_size > max_size
                 else "guaranteed_container_contract"
@@ -245,7 +258,7 @@ class YtDlpEngine:
             elif (
                 request.allow_collection
                 and request.container in {OutputContainer.MP4, OutputContainer.WEBM}
-                and request.container_policy is ContainerPolicy.GUARANTEED
+                and request.container_policy is ContainerPolicy.EXPLICIT_TRANSCODE
             ):
                 converted: list[Path] = []
                 for path in files:
@@ -370,15 +383,6 @@ class YtDlpEngine:
                 if audio is not None:
                     options.append(audio)
                 continue
-            generic = self._inspect_mode(
-                ydl,
-                contexts,
-                mode=mode,
-                selector_expression=self._settings.media.formats.for_mode(mode),
-                max_size=max_size,
-                source_max_size=source_max_size,
-                mp3_bitrate=mp3_bitrate,
-            )
             for container in (OutputContainer.MP4, OutputContainer.WEBM):
                 policy = (
                     ContainerPolicy.NATIVE_ONLY
@@ -395,23 +399,31 @@ class YtDlpEngine:
                     mp3_bitrate=mp3_bitrate,
                     container=container,
                     policy=policy,
+                    compatible_container=(
+                        container if policy is ContainerPolicy.GUARANTEED else None
+                    ),
                 )
                 if native is not None:
                     options.append(native)
-                elif generic is not None and policy is ContainerPolicy.GUARANTEED:
-                    options.append(
-                        replace(
-                            generic,
-                            container=container,
-                            container_policy=policy,
-                            requires_transcode=True,
-                            size_confidence=(
-                                SizeConfidence.UNKNOWN
-                                if generic.size_bytes is None
-                                else SizeConfidence.ESTIMATED
-                            ),
-                        )
+                if (
+                    container is OutputContainer.MP4
+                    and mode is not DownloadMode.BEST_ORIGINAL
+                    and self._settings.media.transcode.enabled
+                    and self._settings.media.transcode.explicit_mp4_enabled
+                ):
+                    explicit = self._inspect_mode(
+                        ydl,
+                        contexts,
+                        mode=mode,
+                        selector_expression=self._settings.media.formats.for_mode(mode),
+                        max_size=max_size,
+                        source_max_size=source_max_size,
+                        mp3_bitrate=mp3_bitrate,
+                        container=OutputContainer.MP4,
+                        policy=ContainerPolicy.EXPLICIT_TRANSCODE,
                     )
+                    if explicit is not None:
+                        options.append(explicit)
         return tuple(options)
 
     def _inspect_mode(
@@ -426,6 +438,7 @@ class YtDlpEngine:
         mp3_bitrate: int,
         container: OutputContainer | None = None,
         policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
+        compatible_container: OutputContainer | None = None,
     ) -> MediaFormatOption | None:
         per_item: list[MediaFormatOption] = []
         for context in contexts:
@@ -442,6 +455,8 @@ class YtDlpEngine:
                 mp3_bitrate_kbps=mp3_bitrate,
                 container=container,
                 container_policy=policy,
+                compatible_container=compatible_container,
+                mp4_native_fallback=self._settings.media.mp4_native_fallback,
             )
             if option is None:
                 return None
@@ -478,6 +493,8 @@ class YtDlpEngine:
             is_hdr=any(item.is_hdr for item in options),
             size_bytes=size,
             size_confidence=confidence,
+            selection_reason=options[0].selection_reason,
+            fallback_reason=options[0].fallback_reason,
         )
 
     @staticmethod
@@ -527,12 +544,15 @@ class YtDlpEngine:
         target_codec = (
             "h264"
             if request.container is OutputContainer.MP4
-            and request.container_policy is ContainerPolicy.GUARANTEED
+            and request.container_policy
+            in {ContainerPolicy.GUARANTEED, ContainerPolicy.EXPLICIT_TRANSCODE}
             else "vp9"
             if request.container is OutputContainer.WEBM
-            and request.container_policy is ContainerPolicy.GUARANTEED
+            and request.container_policy
+            in {ContainerPolicy.GUARANTEED, ContainerPolicy.EXPLICIT_TRANSCODE}
             else None
         )
+        selection = _selection_log_fields(info, request)
         for path in files:
             source_container: str
             source_video_codec: str | None
@@ -559,6 +579,14 @@ class YtDlpEngine:
                 target_bitrate=None,
                 target_crf=None,
                 final_file_size=path.stat().st_size if transcode_reason is None else None,
+                requested_mode=request.mode.value,
+                requested_container=request.container.value if request.container else None,
+                requested_container_policy=request.container_policy.value,
+                requested_height=video_target_height(request.mode),
+                transcode_required=transcode_reason is not None,
+                estimated_transcode_seconds=None,
+                transcode_timeout_seconds=None,
+                **selection,
             )
 
     def _validate_info_urls(self, info: Mapping[str, Any]) -> None:
@@ -650,6 +678,117 @@ def _metadata_codecs(
         path.suffix.casefold().lstrip("."),
     )
     return source_container, video_codec, audio_codec
+
+
+def _selection_log_fields(
+    info: Mapping[str, Any],
+    request: DownloadRequest,
+) -> dict[str, object]:
+    formats = info.get("formats")
+    candidates = (
+        [item for item in formats if isinstance(item, Mapping)] if isinstance(formats, list) else []
+    )
+    requested = info.get("requested_formats")
+    selected = (
+        [item for item in requested if isinstance(item, Mapping)]
+        if isinstance(requested, list)
+        else [info]
+    )
+    selected_video = next(
+        (item for item in selected if item.get("vcodec") not in {None, "none"}),
+        None,
+    )
+    selected_audio = next(
+        (item for item in selected if item.get("acodec") not in {None, "none"}),
+        None,
+    )
+    target_height = video_target_height(request.mode)
+    selected_height = (
+        int(selected_video["height"])
+        if selected_video is not None and isinstance(selected_video.get("height"), (int, float))
+        else None
+    )
+    selected_fps = (
+        float(selected_video["fps"])
+        if selected_video is not None and isinstance(selected_video.get("fps"), (int, float))
+        else None
+    )
+    native_h264 = [
+        item
+        for item in candidates
+        if item.get("vcodec") not in {None, "none"}
+        and str(item.get("ext") or "").casefold() == "mp4"
+        and (
+            str(item.get("vcodec") or "").casefold() == "h264"
+            or str(item.get("vcodec") or "").casefold().startswith("avc1")
+        )
+    ]
+    exact = [
+        item
+        for item in native_h264
+        if target_height is not None
+        and isinstance(item.get("height"), (int, float))
+        and int(item["height"]) == target_height
+    ]
+    lower = [
+        item
+        for item in native_h264
+        if target_height is not None
+        and isinstance(item.get("height"), (int, float))
+        and int(item["height"]) < target_height
+    ]
+    selection_reason = (
+        "best_original_native"
+        if request.mode is DownloadMode.BEST_ORIGINAL
+        else "explicit_transcode_selected"
+        if request.container_policy is ContainerPolicy.EXPLICIT_TRANSCODE
+        else "webm_native"
+        if request.container is OutputContainer.WEBM
+        else "native_h264_lower_resolution"
+        if request.container is OutputContainer.MP4
+        and target_height is not None
+        and selected_height is not None
+        and selected_height < target_height
+        else "native_combined_h264_mp4"
+        if request.container is OutputContainer.MP4 and len(selected) == 1
+        else "native_h264_exact_resolution"
+        if request.container is OutputContainer.MP4
+        else None
+    )
+    video_codecs = {
+        str(item.get("vcodec") or "").casefold()
+        for item in candidates
+        if item.get("vcodec") not in {None, "none"}
+    }
+    fallback_reason = (
+        "exact_h264_not_available"
+        if selection_reason == "native_h264_lower_resolution"
+        else "only_av1_available"
+        if request.container_policy is ContainerPolicy.EXPLICIT_TRANSCODE
+        and video_codecs
+        and all(codec == "av1" or codec.startswith("av01") for codec in video_codecs)
+        else "only_vp9_available"
+        if request.container_policy is ContainerPolicy.EXPLICIT_TRANSCODE
+        and video_codecs
+        and all(codec == "vp9" or codec.startswith("vp09") for codec in video_codecs)
+        else None
+    )
+    return {
+        "candidate_count": len(candidates),
+        "native_h264_candidate_count": len(native_h264),
+        "exact_height_candidate_count": len(exact),
+        "lower_height_candidate_count": len(lower),
+        "selected_video_codec": (
+            str(selected_video.get("vcodec")) if selected_video is not None else None
+        ),
+        "selected_audio_codec": (
+            str(selected_audio.get("acodec")) if selected_audio is not None else None
+        ),
+        "selected_height": selected_height,
+        "selected_fps": selected_fps,
+        "selection_reason": selection_reason,
+        "fallback_reason": fallback_reason,
+    }
 
 
 def _order_collection_files(

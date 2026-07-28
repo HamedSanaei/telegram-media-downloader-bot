@@ -20,7 +20,7 @@ from pydantic import (
 )
 
 from telegram_media_bot.domain.errors import ConfigurationError
-from telegram_media_bot.domain.models import DownloadMode
+from telegram_media_bot.domain.models import DownloadMode, Mp4NativeFallback
 
 
 class StrictModel(BaseModel):
@@ -261,6 +261,7 @@ class InstagramSection(StrictModel):
 
 class TranscodeSection(StrictModel):
     enabled: bool = True
+    explicit_mp4_enabled: bool = False
     threads: int = Field(default=2, ge=1, le=16)
     max_concurrent: int = Field(default=1, ge=1, le=8)
     timeout_seconds: int = Field(default=1500, ge=30, le=86400)
@@ -276,6 +277,7 @@ class MediaSection(StrictModel):
     max_file_size_mb: int = Field(default=49, ge=1)
     max_source_size_mb: int = Field(default=1024, ge=1, le=8192)
     max_duration_seconds: int = Field(default=14400, ge=1)
+    mp4_native_fallback: Mp4NativeFallback = Mp4NativeFallback.LOWER_RESOLUTION
     formats: FormatSection
     instagram: InstagramSection = Field(default_factory=InstagramSection)
     transcode: TranscodeSection = Field(default_factory=TranscodeSection)

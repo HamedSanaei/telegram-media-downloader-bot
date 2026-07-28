@@ -222,6 +222,8 @@ class SqliteJobRepository(JobRepository):
                     "is_hdr": option.is_hdr,
                     "size_bytes": option.size_bytes,
                     "size_confidence": option.size_confidence.value,
+                    "selection_reason": option.selection_reason,
+                    "fallback_reason": option.fallback_reason,
                 }
                 for option in selection.media.format_options
             ],
@@ -895,6 +897,16 @@ def _selection_from_row(row: sqlite3.Row) -> SelectionRecord:
                 ),
                 size_confidence=SizeConfidence(
                     str(item.get("size_confidence", SizeConfidence.UNKNOWN.value))
+                ),
+                selection_reason=(
+                    str(item["selection_reason"])
+                    if item.get("selection_reason") is not None
+                    else None
+                ),
+                fallback_reason=(
+                    str(item["fallback_reason"])
+                    if item.get("fallback_reason") is not None
+                    else None
                 ),
             )
             for item in raw.get("format_options", [])
