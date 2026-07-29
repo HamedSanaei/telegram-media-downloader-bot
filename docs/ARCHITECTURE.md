@@ -213,3 +213,16 @@ and ordered video artifacts are delivered separately. With `force_mp4`, the adap
 best native MP4 video and M4A audio and only merges/remuxes them; without it, the source-selected
 container is preserved. Cookies remain an optional read-only operator file. Telegram handlers
 contain no extractor/domain-name dispatch chain.
+
+## YouTube URL intent boundary
+
+The framework-free application canonicalizer recognizes only explicit YouTube host and video-path
+shapes. A valid 11-character video ID takes precedence over a `list` query parameter: Mix-related
+parameters are removed before SQLite persistence, ARQ enqueue, inspection, and download. Explicit
+`/playlist?list=...` URLs remain playlists. The worker and yt-dlp engine canonicalize again so
+legacy persisted or retry payloads cannot bypass the rule.
+
+For defense in depth, yt-dlp receives `noplaylist=true` in both inspection and download whenever
+single-video intent is present. Canonicalization happens before any extractor or Deno work. The
+structured `youtube_url_canonicalized` event includes validated IDs and a sanitized original URL;
+unknown query keys and their values are excluded from logs.

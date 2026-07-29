@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.0.7 - 2026-07-29
+
+- Canonicalize YouTube watch, short, live, and `youtu.be` video URLs containing Mix or playlist
+  parameters before persistence, queueing, inspection, and download.
+- Force single-video inspection and download with yt-dlp `noplaylist` whenever a valid YouTube
+  video ID is present, while preserving genuine `/playlist?list=...` behavior.
+- Prevent unnecessary YouTube Mix expansion and its associated Deno/CPU cost for links targeting
+  one video, including retry, recovery, and legacy persisted-job execution.
+
 ## 1.0.6 - 2026-07-29
 
 - Expanded MP4 Native to include real AV1/AAC and H.264/AAC plans; Native is now defined by zero

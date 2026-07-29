@@ -20,7 +20,8 @@ Actual extraction support is determined by the installed `yt-dlp` version.
 ## User flow target
 
 1. User sends one URL.
-2. Bot validates access policy and enqueues metadata inspection.
+2. Bot validates access policy, canonicalizes a YouTube URL with a valid video ID to single-video
+   intent (removing Mix/playlist context), and enqueues metadata inspection.
 3. Bot displays normalized title, duration, source, and only semantic formats that are actually
    selectable, including selected resolution/FPS/HDR and exact, estimated, or unknown size.
 4. For ordinary video, the public UI exposes only zero-transcode AV1/AAC or H.264/AAC MP4 and
@@ -47,6 +48,10 @@ progress/cancellation, delivery, and cleanup flow described above.
 Every pre-enqueue selection page has deterministic Back navigation. It edits the existing Telegram
 message and reuses the owner-bound persisted inspection; Back never repeats yt-dlp inspection,
 creates a durable job, or enqueues Redis work.
+
+YouTube `watch`, `youtu.be`, `shorts`, and `live` URLs containing a valid video ID always mean one
+video unless the user enters an explicit playlist action. Mix parameters do not turn them into a
+playlist. Genuine `/playlist?list=...` URLs retain the configured bounded-playlist policy.
 
 ## Required operational behavior
 

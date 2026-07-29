@@ -33,8 +33,11 @@ class FakeEngine:
         self.kind = kind
         self.estimated_size_bytes = estimated_size_bytes
         self.result_size_bytes = result_size_bytes
+        self.inspection_urls: list[str] = []
+        self.download_requests: list[DownloadRequest] = []
 
     def inspect(self, url: str) -> MediaInfo:
+        self.inspection_urls.append(url)
         return MediaInfo(
             media_id="1",
             title="Example",
@@ -53,6 +56,7 @@ class FakeEngine:
         is_cancelled: Callable[[], bool] | None = None,
     ) -> DownloadResult:
         del progress, is_cancelled
+        self.download_requests.append(request)
         path = request.output_directory / "result.mp4"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"x" * self.result_size_bytes)
@@ -109,6 +113,18 @@ def test_allows_bounded_playlist_when_enabled() -> None:
     assert service.inspect("https://example.com/media").kind is MediaKind.PLAYLIST
 
 
+def test_real_playlist_still_enforces_item_limit() -> None:
+    service = DownloadService(
+        FakeEngine(MediaKind.PLAYLIST),
+        frozenset({"example"}),
+        allow_playlists=True,
+        playlist_max_items=0,
+    )
+
+    with pytest.raises(PlaylistNotAllowedError):
+        service.inspect("https://www.youtube.com/playlist?list=PL123")
+
+
 def test_download_uses_project_contract(tmp_path: Path) -> None:
     service = DownloadService(FakeEngine(), frozenset({"example"}))
     result = service.download(
@@ -118,6 +134,27 @@ def test_download_uses_project_contract(tmp_path: Path) -> None:
         output_directory=tmp_path / "job-1",
     )
     assert result.file_path.read_bytes() == b"xxxx"
+
+
+def test_youtube_mix_uses_canonical_url_for_inspection_and_download(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    service = DownloadService(engine, frozenset({"example"}))
+    raw = "https://www.youtube.com/watch?v=DGbwtVtthu8&list=RDDGbwtVtthu8&start_radio=1"
+    canonical = "https://www.youtube.com/watch?v=DGbwtVtthu8"
+
+    info = service.inspect(raw)
+    result = service.download(
+        job_id=JobId("youtube-mix"),
+        url=raw,
+        mode=DownloadMode.BEST,
+        output_directory=tmp_path / "youtube-mix",
+    )
+
+    assert info.kind is MediaKind.VIDEO
+    assert engine.inspection_urls == [canonical, canonical]
+    assert len(engine.download_requests) == 1
+    assert engine.download_requests[0].url == canonical
+    assert result.kind is MediaKind.VIDEO
 
 
 def test_generic_inspection_size_is_advisory_until_mode_is_selected(tmp_path: Path) -> None:

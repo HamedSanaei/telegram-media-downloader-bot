@@ -18,6 +18,7 @@ from telegram_media_bot.application.services.native_options import (
     is_native_video_option,
     native_video_codec,
 )
+from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     AccessDeniedError,
@@ -542,11 +543,14 @@ def build_router(
         except InvalidUrlError:
             await message.answer(INVALID_URL_TEXT)
             return
+        intent = canonicalize_media_url(validated)
+        if intent.youtube_video_id is not None:
+            await logger.ainfo("youtube_url_canonicalized", **intent.log_fields)
         record, created = await asyncio.to_thread(
             jobs.create_inspection,
             chat_id=message.chat.id,
             user_id=message.from_user.id,
-            url=validated,
+            url=intent.canonical_url,
         )
         response = await message.answer(INSPECTION_QUEUED_TEXT.format(job_id=record.job_id))
         await asyncio.to_thread(repository.set_status_message, record.job_id, response.message_id)

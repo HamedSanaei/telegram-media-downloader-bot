@@ -159,6 +159,24 @@ def test_concurrent_creation_deduplicates_active_jobs(repository: SqliteJobRepos
     assert len(set(job_ids)) == 1
 
 
+def test_new_jobs_persist_canonical_youtube_video_url(
+    repository: SqliteJobRepository,
+) -> None:
+    raw = "https://www.youtube.com/watch?v=DGbwtVtthu8&list=RDDGbwtVtthu8&start_radio=1"
+
+    record, created = JobService(repository).create_inspection(
+        chat_id=1,
+        user_id=2,
+        url=raw,
+    )
+
+    assert created
+    assert record.url == "https://www.youtube.com/watch?v=DGbwtVtthu8"
+    loaded = repository.get_job(record.job_id)
+    assert loaded is not None
+    assert loaded.url == record.url
+
+
 def test_cancel_transition_counts_and_dynamic_blocks(repository: SqliteJobRepository) -> None:
     record, created = JobService(repository).create_download(
         chat_id=1,

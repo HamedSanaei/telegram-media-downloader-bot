@@ -19,6 +19,8 @@ highest lower compatible resolution in each codec family, but repeated fallbacks
 for identical real streams. WebM Native remains
 VP9 + Opus. CPU-heavy conversion is never public; legacy callbacks safely return to the Native menu.
 Every pre-enqueue page has Back and reuses this selection without another inspection or job.
+YouTube URLs carrying a valid video ID are inspected once with single-video intent and never show
+playlist-limit messaging solely because a Mix `list` parameter was present.
 
 ## Deliverables
 

@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
+from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     MediaTooLargeError,
@@ -44,7 +45,7 @@ class YtDlpOptionsFactory:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    def inspect_options(self) -> dict[str, Any]:
+    def inspect_options(self, *, single_video: bool = False) -> dict[str, Any]:
         options = self._base_options()
         options.update(
             {
@@ -54,7 +55,7 @@ class YtDlpOptionsFactory:
                     self._settings.media.playlist_max_items,
                     self._settings.media.instagram.max_videos,
                 ),
-                "noplaylist": False,
+                "noplaylist": single_video,
             }
         )
         return options
@@ -84,6 +85,8 @@ class YtDlpOptionsFactory:
                 "postprocessors": self._postprocessors(request.mode),
             }
         )
+        if canonicalize_media_url(request.url).single_video_forced:
+            options["noplaylist"] = True
         if request.container in {OutputContainer.MP4, OutputContainer.WEBM}:
             options["merge_output_format"] = request.container.value
             if request.container_policy is not ContainerPolicy.EXPLICIT_TRANSCODE:

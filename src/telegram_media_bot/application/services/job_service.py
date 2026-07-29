@@ -5,6 +5,7 @@ import secrets
 from datetime import UTC, datetime
 
 from telegram_media_bot.application.ports.job_repository import JobRepository
+from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
@@ -66,6 +67,7 @@ class JobService:
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
         native_video_codec: NativeVideoCodec | None = None,
     ) -> tuple[JobRecord, bool]:
+        url = canonicalize_media_url(url).canonical_url
         key = _idempotency_key(
             kind=kind,
             user_id=user_id,

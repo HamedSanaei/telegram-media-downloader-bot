@@ -7,6 +7,7 @@
 | `src/telegram_media_bot/application/services/` | Orchestrates inspection, policy limits, and selected downloads |
 | `src/telegram_media_bot/application/services/native_options.py` | Builds the public native-only option catalog, enforces codec/transcode invariants, chooses truthful representatives, deduplicates actual plans, and creates opaque option IDs |
 | `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
+| `src/telegram_media_bot/application/services/url_canonicalization.py` | Parses YouTube URL intent, validates video/playlist IDs, removes Mix context from single-video URLs, and supplies credential-safe structured log fields |
 | `src/telegram_media_bot/application/services/progress.py` | Framework-free download/delivery progress throttling |
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic access, required-channel membership, and rate policy |
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
@@ -44,7 +45,7 @@
 ## Upstream compatibility hot spots
 
 - `infrastructure/ytdlp/engine.py`: `YoutubeDL` lifecycle and calls;
-- `infrastructure/ytdlp/options.py`: semantic mode mapping, codec-family native selection, deterministic lower-resolution policy, and bounded complete-stream selection;
+- `infrastructure/ytdlp/options.py`: semantic mode mapping, single-video `noplaylist` defense, codec-family native selection, deterministic lower-resolution policy, and bounded complete-stream selection;
 - `infrastructure/ytdlp/transcoder.py`: separate native-container and inline-streamability probes,
   quality-first MP4 H.264/AAC and WebM VP9/Opus conversion, and size-limited fallback;
 - `infrastructure/ytdlp/mapper.py`: upstream metadata to `MediaInfo`;

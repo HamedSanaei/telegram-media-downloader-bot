@@ -39,6 +39,7 @@ class FakeDownloadService:
     def __init__(self, failure: Exception | None = None) -> None:
         self.failure = failure
         self.calls = 0
+        self.urls: list[str] = []
 
     def download(
         self,
@@ -51,8 +52,9 @@ class FakeDownloadService:
         progress: Callable[[ProgressEvent], None] | None,
         is_cancelled: Callable[[], bool],
     ) -> DownloadResult:
-        del url, mode
+        del mode
         self.calls += 1
+        self.urls.append(url)
         if self.failure is not None:
             raise self.failure
         assert not is_cancelled()
@@ -188,6 +190,23 @@ async def test_worker_download_persists_receipt_and_cleans(
         ).fetchone()
     assert usage == (1, 5)
     assert not (cast(Settings, context["settings"]).storage.downloads_path() / job_id).exists()
+
+
+async def test_recovered_youtube_mix_job_is_normalized_at_execution_boundary(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+) -> None:
+    context, _repository, service, _delivery = worker_context
+    raw = "https://www.youtube.com/watch?v=DGbwtVtthu8&list=RDDGbwtVtthu8&start_radio=1"
+
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url=raw,
+        mode=DownloadMode.BEST.value,
+    )
+
+    assert service.urls == ["https://www.youtube.com/watch?v=DGbwtVtthu8"]
 
 
 @pytest.mark.parametrize(

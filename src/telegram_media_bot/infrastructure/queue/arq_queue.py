@@ -14,6 +14,7 @@ from arq.jobs import Job
 from arq.jobs import JobStatus as ArqJobStatus
 
 from telegram_media_bot.application.ports.job_queue import JobQueue
+from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
@@ -50,6 +51,7 @@ class ArqJobQueue(JobQueue):
         user_id: int,
         url: str,
     ) -> JobId:
+        url = canonicalize_media_url(url).canonical_url
         await self._redis.enqueue_job(
             "process_inspection_job",
             chat_id=chat_id,
@@ -72,6 +74,7 @@ class ArqJobQueue(JobQueue):
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
         native_video_codec: NativeVideoCodec | None = None,
     ) -> JobId:
+        url = canonicalize_media_url(url).canonical_url
         container_policy = normalize_container_policy(mode, container_policy)
         await self._redis.enqueue_job(
             "process_download_job",

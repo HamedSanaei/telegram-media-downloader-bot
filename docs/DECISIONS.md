@@ -236,3 +236,18 @@ Telegram inline-video streamability remains a separate H.264/AAC decision. A nat
 not inline-streamable is delivered as a document without invoking an encoder. The Best Original
 summary is derived from a visible native plan, so every advertised resolution/container/codec/size
 has a corresponding selectable opaque option.
+
+## ADR-022: A YouTube video ID takes precedence over playlist context
+
+**Status:** accepted
+
+For supported YouTube `watch`, `youtu.be`, `shorts`, and `live` URL shapes, a validated video ID is
+authoritative single-video intent even when `list`, Mix, index, or sharing parameters are present.
+The application canonicalizes such URLs before persistence and enqueue, while worker and adapter
+boundaries repeat the normalization for legacy and recovered jobs. Explicit `/playlist?list=...`
+URLs continue to use the existing bounded-playlist policy.
+
+Canonicalization and yt-dlp `noplaylist=true` are independent defenses. Both inspection and
+download use the canonical URL, preventing an inspection/download mismatch and avoiding needless
+Mix expansion or Deno CPU work. Audit logs retain only allowlisted URL fields so credential-like
+query parameters are neither stored in the event nor exposed.

@@ -37,6 +37,28 @@ def test_inspect_options_do_not_download(settings: Settings) -> None:
     assert options["noplaylist"] is False
 
 
+def test_single_youtube_video_inspection_forces_noplaylist(settings: Settings) -> None:
+    options = YtDlpOptionsFactory(settings).inspect_options(single_video=True)
+
+    assert options["noplaylist"] is True
+
+
+def test_single_youtube_video_download_forces_noplaylist(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    request = DownloadRequest(
+        job_id=JobId("youtube-single"),
+        url="https://www.youtube.com/watch?v=DGbwtVtthu8&list=RDDGbwtVtthu8",
+        mode=DownloadMode.VIDEO_1080,
+        output_directory=tmp_path,
+    )
+
+    options = YtDlpOptionsFactory(settings).download_options(request)
+
+    assert options["noplaylist"] is True
+
+
 def test_semantic_mode_maps_to_configured_selector(settings: Settings, tmp_path: Path) -> None:
     factory = YtDlpOptionsFactory(settings)
     options = factory.download_options(make_request(tmp_path, DownloadMode.VIDEO_720))

@@ -43,6 +43,11 @@ size is the selected video+audio sum: exact `filesize`, then estimated
 hiding the option; MP3 uses configured output bitrate and duration. Final and cumulative transfer
 limits remain authoritative.
 
+No configuration switch is required for YouTube single-video intent. A valid video ID in `watch`,
+`youtu.be`, `shorts`, or `live` form takes precedence over Mix/playlist query parameters; those
+links are canonicalized and passed to yt-dlp with `noplaylist`. Explicit `/playlist?list=...` URLs
+still follow `media.allow_playlists` and `media.playlist_max_items`.
+
 Upload percentages cover bytes streamed from the tracked file into Local Bot API. Once all bytes
 are read, only an elapsed-time heartbeat is shown while Telegram processes the request; Bot API
 exposes no trustworthy percentage for that phase.

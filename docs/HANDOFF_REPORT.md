@@ -4,6 +4,15 @@ Generated: 2026-07-29
 
 ## Current change addendum
 
+- Version 1.0.7 canonicalizes supported YouTube URLs with a valid video ID before SQLite, Redis,
+  inspection, and download. `watch`, `youtu.be`, `shorts`, and `live` links lose Mix/playlist
+  context while explicit `/playlist?list=...` links retain the existing bounded-playlist policy.
+- Inspection and download independently force yt-dlp `noplaylist=true` for single-video intent.
+  Queue and worker execution boundaries repeat normalization so retries, recovery, and legacy raw
+  jobs cannot expand a YouTube Mix or start needless Deno work.
+- The `youtube_url_canonicalized` event records validated video/playlist IDs, the canonical URL,
+  single-video decision, and removed parameter names without logging unknown credential-like query
+  parameters.
 - Version 1.0.6 exposes zero-transcode AV1/AAC and H.264/AAC under MP4 Native, VP9/Opus under WebM
   Native, and MP3. Generic MP4/WEBM and explicit-transcode video choices remain absent.
 - The application-owned catalog validates codecs and `transcode_required`, labels actual
@@ -54,7 +63,7 @@ Generated: 2026-07-29
   restored if permission migration is unsafe.
 - The runtime image guarantees both `7zz` and `7z`; CI and publication smoke tests create, split,
   and verify a real archive rather than checking package text only.
-- Project and package metadata are aligned at `1.0.6`; the lockfile changed only the editable
+- Project and package metadata are aligned at `1.0.7`; the lockfile changed only the editable
   project version, with no dependency upgrade.
 - Instagram automatic downloads now create and enqueue the same native-only `best_original`
   contract. `force_mp4` selects native MP4 video plus M4A audio for merge/remux only; disabling it
@@ -66,8 +75,8 @@ Generated: 2026-07-29
   quality-pass result.
 - Structured selection/transcode logs include source container/codecs/size, selected format IDs,
   reason, target codec, CRF or bitrate, and final size.
-- The exact v1.0.0 configuration fixture and representative v1.0.1 through v1.0.5 configurations
-  load unchanged under v1.0.6. Mocked Linux and Windows
+- The exact v1.0.0 configuration fixture and representative v1.0.1 through v1.0.6 configurations
+  load unchanged under v1.0.7. Mocked Linux and Windows
   patch-upgrade tests confirm that only `TMB_IMAGE` changes in `.env`, while config, cookies,
   SQLite, Redis, and existing downloads remain intact.
 - CI and release image builds now share the
@@ -112,17 +121,17 @@ session is present.
 - `uv lock --check`: passed.
 - `uv sync --frozen --group dev`: passed; 80 installed packages checked.
 - Ruff lint: passed.
-- Ruff format check: passed for 111 Python files.
-- Strict mypy: passed for 102 source/test files.
-- Default test suite: 271 passed, 7 skipped on this Windows host (the destructive large-file case
-  plus 6 Linux-only full-script Bash parse cases), and 10 external contracts deselected.
-- Core branch coverage: 83.15%, above the enforced 80% floor.
+- Ruff format check: passed for 114 Python files.
+- Strict mypy: passed for 105 source/test files.
+- Default test suite: 293 passed, 7 skipped on this Windows host (the destructive large-file case
+  plus 6 Linux-only full-script Bash parse cases), and 11 external contracts deselected.
+- Core branch coverage: 83.52%, above the enforced 80% floor.
 - Architecture boundary check: passed; only
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
-- Opt-in contracts: both built-in YouTube inspection/selection plans passed; 8
-  operator-environment fixtures skipped because their URLs were unset.
-- UTF-8/text integrity: passed for 173 text files.
-- Deterministic source manifest regenerated and verified with 179 release entries.
+- Opt-in production regression contract: metadata-only inspection of the YouTube Mix URL passed in
+  6.93 seconds as video `DGbwtVtthu8`, with canonical webpage URL and Native format options.
+- UTF-8/text integrity: passed for the complete tracked text set.
+- Deterministic source manifest regenerated and verified with 182 release entries.
 - SQLite migration, WAL contention, atomic usage, and cancel-safe recovery tests passed.
 - Linux and Windows mocked `tmb update` tests passed for success, release-download failure, and
   checksum failure. Linux additionally passed permission rollback, candidate crash-state rollback,
@@ -135,7 +144,7 @@ session is present.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
-- Python 1.0.6 sdist and wheel builds passed.
+- Python 1.0.7 sdist and wheel builds passed.
 - The privileged filesystem/SQLite/Docker upgrade test could not start because no
   Docker, Podman, or Nerdctl executable is installed on this host.
 - `config.example.yaml` passed `config-check` without printing secrets.

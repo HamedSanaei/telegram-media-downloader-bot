@@ -92,6 +92,48 @@ def test_inspect_returns_project_owned_model(
     assert info.kind is MediaKind.AUDIO
 
 
+def test_youtube_mix_is_canonicalized_before_inspection(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CanonicalYoutubeDL(FakeYoutubeDL):
+        received_url: ClassVar[str | None] = None
+        received_options: ClassVar[dict[str, Any] | None] = None
+        info: ClassVar[dict[str, Any]] = {
+            "id": "DGbwtVtthu8",
+            "title": "Single video",
+            "extractor_key": "Youtube",
+            "webpage_url": (
+                "https://www.youtube.com/watch?v=DGbwtVtthu8&list=RDDGbwtVtthu8&start_radio=1"
+            ),
+            "vcodec": "h264",
+            "acodec": "aac",
+            "ext": "mp4",
+        }
+
+        def __init__(self, options: dict[str, Any]) -> None:
+            super().__init__(options)
+            type(self).received_options = options
+
+        def extract_info(self, url: str, *, download: bool) -> dict[str, Any]:
+            assert not download
+            type(self).received_url = url
+            return dict(self.info)
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", CanonicalYoutubeDL)
+    raw = "https://www.youtube.com/watch?v=DGbwtVtthu8&list=RDDGbwtVtthu8&start_radio=1"
+
+    info = engine_module.YtDlpEngine(_without_dns_checks(settings)).inspect(raw)
+
+    assert CanonicalYoutubeDL.received_url == ("https://www.youtube.com/watch?v=DGbwtVtthu8")
+    assert CanonicalYoutubeDL.received_options is not None
+    assert CanonicalYoutubeDL.received_options["noplaylist"] is True
+    assert info.media_id == "DGbwtVtthu8"
+    assert info.kind is MediaKind.VIDEO
+    assert info.item_count is None
+    assert info.webpage_url == CanonicalYoutubeDL.received_url
+
+
 def test_inspect_offers_only_real_fixed_video_heights(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -184,6 +226,51 @@ def test_download_returns_file_beneath_job_directory(
     assert result.file_size_bytes == 5
     assert events[0].percent == 50
     assert events[0].eta_seconds == 3
+
+
+def test_legacy_raw_youtube_mix_job_is_canonicalized_before_download(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CanonicalDownloadYoutubeDL(FakeYoutubeDL):
+        received_url: ClassVar[str | None] = None
+        received_options: ClassVar[dict[str, Any] | None] = None
+        info: ClassVar[dict[str, Any]] = {
+            "id": "DGbwtVtthu8",
+            "title": "Single video",
+            "extractor_key": "Youtube",
+            "webpage_url": "https://www.youtube.com/watch?v=DGbwtVtthu8",
+            "vcodec": "h264",
+            "acodec": "aac",
+            "ext": "webm",
+        }
+
+        def __init__(self, options: dict[str, Any]) -> None:
+            super().__init__(options)
+            type(self).received_options = options
+
+        def extract_info(self, url: str, *, download: bool) -> dict[str, Any]:
+            type(self).received_url = url
+            return super().extract_info(url, download=download)
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", CanonicalDownloadYoutubeDL)
+    configured = _without_dns_checks(settings)
+    raw = "https://www.youtube.com/watch?v=DGbwtVtthu8&list=RDDGbwtVtthu8&start_radio=1"
+
+    engine_module.YtDlpEngine(configured).download(
+        DownloadRequest(
+            job_id=JobId("legacy-youtube-mix"),
+            url=raw,
+            mode=DownloadMode.BEST,
+            output_directory=configured.storage.downloads_path() / "legacy-youtube-mix",
+        )
+    )
+
+    assert CanonicalDownloadYoutubeDL.received_url == (
+        "https://www.youtube.com/watch?v=DGbwtVtthu8"
+    )
+    assert CanonicalDownloadYoutubeDL.received_options is not None
+    assert CanonicalDownloadYoutubeDL.received_options["noplaylist"] is True
 
 
 def test_instagram_collection_returns_ordered_mp4_video_artifacts(

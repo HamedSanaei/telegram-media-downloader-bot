@@ -27,6 +27,7 @@ from telegram_media_bot.application.services.progress import (
     DeliveryProgressThrottler,
     ProgressThrottler,
 )
+from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
@@ -87,6 +88,7 @@ async def process_inspection_job(
     user_id: int,
     url: str,
 ) -> str:
+    url = canonicalize_media_url(url).canonical_url
     settings = cast(Settings, ctx["settings"])
     repository = cast(JobRepository, ctx["repository"])
     service = cast(DownloadService, ctx["download_service"])
@@ -316,6 +318,7 @@ async def process_download_job(
     container_policy: str = ContainerPolicy.NATIVE_ONLY.value,
     native_video_codec: str | None = None,
 ) -> str:
+    url = canonicalize_media_url(url).canonical_url
     settings = cast(Settings, ctx["settings"])
     repository = cast(JobRepository, ctx["repository"])
     service = cast(DownloadService, ctx["download_service"])

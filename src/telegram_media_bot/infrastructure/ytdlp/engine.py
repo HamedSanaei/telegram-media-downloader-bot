@@ -13,6 +13,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as ytdlp_version
 
 from telegram_media_bot.application.ports.download_engine import CancellationCheck, ProgressSink
+from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     DownloadFailedError,
@@ -81,9 +82,14 @@ class YtDlpEngine:
         self._transcode_gate = TranscodeGate(settings.media.transcode.max_concurrent)
 
     def inspect(self, url: str) -> MediaInfo:
+        intent = canonicalize_media_url(url)
+        if intent.youtube_video_id is not None:
+            logger.info("youtube_url_canonicalized", **intent.log_fields)
         try:
-            with YoutubeDL(self._options.inspect_options()) as ydl:
-                raw = ydl.extract_info(url, download=False)
+            with YoutubeDL(
+                self._options.inspect_options(single_video=intent.single_video_forced)
+            ) as ydl:
+                raw = ydl.extract_info(intent.canonical_url, download=False)
                 format_options = self._inspect_format_options(ydl, raw)
                 info = self._sanitize(ydl, raw)
             self._validate_info_urls(info)
@@ -91,8 +97,10 @@ class YtDlpEngine:
             raise
         except Exception as exc:
             raise map_ytdlp_error(exc) from exc
+        mapped = map_media_info(info, original_url=intent.canonical_url)
         return replace(
-            map_media_info(info, original_url=url),
+            mapped,
+            webpage_url=intent.canonical_url if intent.single_video_forced else mapped.webpage_url,
             format_options=format_options,
         )
 
@@ -103,6 +111,10 @@ class YtDlpEngine:
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
     ) -> DownloadResult:
+        intent = canonicalize_media_url(request.url)
+        if intent.youtube_video_id is not None:
+            logger.info("youtube_url_canonicalized", **intent.log_fields)
+        request = replace(request, url=intent.canonical_url)
         job_dir = self._safe_job_directory(request.output_directory)
         self._reset_job_directory(job_dir)
         if request.temp_directory is not None:

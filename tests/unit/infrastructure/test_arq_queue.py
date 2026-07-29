@@ -4,7 +4,7 @@ from typing import Any, cast
 
 from arq.jobs import JobStatus as ArqJobStatus
 
-from telegram_media_bot.domain.models import JobId, QueueJobStatus
+from telegram_media_bot.domain.models import DownloadMode, JobId, QueueJobStatus
 from telegram_media_bot.infrastructure.queue import arq_queue
 from telegram_media_bot.infrastructure.queue.arq_queue import ArqJobQueue
 
@@ -69,3 +69,35 @@ async def test_abort_job_uses_arq_abort_and_cleans_transient_keys(
     assert "arq:result:cancel-me" in deleted
     assert "arq:in-progress:cancel-me" in deleted
     assert ("zrem", ("media-downloads", "cancel-me")) in redis.transaction.operations
+
+
+async def test_enqueue_payloads_use_canonical_youtube_video_url() -> None:
+    class EnqueueRedis:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def enqueue_job(self, function: str, **kwargs: object) -> None:
+            self.calls.append((function, kwargs))
+
+    redis = EnqueueRedis()
+    queue = ArqJobQueue(cast(Any, redis), "media-downloads", owns_pool=False)
+    raw = "https://www.youtube.com/watch?v=DGbwtVtthu8&list=RDDGbwtVtthu8&start_radio=1"
+
+    await queue.enqueue_inspection(
+        job_id=JobId("inspect"),
+        chat_id=1,
+        user_id=2,
+        url=raw,
+    )
+    await queue.enqueue_download(
+        job_id=JobId("download"),
+        chat_id=1,
+        user_id=2,
+        url=raw,
+        mode=DownloadMode.VIDEO_1080,
+    )
+
+    assert [call[1]["url"] for call in redis.calls] == [
+        "https://www.youtube.com/watch?v=DGbwtVtthu8",
+        "https://www.youtube.com/watch?v=DGbwtVtthu8",
+    ]

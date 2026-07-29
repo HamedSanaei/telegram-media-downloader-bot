@@ -9,6 +9,7 @@ from telegram_media_bot.application.ports.download_engine import (
     ProgressSink,
 )
 from telegram_media_bot.application.ports.url_validator import UrlValidator
+from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.domain.errors import (
     InvalidUrlError,
     MediaTooLargeError,
@@ -52,7 +53,7 @@ class DownloadService:
         self._instagram_max_videos = instagram_max_videos
 
     def inspect(self, url: str) -> MediaInfo:
-        normalized_url = self.validate_url(url)
+        normalized_url = canonicalize_media_url(self.validate_url(url)).canonical_url
         if self._url_validator is not None:
             normalized_url = self._url_validator.validate(normalized_url)
         info = self._engine.inspect(normalized_url)

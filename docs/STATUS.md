@@ -8,10 +8,10 @@ Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
-Patch `1.0.6` corrects Native to mean zero transcoding: MP4 now exposes both AV1/AAC and H.264/AAC
-plans, preserves the selected codec family across durable/queue recovery, sends non-inline AV1 as a
-document, and makes Best Original summaries point to selectable plans. Existing v1.0.0 through
-v1.0.5 configuration and durable runtime state remain upgrade-compatible.
+Patch `1.0.7` makes every YouTube URL with a valid video ID single-video intent, strips Mix and
+playlist context before persistence/queue/execution, and applies yt-dlp `noplaylist` in inspection
+and download. Genuine playlist URLs and the 1.0.6 Native option behavior are unchanged. Existing
+v1.0.0 through v1.0.6 configuration and durable runtime state remain upgrade-compatible.
 
 ## Implemented production controls
 
@@ -72,6 +72,9 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-29: Prepared 1.0.7 with centralized YouTube single-video canonicalization, durable and
+  queue-safe canonical URLs, execution-boundary recovery normalization, and `noplaylist` defenses
+  that prevent Mix expansion without changing real-playlist or Native format behavior.
 - 2026-07-29: Prepared 1.0.6 with selectable AV1/AAC MP4 plans, codec-aware labels and
   deduplication, durable codec-family constraints, selectable Best Original summaries, document
   delivery for non-inline AV1, and packaged zero-encode/stream-copy runtime assertions.

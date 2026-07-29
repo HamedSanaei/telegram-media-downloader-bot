@@ -1,5 +1,6 @@
 import os
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 
 import pytest
 
@@ -8,6 +9,7 @@ from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
+    MediaKind,
     OutputContainer,
     SelectionRecord,
     SelectionToken,
@@ -24,6 +26,10 @@ _SOURCE_FIXTURES = (
     ("twitter", "CONTRACT_TWITTER_URL"),
     ("pinterest", "CONTRACT_PINTEREST_URL"),
     ("tiktok", "CONTRACT_TIKTOK_URL"),
+)
+
+_YOUTUBE_MIX_REGRESSION_URL = (
+    "https://www.youtube.com/watch?v=DGbwtVtthu8&list=RDDGbwtVtthu8&start_radio=1"
 )
 
 
@@ -91,6 +97,23 @@ def test_youtube_production_regression_selects_native_av1_and_h264_plans(
     assert h264 is not None
     assert h264.height == 1080
     assert h264.requires_transcode is False
+
+
+@pytest.mark.contract
+def test_youtube_mix_url_inspects_only_the_named_video(settings: Settings) -> None:
+    if os.environ.get("RUN_CONTRACT_TESTS") != "1":
+        pytest.skip("Set RUN_CONTRACT_TESTS=1 to enable external contract tests")
+
+    started_at = monotonic()
+    info = YtDlpEngine(settings).inspect(_YOUTUBE_MIX_REGRESSION_URL)
+    elapsed_seconds = monotonic() - started_at
+
+    assert info.media_id == "DGbwtVtthu8"
+    assert info.kind is MediaKind.VIDEO
+    assert info.item_count is None
+    assert info.webpage_url == "https://www.youtube.com/watch?v=DGbwtVtthu8"
+    assert info.format_options
+    assert elapsed_seconds < 90
 
 
 @pytest.mark.contract
