@@ -35,10 +35,10 @@ timeouts. Public Bot API is capped at 50 MB; migrated Local API may use an opera
 1900 MB.
 
 Inspection runs each semantic selector against actual formats. Fixed modes normally require their
-exact height. Fast MP4 alone follows `media.mp4_native_fallback`: `lower_resolution` (default)
-selects the highest lower native H.264/AAC plan and displays its actual height; `fail` offers no
-lower choice. `best` remains bounded to 1080p; `best_original` is never transcoded. Displayed size
-is the selected video+audio sum: exact `filesize`, then estimated
+exact height. MP4 Native follows `media.mp4_native_fallback`: `lower_resolution` (default) selects
+the highest lower native H.264/AAC plan; duplicate requested modes are collapsed and only its actual
+height is displayed. `fail` offers no lower choice. `best_original` is never transcoded. Displayed
+size is the selected video+audio sum: exact `filesize`, then estimated
 `filesize_approx` or bitrate multiplied by duration. Missing data is shown as unknown instead of
 hiding the option; MP3 uses configured output bitrate and duration. Final and cumulative transfer
 limits remain authoritative.
@@ -78,13 +78,14 @@ because `send_video` prefers H.264/AAC. The media size setting is a hard ceiling
 forced codec conversion starts with CRF (`libx264` for MP4), and only an oversized or
 disproportionately inflated quality pass activates bitrate-limited fallback.
 
-`media.transcode` and `media.mp4_native_fallback` defaults keep v1.0.0 through v1.0.3 files valid
-without manual edits in v1.0.4:
+`media.transcode` and `media.mp4_native_fallback` defaults keep v1.0.0 through v1.0.4 files valid
+without manual edits in v1.0.5:
 `enabled: true`, `explicit_mp4_enabled: false`, `mp4_native_fallback: lower_resolution`,
 `threads: 2`, `max_concurrent: 1`, `timeout_seconds: 1500`, and
 `progress_interval_seconds: 10`. The thread value is passed to FFmpeg itself; the concurrency gate
-is process-local to the supported single-worker topology. `explicit_mp4_enabled: true` exposes the
-separate slow converted-MP4 choice. Before FFmpeg starts, a conservative estimate uses duration,
+is process-local to the supported single-worker topology. `explicit_mp4_enabled` remains an
+internal conversion capability and never exposes a public Telegram button. Before FFmpeg starts in
+an authorized non-public flow, a conservative estimate uses duration,
 pixels, FPS, source codec, encoder threads, detected cgroup CPU capacity, and the stage timeout; an
 unsafe estimate is rejected with native-lower/Best Original guidance. `TMB_WORKER_CPUS` in `.env`
 optionally adds a persistent Docker CPU

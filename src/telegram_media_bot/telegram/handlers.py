@@ -13,6 +13,10 @@ from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.application.ports.user_repository import UserRepository
 from telegram_media_bot.application.services.access_policy import AccessPolicyService
 from telegram_media_bot.application.services.job_service import JobService
+from telegram_media_bot.application.services.native_options import (
+    build_native_option_catalog,
+    is_native_video_option,
+)
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     AccessDeniedError,
@@ -52,6 +56,7 @@ from telegram_media_bot.telegram.texts import (
 )
 from telegram_media_bot.telegram.ui import (
     cancellation_keyboard,
+    container_keyboard,
     render_media_info,
     required_channels_keyboard,
     selection_keyboard,
@@ -226,38 +231,47 @@ def build_router(
         )
         await message.answer("وضعیت نامشخص بررسی‌شده علامت خورد؛ درخواست تازه اکنون مجاز است.")
 
-    @router.callback_query(F.data.startswith("fmt:"))
-    async def choose_format(callback: CallbackQuery) -> None:
+    @router.callback_query(F.data.startswith("o2:"))
+    async def choose_native_option(callback: CallbackQuery) -> None:
         if callback.from_user is None or callback.data is None:
             return
         await _save_callback_user(users, callback)
         try:
             await access_policy.authorize_request(callback.from_user.id, consume_rate_limit=False)
-            token, container, callback_policy, mode = _parse_selection_callback_full(callback.data)
+            token, option_id = parse_native_option_callback(callback.data)
             selection = await asyncio.to_thread(
                 repository.get_selection,
                 token,
                 callback.from_user.id,
             )
-            if mode not in selection.allowed_modes:
-                raise SelectionOwnershipError("Mode was not offered")
+            catalog = build_native_option_catalog(selection.media)
+            view = catalog.resolve(option_id)
+            if view is None or view.mode not in selection.allowed_modes:
+                raise SelectionOwnershipError("Native option was not offered")
             matching_option = next(
                 (
                     option
                     for option in selection.media.format_options
-                    if option.mode is mode
-                    and option.container is container
-                    and (
-                        option.container_policy is callback_policy
-                        if callback_policy is not None
-                        else option.container_policy is not ContainerPolicy.EXPLICIT_TRANSCODE
-                    )
+                    if option.mode is view.mode
+                    and option.container is view.container
+                    and option.selected_format_ids == view.selected_format_ids
+                    and option.width == view.actual_width
+                    and option.height == view.actual_height
+                    and option.fps == view.actual_fps
                 ),
                 None,
             )
-            if selection.media.format_options and matching_option is None:
-                raise SelectionOwnershipError("Container and mode combination was not offered")
+            if matching_option is None:
+                raise SelectionOwnershipError("Native plan no longer matches the selection")
+            if view.container in {OutputContainer.MP4, OutputContainer.WEBM} and (
+                view.transcode_required
+                or matching_option.requires_transcode
+                or not is_native_video_option(matching_option)
+            ):
+                raise SelectionOwnershipError("Transcoding video options are not public")
         except SelectionExpiredError:
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(f"{SELECTION_EXPIRED_TEXT}\n{START_TEXT}")
             await callback.answer(SELECTION_EXPIRED_TEXT, show_alert=True)
             return
         except SelectionOwnershipError, ValueError:
@@ -286,13 +300,9 @@ def build_router(
             chat_id=selection.chat_id,
             user_id=selection.owner_user_id,
             url=selection.media.webpage_url,
-            mode=mode,
-            container=container,
-            container_policy=(
-                matching_option.container_policy
-                if matching_option is not None
-                else ContainerPolicy.NATIVE_ONLY
-            ),
+            mode=view.mode,
+            container=view.container,
+            container_policy=matching_option.container_policy,
         )
         if record.status is JobStatus.DELIVERY_UNCERTAIN:
             await callback.answer(
@@ -314,8 +324,8 @@ def build_router(
                     chat_id=record.chat_id,
                     user_id=record.user_id,
                     url=record.url,
-                    mode=mode,
-                    container=container,
+                    mode=view.mode,
+                    container=view.container,
                     container_policy=record.container_policy,
                 )
             except Exception as exc:
@@ -342,30 +352,25 @@ def build_router(
                 return
         await callback.answer("ثبت شد" if created else "این دانلود از قبل فعال است")
 
-    @router.callback_query(F.data.startswith("container:"))
-    async def choose_container(callback: CallbackQuery) -> None:
+    @router.callback_query(F.data.startswith("c2:"))
+    async def choose_native_container(callback: CallbackQuery) -> None:
         if callback.from_user is None or callback.data is None:
             return
         await _save_callback_user(users, callback)
         try:
             await access_policy.authorize_request(callback.from_user.id, consume_rate_limit=False)
-            token, container, container_policy = _parse_container_callback_full(callback.data)
+            token, container = parse_native_container_callback(callback.data)
             selection = await asyncio.to_thread(
                 repository.get_selection,
                 token,
                 callback.from_user.id,
             )
-            if not any(
-                option.container is container
-                and (
-                    option.container_policy is container_policy
-                    if container_policy is not None
-                    else option.container_policy is not ContainerPolicy.EXPLICIT_TRANSCODE
-                )
-                for option in selection.media.format_options
-            ):
+            catalog = build_native_option_catalog(selection.media)
+            if not catalog.for_container(container):
                 raise SelectionOwnershipError("Container was not offered")
         except SelectionExpiredError:
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(f"{SELECTION_EXPIRED_TEXT}\n{START_TEXT}")
             await callback.answer(SELECTION_EXPIRED_TEXT, show_alert=True)
             return
         except SelectionOwnershipError, ValueError:
@@ -390,10 +395,74 @@ def build_router(
             return
         if isinstance(callback.message, Message):
             await callback.message.edit_text(
-                render_media_info(selection.media, container, container_policy),
-                reply_markup=selection_keyboard(selection, container, container_policy),
+                render_media_info(selection.media, container, catalog),
+                reply_markup=selection_keyboard(selection, container, catalog),
             )
         await callback.answer()
+
+    @router.callback_query(F.data.startswith("n2:"))
+    async def navigate_selection(callback: CallbackQuery) -> None:
+        if callback.from_user is None or callback.data is None:
+            return
+        await _save_callback_user(users, callback)
+        try:
+            token, destination = parse_navigation_callback(callback.data)
+            selection = await asyncio.to_thread(
+                repository.get_selection,
+                token,
+                callback.from_user.id,
+            )
+        except SelectionExpiredError:
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(
+                    f"{SELECTION_EXPIRED_TEXT}\n{START_TEXT}",
+                )
+            await callback.answer(SELECTION_EXPIRED_TEXT, show_alert=True)
+            return
+        except SelectionOwnershipError, ValueError:
+            await callback.answer(SELECTION_INVALID_TEXT, show_alert=True)
+            return
+        if isinstance(callback.message, Message):
+            if destination == "s":
+                await callback.message.edit_text(START_TEXT)
+            else:
+                catalog = build_native_option_catalog(selection.media)
+                await callback.message.edit_text(
+                    render_media_info(selection.media, catalog=catalog),
+                    reply_markup=container_keyboard(selection, catalog),
+                )
+        await callback.answer()
+
+    @router.callback_query(F.data.startswith("fmt:") | F.data.startswith("container:"))
+    async def reject_legacy_selection(callback: CallbackQuery) -> None:
+        if callback.from_user is None or callback.data is None:
+            return
+        await _save_callback_user(users, callback)
+        try:
+            token = _legacy_callback_token(callback.data)
+            selection = await asyncio.to_thread(
+                repository.get_selection,
+                token,
+                callback.from_user.id,
+            )
+        except SelectionExpiredError:
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(f"{SELECTION_EXPIRED_TEXT}\n{START_TEXT}")
+            await callback.answer(SELECTION_EXPIRED_TEXT, show_alert=True)
+            return
+        except SelectionOwnershipError, ValueError:
+            await callback.answer(SELECTION_INVALID_TEXT, show_alert=True)
+            return
+        catalog = build_native_option_catalog(selection.media)
+        if isinstance(callback.message, Message):
+            await callback.message.edit_text(
+                render_media_info(selection.media, catalog=catalog),
+                reply_markup=container_keyboard(selection, catalog),
+            )
+        await callback.answer(
+            "این گزینه قدیمی شده است. یکی از خروجی‌های Native را انتخاب کنید.",
+            show_alert=True,
+        )
 
     @router.callback_query(F.data.startswith("cancel:"))
     async def cancel(callback: CallbackQuery) -> None:
@@ -569,6 +638,55 @@ def parse_selection_callback(
     if container is not None:
         raise ValueError("Container-aware callbacks require the full parser")
     return token, mode
+
+
+def parse_native_option_callback(data: str) -> tuple[SelectionToken, str]:
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError("Callback data exceeds Telegram's limit")
+    parts = data.split(":")
+    if (
+        len(parts) != 3
+        or parts[0] != "o2"
+        or not 10 <= len(parts[1]) <= 32
+        or len(parts[2]) != 16
+        or any(character not in "0123456789abcdef" for character in parts[2])
+    ):
+        raise ValueError("Invalid native option callback")
+    return SelectionToken(parts[1]), parts[2]
+
+
+def parse_native_container_callback(
+    data: str,
+) -> tuple[SelectionToken, OutputContainer]:
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError("Callback data exceeds Telegram's limit")
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "c2" or not 10 <= len(parts[1]) <= 32:
+        raise ValueError("Invalid native container callback")
+    return SelectionToken(parts[1]), OutputContainer(parts[2])
+
+
+def parse_navigation_callback(data: str) -> tuple[SelectionToken, str]:
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError("Callback data exceeds Telegram's limit")
+    parts = data.split(":")
+    if (
+        len(parts) != 3
+        or parts[0] != "n2"
+        or not 10 <= len(parts[1]) <= 32
+        or parts[2] not in {"s", "t"}
+    ):
+        raise ValueError("Invalid navigation callback")
+    return SelectionToken(parts[1]), parts[2]
+
+
+def _legacy_callback_token(data: str) -> SelectionToken:
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError("Callback data exceeds Telegram's limit")
+    parts = data.split(":")
+    if len(parts) < 3 or parts[0] not in {"fmt", "container"} or not 10 <= len(parts[1]) <= 32:
+        raise ValueError("Invalid legacy callback")
+    return SelectionToken(parts[1])
 
 
 def _parse_selection_callback_full(

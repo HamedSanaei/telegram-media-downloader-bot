@@ -224,6 +224,13 @@ class SqliteJobRepository(JobRepository):
                     "size_confidence": option.size_confidence.value,
                     "selection_reason": option.selection_reason,
                     "fallback_reason": option.fallback_reason,
+                    "selected_format_ids": list(option.selected_format_ids),
+                    "video_codec": option.video_codec,
+                    "audio_codec": option.audio_codec,
+                    "dynamic_range": option.dynamic_range,
+                    "video_size_bytes": option.video_size_bytes,
+                    "audio_size_bytes": option.audio_size_bytes,
+                    "quality_score": option.quality_score,
                 }
                 for option in selection.media.format_options
             ],
@@ -907,6 +914,31 @@ def _selection_from_row(row: sqlite3.Row) -> SelectionRecord:
                     str(item["fallback_reason"])
                     if item.get("fallback_reason") is not None
                     else None
+                ),
+                selected_format_ids=tuple(
+                    str(value) for value in item.get("selected_format_ids", [])
+                ),
+                video_codec=(
+                    str(item["video_codec"]) if item.get("video_codec") is not None else None
+                ),
+                audio_codec=(
+                    str(item["audio_codec"]) if item.get("audio_codec") is not None else None
+                ),
+                dynamic_range=(
+                    str(item["dynamic_range"]) if item.get("dynamic_range") is not None else None
+                ),
+                video_size_bytes=(
+                    int(item["video_size_bytes"])
+                    if item.get("video_size_bytes") is not None
+                    else None
+                ),
+                audio_size_bytes=(
+                    int(item["audio_size_bytes"])
+                    if item.get("audio_size_bytes") is not None
+                    else None
+                ),
+                quality_score=(
+                    float(item["quality_score"]) if item.get("quality_score") is not None else None
                 ),
             )
             for item in raw.get("format_options", [])

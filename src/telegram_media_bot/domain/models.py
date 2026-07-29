@@ -171,6 +171,32 @@ class MediaFormatOption:
     size_confidence: SizeConfidence = SizeConfidence.UNKNOWN
     selection_reason: str | None = None
     fallback_reason: str | None = None
+    selected_format_ids: tuple[str, ...] = ()
+    video_codec: str | None = None
+    audio_codec: str | None = None
+    dynamic_range: str | None = None
+    video_size_bytes: int | None = None
+    audio_size_bytes: int | None = None
+    quality_score: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NativeOptionView:
+    option_id: str
+    mode: DownloadMode
+    container: OutputContainer
+    actual_width: int | None
+    actual_height: int | None
+    actual_fps: float | None
+    video_codec: str | None
+    audio_codec: str | None
+    dynamic_range: str | None
+    size_bytes: int | None
+    size_is_approximate: bool
+    quality_score: float | None
+    selected_format_ids: tuple[str, ...]
+    transcode_required: bool
+    display_label: str
 
 
 @dataclass(frozen=True, slots=True)

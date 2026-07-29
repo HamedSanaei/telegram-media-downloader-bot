@@ -203,3 +203,22 @@ Heavy AV1/VP9-to-H.264 conversion is represented by `ContainerPolicy.EXPLICIT_TR
 only when the new default-off operator switch is enabled. A conservative estimate must fit inside
 the transcode stage timeout before FFmpeg can acquire the encode gate or spawn. Existing callback
 payloads continue to resolve to the ordinary native policy.
+
+## ADR-020: Public video choices are actual native plans
+
+**Status:** accepted; supersedes the public-UI portions of ADR-014 and ADR-019
+
+The Telegram UI exposes only native H.264/AAC MP4 and native VP9/Opus WebM video. Explicit
+transcoding remains an internal bounded capability and is never a public button, even when its
+operator switch is enabled. Public video jobs use the codec-filtered, reject-on-mismatch
+`GUARANTEED` contract; old generic/converted callbacks are non-operational redirects.
+
+The adapter maps selected stream IDs, codecs, geometry, FPS, dynamic range, component sizes, and
+quality score into immutable project models. The application service validates native codec
+contracts, removes every transcode-required plan, deduplicates by actual selected-stream identity,
+and chooses an exact-mode representative over a fallback. Telegram receives only a short opaque
+digest, never raw format IDs.
+
+Back navigation is a deterministic presentation transition over the existing owner-bound selection:
+quality returns to output type, output type returns to the send-link prompt, and neither transition
+calls the engine or creates/enqueues a job.

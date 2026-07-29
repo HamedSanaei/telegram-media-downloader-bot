@@ -51,15 +51,19 @@ or yt-dlp. Infrastructure implements application ports.
 The engine port exposes normalized project models:
 
 - `MediaInfo` for inspection;
-- `MediaFormatOption` for a real semantic candidate and its size-confidence metadata;
+- `MediaFormatOption` for a real selected-stream candidate, normalized codec/geometry/size fields,
+  and adapter-supplied selected-format identity;
+- `NativeOptionView` for a deduplicated, public, non-transcoding Telegram choice;
 - `OutputContainer`/`ContainerPolicy` for native-only or guaranteed MP4/WebM/MP3 output;
 - `DownloadRequest` for semantic requests;
 - `DownloadResult`/`DownloadArtifact` for one or an ordered set of final files;
 - `DeliveryProgressEvent` for packaging, byte transfer, and opaque finalization;
 - project exceptions for failure categories.
 
-Raw yt-dlp info dictionaries, extractor objects, format IDs, hooks, and exceptions remain inside the
-adapter package.
+Raw yt-dlp info dictionaries, extractor objects, hooks, and exceptions remain inside the adapter
+package. Selected format IDs are normalized into an immutable project tuple for deduplication,
+integrity validation, and structured logging; they never become callback data or user-facing raw
+choices. Telegram callbacks contain only a short opaque option digest.
 
 ## Processes
 
@@ -133,12 +137,15 @@ A genuine change to the project-owned engine port requires an ADR and coordinate
 - `> telegram.max_upload_size_mb` and `<= multipart.max_total_size_mb`: stored multi-volume ZIP
   documents, each bounded by `multipart.part_size_mb` and sent through Local Bot API.
 
-`best_original` is native-only and never transcoded. Ordinary MP4 selection is the fast native
+`best_original` is native-only and never transcoded. Public MP4 selection is the fast native
 H.264/AVC + AAC contract: codec compatibility is filtered before quality/bitrate ranking, and the
 configured deterministic fallback either chooses the highest lower H.264 resolution or reports no
-compatible format. Ordinary WebM selects native VP9 + Opus. Neither ordinary button starts a codec
-conversion. A separately enabled explicit-MP4 policy may convert AV1/VP9 after a conservative
-duration/resolution/FPS/codec/thread/CPU timeout estimate accepts the work.
+compatible format. Public WebM selects native VP9 + Opus. Every public video option is checked once
+while building the catalog and again immediately before durable job creation; neither button starts
+a codec conversion. Public video jobs retain the codec-filtered `GUARANTEED` contract: a
+source-format change between inspection and download fails safely, while only
+`EXPLICIT_TRANSCODE` may encode. The internal explicit-MP4 policy may still convert AV1/VP9 for non-public
+administrative/development flows after a conservative timeout estimate accepts the work.
 
 Container mux compatibility, Telegram inline-video streamability, and document delivery are
 separate decisions. VP9 inside MP4 is a valid native MP4 artifact and is valid for document
@@ -155,9 +162,16 @@ FFmpeg's machine-readable channel without exposing source paths. Docker can opti
 CPU quota through `.env`.
 
 Fixed-resolution candidates are exact-height contracts except for the documented fast-MP4 native
-fallback. The UI displays the actual selected height when a lower H.264 stream is used. Inspection
-and download use the same adapter-owned bounded selector. Component sizes are summed from `filesize`, then
-`filesize_approx`, then bitrate and duration; incomplete metadata remains explicitly unknown.
+fallback. The application planner labels only actual selected height/FPS/dynamic range/codecs and
+deduplicates plans by selected streams plus those output properties. Thus several requested modes
+that resolve to one 1080p stream produce one 1080p choice. Exact `filesize` wins over
+`filesize_approx`; selected video and audio components are summed, bitrate/duration is only an
+estimate, and incomplete metadata remains explicitly unknown.
+
+Navigation callbacks are versioned (`c2`, `o2`, `n2`), owner-bound, expiring, and below Telegram's
+64-byte limit. Back transitions form `quality -> output type -> send a new link`, edit the same
+message, and read the existing SQLite selection. Legacy `container:`/`fmt:` callbacks never create a
+job and instead redirect to the current Native menu.
 
 Delivery reads through a tracked `InputFile`. Byte progress ends when the HTTP body has streamed to
 Local Bot API. Since Bot API exposes no subsequent byte callback, final response waits emit only

@@ -22,6 +22,7 @@ from telegram_media_bot.application.ports.user_repository import UserRepository
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.error_policy import error_category
 from telegram_media_bot.application.services.job_service import JobService
+from telegram_media_bot.application.services.native_options import build_native_option_catalog
 from telegram_media_bot.application.services.progress import (
     DeliveryProgressThrottler,
     ProgressThrottler,
@@ -50,8 +51,6 @@ from telegram_media_bot.domain.models import (
     JobId,
     JobKind,
     JobStatus,
-    MediaFormatOption,
-    MediaKind,
     OutputContainer,
     ProgressEvent,
     SelectionRecord,
@@ -154,13 +153,40 @@ async def process_inspection_job(
             metrics.record_job(outcome="inspection_succeeded", source=info.source)
             await logger.ainfo("instagram_download_enqueued", job_id=job_id)
             return str(job_id)
-        allowed_modes = _configured_modes_for(
-            info.kind,
-            settings.media.enabled_modes,
-            info.format_options,
-        )
+        catalog = build_native_option_catalog(info)
+        allowed_modes = tuple(dict.fromkeys(option.mode for option in catalog.options))
         if not allowed_modes:
             raise MediaUnavailableError("No configured downloadable format is available")
+        for container in (OutputContainer.MP4, OutputContainer.WEBM, OutputContainer.MP3):
+            visible = catalog.for_container(container)
+            if not visible:
+                continue
+            await logger.ainfo(
+                "native_options_built",
+                job_id=job_id,
+                source=info.source,
+                container=container.value,
+                raw_candidate_count=catalog.raw_candidate_count,
+                planned_option_count=catalog.planned_option_count,
+                deduplicated_option_count=len(visible),
+                hidden_transcode_option_count=catalog.hidden_transcode_option_count,
+                unknown_size_option_count=sum(option.size_bytes is None for option in visible),
+                options=[
+                    {
+                        "option_id": option.option_id,
+                        "selected_format_ids": option.selected_format_ids,
+                        "actual_height": option.actual_height,
+                        "actual_width": option.actual_width,
+                        "actual_fps": option.actual_fps,
+                        "actual_size_bytes": option.size_bytes,
+                        "size_is_approximate": option.size_is_approximate,
+                        "video_codec": option.video_codec,
+                        "audio_codec": option.audio_codec,
+                        "transcode_required": option.transcode_required,
+                    }
+                    for option in visible
+                ],
+            )
         selection = SelectionRecord(
             token=SelectionToken(secrets.token_urlsafe(15)),
             owner_user_id=user_id,
@@ -171,19 +197,19 @@ async def process_inspection_job(
             expires_at=now + timedelta(seconds=settings.persistence.selection_ttl_seconds),
         )
         await asyncio.to_thread(repository.save_selection, selection)
-        text = render_media_info(info)
+        text = render_media_info(info, catalog=catalog)
         if record.status_message_id is not None:
             await bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=record.status_message_id,
                 text=text,
-                reply_markup=container_keyboard(selection),
+                reply_markup=container_keyboard(selection, catalog),
             )
         else:
             message = await bot.send_message(
                 chat_id=chat_id,
                 text=text,
-                reply_markup=container_keyboard(selection),
+                reply_markup=container_keyboard(selection, catalog),
             )
             await asyncio.to_thread(repository.set_status_message, job_id, message.message_id)
         await asyncio.to_thread(
@@ -752,24 +778,6 @@ class _CancellationProbe:
             self._cached = self._repository.is_cancel_requested(self._job_id)
             self._last_check = now
         return self._cached
-
-
-def _configured_modes_for(
-    kind: MediaKind,
-    configured: tuple[DownloadMode, ...],
-    options: tuple[MediaFormatOption, ...] = (),
-) -> tuple[DownloadMode, ...]:
-    if kind is MediaKind.AUDIO:
-        relevant = {DownloadMode.BEST, DownloadMode.AUDIO_BEST, DownloadMode.AUDIO_MP3}
-        relevant_modes = tuple(mode for mode in configured if mode in relevant)
-    elif kind is MediaKind.IMAGE:
-        relevant_modes = tuple(mode for mode in configured if mode is DownloadMode.BEST)
-    else:
-        relevant_modes = configured
-    if not options:
-        return relevant_modes
-    available = {option.mode for option in options}
-    return tuple(mode for mode in relevant_modes if mode in available)
 
 
 def _instagram_download_contract(

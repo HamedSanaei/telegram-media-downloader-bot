@@ -4,6 +4,18 @@ Generated: 2026-07-28
 
 ## Current change addendum
 
+- Version 1.0.5 exposes only MP4 Native H.264/AAC, WebM Native VP9/Opus, and MP3 in
+  Telegram. Generic MP4/WEBM and explicit-transcode video choices are absent even if the internal
+  conversion switch is enabled.
+- The application-owned native option catalog validates codecs and `transcode_required`, labels
+  actual selected resolution/FPS/dynamic range/stream-summed size, deduplicates fallback and Best
+  Original aliases, and creates a 16-character opaque option identity.
+- Versioned `c2`/`o2`/`n2` callbacks remain below 64 bytes. Back edits the same message and reuses
+  the persisted selection; expired/tampered and legacy `container:`/`fmt:` callbacks create no job
+  and safely return users to a new-link or Native selection path.
+- Inspection logs `native_options_built` with source/container counts, hidden transcode and unknown
+  size totals, plus the selected IDs/codecs/geometry/size for every visible option. CI and release
+  images run the packaged native UI callback/catalog smoke in addition to stream-copy smoke.
 - Version 1.0.4 makes ordinary MP4 a native H.264/AVC + AAC stream-copy contract. Codec
   compatibility is evaluated before resolution/FPS/bitrate; AV1 format 399-like candidates cannot
   enter the fast-MP4 plan merely because their extension is MP4.
@@ -37,7 +49,7 @@ Generated: 2026-07-28
   restored if permission migration is unsafe.
 - The runtime image guarantees both `7zz` and `7z`; CI and publication smoke tests create, split,
   and verify a real archive rather than checking package text only.
-- Project and package metadata are aligned at `1.0.4`; the lockfile changed only the editable
+- Project and package metadata are aligned at `1.0.5`; the lockfile changed only the editable
   project version, with no dependency upgrade.
 - Instagram automatic downloads now create and enqueue the same native-only `best_original`
   contract. `force_mp4` selects native MP4 video plus M4A audio for merge/remux only; disabling it
@@ -49,8 +61,8 @@ Generated: 2026-07-28
   quality-pass result.
 - Structured selection/transcode logs include source container/codecs/size, selected format IDs,
   reason, target codec, CRF or bitrate, and final size.
-- The exact v1.0.0 configuration fixture and representative v1.0.1/v1.0.2/v1.0.3 configurations
-  load unchanged under v1.0.4. Mocked Linux and Windows
+- The exact v1.0.0 configuration fixture and representative v1.0.1/v1.0.2/v1.0.3/v1.0.4
+  configurations load unchanged under v1.0.5. Mocked Linux and Windows
   patch-upgrade tests confirm that only `TMB_IMAGE` changes in `.env`, while config, cookies,
   SQLite, Redis, and existing downloads remain intact.
 - CI and release image builds now share the
@@ -95,16 +107,17 @@ session is present.
 - `uv lock --check`: passed.
 - `uv sync --frozen --group dev`: passed; 80 installed packages checked.
 - Ruff lint: passed.
-- Ruff format check: passed for 103 Python files.
-- Strict mypy: passed for 94 source/test files.
-- Default test suite: 237 passed, 7 skipped on this Windows host (the destructive large-file case
-  plus 6 Linux-only full-script Bash parse cases), and 8 external contracts deselected.
-- Core branch coverage: 83.07%, above the enforced 80% floor.
+- Ruff format check: passed for 111 Python files.
+- Strict mypy: passed for 102 source/test files.
+- Default test suite: 269 passed, 7 skipped on this Windows host (the destructive large-file case
+  plus 6 Linux-only full-script Bash parse cases), and 10 external contracts deselected.
+- Core branch coverage: 83.05%, above the enforced 80% floor.
 - Architecture boundary check: passed; only
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
-- Default non-contract suite: 249 passed, 7 skipped, 9 deselected; total branch coverage 82.26%.
-- UTF-8/text integrity: passed for 168 text files.
-- Deterministic source manifest regenerated and verified with 174 release entries.
+- Opt-in contracts: both built-in YouTube inspection/selection plans passed; 8
+  operator-environment fixtures skipped because their URLs were unset.
+- UTF-8/text integrity: passed for 173 text files.
+- Deterministic source manifest regenerated and verified with 179 release entries.
 - SQLite migration, WAL contention, atomic usage, and cancel-safe recovery tests passed.
 - Linux and Windows mocked `tmb update` tests passed for success, release-download failure, and
   checksum failure. Linux additionally passed permission rollback, candidate crash-state rollback,
@@ -112,16 +125,15 @@ session is present.
   `command -v`, installed-script `bash -n`, and `tmb status` assertions.
 - External extractor SDK: lock/sync passed; 1 default test passed and 1 contract was deselected.
 - `config.example.yaml`, Compose YAML, both workflow YAML files, and JSON schema parsed successfully.
-- PowerShell AST parsing: passed for installers, managers, and the Windows recovery test.
-- Bash syntax parsing: passed for every complete installer, manager, archive builder, mocked
-  recovery test, and privileged upgrade test script.
+- PowerShell AST parsing: passed for all 5 scripts.
+- Bash syntax parsing: passed for all 6 scripts.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
-- Python 1.0.4 sdist and wheel builds passed.
-- The privileged v1.0.2-to-v1.0.3 filesystem/SQLite/Docker upgrade test could not start because no
+- Python 1.0.5 sdist and wheel builds passed.
+- The privileged filesystem/SQLite/Docker upgrade test could not start because no
   Docker, Podman, or Nerdctl executable is installed on this host.
-- Local ignored `config.yaml` passed `config-check` without printing secrets.
+- `config.example.yaml` passed `config-check` without printing secrets.
 - `git diff --check`: passed.
 
 Tests cover all-channel membership, administrator bypass, cache behavior, proxy schemes and legacy

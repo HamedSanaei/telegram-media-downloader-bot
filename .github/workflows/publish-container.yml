@@ -87,6 +87,8 @@ jobs:
           docker run --rm "$image" telegram-media-bot --help
           docker run --rm "$image" \
             python -m telegram_media_bot.infrastructure.ytdlp.native_selection_smoke
+          docker run --rm "$image" \
+            python -m telegram_media_bot.telegram.native_ui_smoke
           docker run --rm --entrypoint sh "$image" -c '
             set -eu
             command -v ffmpeg

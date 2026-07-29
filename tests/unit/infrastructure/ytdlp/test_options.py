@@ -452,6 +452,53 @@ def test_inspected_option_estimates_missing_size_from_bitrate() -> None:
     assert option.size_confidence.value == "estimated"
 
 
+def test_inspected_option_uses_selected_component_sizes_and_exact_precedence() -> None:
+    audio = {
+        **_native_format(
+            "140",
+            ext="m4a",
+            size=10,
+            acodec="mp4a.40.2",
+        ),
+        "filesize_approx": 999,
+    }
+    video = {
+        **_native_format(
+            "137",
+            ext="mp4",
+            size=40,
+            vcodec="avc1.640028",
+            height=1080,
+        ),
+        "width": 1920,
+        "fps": 30,
+        "dynamic_range": "SDR",
+        "filesize_approx": 999,
+    }
+
+    option = inspect_format_option(
+        _best_video_audio_selector,
+        {"formats": [audio, video]},
+        mode=DownloadMode.VIDEO_1080,
+        max_size_bytes=100,
+        duration_seconds=60,
+        mp3_bitrate_kbps=192,
+        container=OutputContainer.MP4,
+        container_policy=ContainerPolicy.GUARANTEED,
+        compatible_container=OutputContainer.MP4,
+    )
+
+    assert option is not None
+    assert option.size_bytes == 50
+    assert option.size_confidence.value == "exact"
+    assert option.video_size_bytes == 40
+    assert option.audio_size_bytes == 10
+    assert option.selected_format_ids == ("137", "140")
+    assert option.video_codec == "avc1.640028"
+    assert option.audio_codec == "mp4a.40.2"
+    assert option.dynamic_range == "SDR"
+
+
 def test_mp3_size_uses_configured_bitrate() -> None:
     option = inspect_format_option(
         _best_video_audio_selector,

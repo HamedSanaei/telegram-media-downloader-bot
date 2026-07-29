@@ -354,6 +354,7 @@ def _describe_candidate(
 ) -> MediaFormatOption:
     components = _selected_components(candidate)
     videos = tuple(item for item in components if _is_video(item))
+    audios = tuple(item for item in components if item.get("acodec") not in {None, "none"})
     video = max(
         videos,
         key=lambda item: (
@@ -361,6 +362,11 @@ def _describe_candidate(
             int(item.get("width") or 0),
             float(item.get("fps") or 0),
         ),
+        default=None,
+    )
+    audio = max(
+        audios,
+        key=lambda item: float(item.get("abr") or item.get("tbr") or 0),
         default=None,
     )
     size_bytes: int | None
@@ -398,6 +404,27 @@ def _describe_candidate(
             container=container,
             selected_height=_positive_int(video.get("height")) if video is not None else None,
         ),
+        selected_format_ids=tuple(
+            str(component["format_id"])
+            for component in components
+            if component.get("format_id") is not None
+        ),
+        video_codec=(
+            str(video["vcodec"]) if video is not None and video.get("vcodec") is not None else None
+        ),
+        audio_codec=(
+            str(audio["acodec"]) if audio is not None and audio.get("acodec") is not None else None
+        ),
+        dynamic_range=_dynamic_range(video),
+        video_size_bytes=_component_size(video)[0] if video is not None else None,
+        audio_size_bytes=_component_size(audio)[0] if audio is not None else None,
+        quality_score=(
+            float(video.get("tbr") or video.get("vbr") or 0)
+            if video is not None
+            else float(audio.get("abr") or audio.get("tbr") or 0)
+            if audio is not None
+            else None
+        ),
     )
 
 
@@ -424,6 +451,25 @@ def _estimated_total_size(
             continue
         return None, SizeConfidence.UNKNOWN
     return total, confidence
+
+
+def _component_size(component: Mapping[str, Any]) -> tuple[int | None, SizeConfidence]:
+    exact = component.get("filesize")
+    if isinstance(exact, (int, float)) and exact > 0:
+        return int(exact), SizeConfidence.EXACT
+    approximate = component.get("filesize_approx")
+    if isinstance(approximate, (int, float)) and approximate > 0:
+        return int(approximate), SizeConfidence.ESTIMATED
+    return None, SizeConfidence.UNKNOWN
+
+
+def _dynamic_range(video: Mapping[str, Any] | None) -> str | None:
+    if video is None:
+        return None
+    value = video.get("dynamic_range")
+    if isinstance(value, str) and value.strip():
+        return value.strip().upper()
+    return "HDR" if _is_hdr(video) else "SDR"
 
 
 def _positive_int(value: object) -> int | None:

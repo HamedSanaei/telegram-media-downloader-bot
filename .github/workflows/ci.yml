@@ -91,6 +91,8 @@ jobs:
           docker run --rm telegram-media-downloader-bot:ci telegram-media-bot --help
           docker run --rm telegram-media-downloader-bot:ci \
             python -m telegram_media_bot.infrastructure.ytdlp.native_selection_smoke
+          docker run --rm telegram-media-downloader-bot:ci \
+            python -m telegram_media_bot.telegram.native_ui_smoke
           docker run --rm --entrypoint sh telegram-media-downloader-bot:ci -c '
             set -eu
             command -v ffmpeg

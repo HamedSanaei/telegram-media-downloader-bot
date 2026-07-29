@@ -23,9 +23,9 @@ Actual extraction support is determined by the installed `yt-dlp` version.
 2. Bot validates access policy and enqueues metadata inspection.
 3. Bot displays normalized title, duration, source, and only semantic formats that are actually
    selectable, including selected resolution/FPS/HDR and exact, estimated, or unknown size.
-4. For ordinary video, the user chooses fast native H.264/AAC MP4, native VP9/Opus WebM, or an
-   explicitly enabled converted MP4, then a real semantic quality. Fast MP4 may disclose a lower
-   compatible native resolution and never hides AV1/VP9 transcoding. Instagram
+4. For ordinary video, the public UI exposes only native H.264/AAC MP4 and native VP9/Opus WebM,
+   followed by unique qualities derived from the actual selected streams. Converted/generic
+   video policies remain internal and cannot be reached by current or legacy callbacks. Instagram
    video posts, Reels, Stories, and Highlights skip both prompts and use the best original
    streams; `media.instagram.force_mp4` may constrain the native video/audio pair to MP4 + M4A
    without changing codecs.
@@ -42,6 +42,10 @@ configured 4096 MB aggregate ceiling.
 
 The v1 implementation provides the complete two-step inspection, semantic selection, durable job,
 progress/cancellation, delivery, and cleanup flow described above.
+
+Every pre-enqueue selection page has deterministic Back navigation. It edits the existing Telegram
+message and reuses the owner-bound persisted inspection; Back never repeats yt-dlp inspection,
+creates a durable job, or enqueues Redis work.
 
 ## Required operational behavior
 

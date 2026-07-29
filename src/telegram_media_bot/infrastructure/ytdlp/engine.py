@@ -62,6 +62,12 @@ from telegram_media_bot.infrastructure.ytdlp.transcoder import (
 logger = structlog.get_logger(__name__)
 
 
+def _sum_known(values: list[int | None]) -> int | None:
+    if any(value is None for value in values):
+        return None
+    return sum(value for value in values if value is not None)
+
+
 class YtDlpEngine:
     """The only application adapter that directly knows yt-dlp types and options."""
 
@@ -495,6 +501,32 @@ class YtDlpEngine:
             size_confidence=confidence,
             selection_reason=options[0].selection_reason,
             fallback_reason=options[0].fallback_reason,
+            selected_format_ids=tuple(
+                dict.fromkeys(
+                    format_id for option in options for format_id in option.selected_format_ids
+                )
+            ),
+            video_codec=(
+                options[0].video_codec
+                if all(item.video_codec == options[0].video_codec for item in options)
+                else None
+            ),
+            audio_codec=(
+                options[0].audio_codec
+                if all(item.audio_codec == options[0].audio_codec for item in options)
+                else None
+            ),
+            dynamic_range=(
+                options[0].dynamic_range
+                if all(item.dynamic_range == options[0].dynamic_range for item in options)
+                else ("HDR" if any(item.is_hdr for item in options) else "SDR")
+            ),
+            video_size_bytes=_sum_known([item.video_size_bytes for item in options]),
+            audio_size_bytes=_sum_known([item.audio_size_bytes for item in options]),
+            quality_score=min(
+                (item.quality_score for item in options if item.quality_score is not None),
+                default=None,
+            ),
         )
 
     @staticmethod

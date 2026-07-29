@@ -127,12 +127,20 @@ Never update packages inside a running container. `./manage.sh clean` removes on
 temporary job directories; it intentionally preserves SQLite history, configuration, cookies, and
 Redis state.
 
-## Native MP4 and explicit conversion
+## Native-only public video UI
 
-The normal MP4 button is a low-latency native path and never starts AV1/VP9-to-H.264 encoding.
+The public bot exposes only `MP4 Native · H.264 + AAC` and `WebM Native · VP9 + Opus`. Generic MP4,
+generic WEBM, and converted-video buttons do not exist. Old `container:`/`fmt:` callback payloads
+are safe redirects to the current menu and never enqueue work.
+
+MP4 Native is a low-latency path and never starts AV1/VP9-to-H.264 encoding.
 `media.mp4_native_fallback: lower_resolution` selects the highest lower H.264/AAC resolution when
 the requested height is available only as AV1/VP9; set it to `fail` to require an exact native
-height. Operators may expose the separate resource-heavy converted-MP4 choice with
+height. The option catalog deduplicates repeated fallback streams and displays the actual selected
+resolution and selected-component size. Back navigation reuses the persisted inspection and creates
+no Redis or SQLite work.
+
+The resource-heavy converted-MP4 implementation remains internal even if
 `media.transcode.explicit_mp4_enabled: true`. Rejections logged as
 `transcode_rejected_timeout_estimate` are intentional preflight safety decisions; suggest fast MP4
 at a lower resolution or Best Original instead of increasing the job timeout.

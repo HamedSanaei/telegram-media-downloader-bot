@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 1.0.5 - 2026-07-29
+
+- Made every public video choice native-only: Telegram now exposes only H.264/AAC MP4 Native and
+  VP9/Opus WebM Native options, while generic MP4/WEBM and every video plan requiring transcoding
+  remain hidden.
+- Added deterministic Back navigation that reuses the persisted inspection selection without
+  creating another inspection, SQLite job, or Redis enqueue.
+- Built labels from actual selected resolution, FPS, dynamic range, codecs, and selected-stream
+  sizes; exact, approximate, and unknown sizes remain distinguishable.
+- Deduplicated requested qualities and Best Original when they resolve to the same real streams,
+  so lower-resolution native fallbacks cannot create false 2160p/1440p buttons.
+- Versioned callback payloads use short opaque option identities. Legacy generic or converted
+  callbacks are rejected safely and return users to the Native menu without starting FFmpeg.
+
 ## 1.0.4 - 2026-07-28
 
 - Prepared patch `1.0.4`: ordinary MP4 choices now rank native H.264/AVC + AAC ahead of

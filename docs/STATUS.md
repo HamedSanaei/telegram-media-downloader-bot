@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 ## Release state
 
@@ -8,10 +8,10 @@ Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
-Patch `1.0.4` fixes the published v1.0.3 MP4 selector regression: normal MP4 is native H.264/AAC,
-codec compatibility ranks before bitrate, and AV1/VP9 conversion is an explicit disabled-by-default
-choice guarded by a timeout estimate. Existing v1.0.0 through v1.0.3 configuration and durable
-runtime state remain upgrade-compatible.
+Patch `1.0.5` makes the public video UI native-only. It renders actual selected resolution/FPS/HDR
+and component sizes, deduplicates fallback modes, adds persisted-selection Back navigation, and
+safely redirects every legacy generic/converted callback without enqueueing. Existing v1.0.0
+through v1.0.4 configuration and durable runtime state remain upgrade-compatible.
 
 ## Implemented production controls
 
@@ -37,8 +37,9 @@ runtime state remain upgrade-compatible.
   independent external extractor plugin template.
 - Fail-closed all-channel membership with Redis positive/negative cache and admin bypass.
 - yt-dlp-only HTTP(S)/SOCKS proxy switching with legacy behavior and secret-safe configuration.
-- Two-stage native MP4/WebM quality selection, deterministic compatible-resolution fallback, automatic best-MP4
-  Instagram multi-video delivery, and runtime bot attribution in every caption.
+- Two-stage native-only MP4/WebM quality selection with actual-plan labels, opaque versioned
+  callbacks, deduplication, deterministic Back navigation, automatic best-MP4 Instagram
+  multi-video delivery, and runtime bot attribution in every caption.
 - Permanent SQLite user profiles, daily counters, and job-idempotent delivery byte accounting.
 - Docker-first Linux/Windows installers with SHA-256-verified release archives, version-pinned
   images, interactive `tmb` management, official pinned Local Bot API source build, dedicated
@@ -71,6 +72,9 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-29: Prepared 1.0.5 with native-only public video choices, actual selected-stream labels
+  and sizes, fallback/Best Original deduplication, deterministic Back navigation, dual pre-enqueue
+  transcode validation, structured option-catalog logging, and safe legacy callback redirects.
 - 2026-07-28: Prepared 1.0.4 with codec-first native H.264/AAC MP4 ranking, deterministic
   lower-resolution/fail policy, native VP9/Opus WebM preservation, opt-in explicit conversion,
   pre-spawn timeout estimation, structured selection reasons, the production metadata fixture, and

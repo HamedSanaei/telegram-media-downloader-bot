@@ -5,6 +5,7 @@
 | `src/telegram_media_bot/domain/` | Stable models, enums, identifiers, exceptions, and `best_original` native-only normalization |
 | `src/telegram_media_bot/application/ports/` | Interfaces required by use cases |
 | `src/telegram_media_bot/application/services/` | Orchestrates inspection, policy limits, and selected downloads |
+| `src/telegram_media_bot/application/services/native_options.py` | Builds the public native-only option catalog, enforces codec/transcode invariants, chooses truthful representatives, deduplicates actual plans, and creates opaque option IDs |
 | `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
 | `src/telegram_media_bot/application/services/progress.py` | Framework-free download/delivery progress throttling |
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic access, required-channel membership, and rate policy |
@@ -19,7 +20,7 @@
 | `src/telegram_media_bot/infrastructure/observability/` | Health HTTP server and Prometheus metrics registry |
 | `src/telegram_media_bot/infrastructure/telegram/local_api.py` | Local Bot API lifecycle, durable migration, endpoint leases, and safe status |
 | `src/telegram_media_bot/infrastructure/archive/` | Safe 7-Zip multi-volume packaging and SHA-256 manifests |
-| `src/telegram_media_bot/telegram/` | Handlers, real-candidate/size UI, middleware, and tracked delivery adapter |
+| `src/telegram_media_bot/telegram/` | Versioned Back/Native callback dispatch, real-plan rendering, middleware, and tracked delivery adapter |
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction |
 | `src/telegram_media_bot/workers/` | ARQ worker settings and job functions |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, and composition roots |
@@ -51,7 +52,7 @@
 
 ## Durable state ownership
 
-- `domain/models.py`: stable job, selected-format/size-confidence, progress, selection, health, and delivery records;
+- `domain/models.py`: stable job, normalized selected-stream/native-option view, progress, selection, health, and delivery records;
 - `application/ports/job_repository.py`: persistence contract;
 - `infrastructure/persistence/sqlite_repository.py`: schema and transition implementation;
 - `workers/jobs.py`: transitions, retry, delivery progress/logging, per-item receipts, and cleanup;

@@ -474,9 +474,20 @@ def _media() -> MediaInfo:
         format_options=(
             MediaFormatOption(
                 mode=DownloadMode.VIDEO_1080,
+                container=OutputContainer.MP4,
+                container_policy=ContainerPolicy.GUARANTEED,
+                width=1920,
                 height=1080,
+                fps=30,
                 size_bytes=456,
                 size_confidence=SizeConfidence.ESTIMATED,
+                selected_format_ids=("137", "140"),
+                video_codec="avc1.640028",
+                audio_codec="mp4a.40.2",
+                dynamic_range="SDR",
+                video_size_bytes=400,
+                audio_size_bytes=56,
+                quality_score=1800,
             ),
         ),
     )
