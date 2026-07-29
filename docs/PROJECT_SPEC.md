@@ -23,7 +23,8 @@ Actual extraction support is determined by the installed `yt-dlp` version.
 2. Bot validates access policy and enqueues metadata inspection.
 3. Bot displays normalized title, duration, source, and only semantic formats that are actually
    selectable, including selected resolution/FPS/HDR and exact, estimated, or unknown size.
-4. For ordinary video, the public UI exposes only native H.264/AAC MP4 and native VP9/Opus WebM,
+4. For ordinary video, the public UI exposes only zero-transcode AV1/AAC or H.264/AAC MP4 and
+   native VP9/Opus WebM,
    followed by unique qualities derived from the actual selected streams. Converted/generic
    video policies remain internal and cannot be reached by current or legacy callbacks. Instagram
    video posts, Reels, Stories, and Highlights skip both prompts and use the best original

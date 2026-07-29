@@ -1,22 +1,27 @@
 # Handoff verification report
 
-Generated: 2026-07-28
+Generated: 2026-07-29
 
 ## Current change addendum
 
-- Version 1.0.5 exposes only MP4 Native H.264/AAC, WebM Native VP9/Opus, and MP3 in
-  Telegram. Generic MP4/WEBM and explicit-transcode video choices are absent even if the internal
-  conversion switch is enabled.
-- The application-owned native option catalog validates codecs and `transcode_required`, labels
-  actual selected resolution/FPS/dynamic range/stream-summed size, deduplicates fallback and Best
-  Original aliases, and creates a 16-character opaque option identity.
+- Version 1.0.6 exposes zero-transcode AV1/AAC and H.264/AAC under MP4 Native, VP9/Opus under WebM
+  Native, and MP3. Generic MP4/WEBM and explicit-transcode video choices remain absent.
+- The application-owned catalog validates codecs and `transcode_required`, labels actual
+  resolution/FPS/codec/stream-summed size, keeps AV1 and H.264 distinct, and creates a 16-character
+  opaque option identity. The real production fixture exposes `401+140` as
+  `2160p · 30fps · AV1 · 249.8 MiB` with no transcode, alongside 1080p H.264.
+- The selected codec family is persisted in SQLite, included in the idempotency key and ARQ
+  payload, restored after restart, and applied again to download-time selection. AV1 MP4 passes the
+  native plan contract but not the inline-video profile, so it is delivered as a document.
+- Best Original summaries are derived from the highest-quality visible plan and therefore always
+  name a selectable resolution/container/codec/size combination.
 - Versioned `c2`/`o2`/`n2` callbacks remain below 64 bytes. Back edits the same message and reuses
   the persisted selection; expired/tampered and legacy `container:`/`fmt:` callbacks create no job
   and safely return users to a new-link or Native selection path.
 - Inspection logs `native_options_built` with source/container counts, hidden transcode and unknown
   size totals, plus the selected IDs/codecs/geometry/size for every visible option. CI and release
   images run the packaged native UI callback/catalog smoke in addition to stream-copy smoke.
-- Version 1.0.4 makes ordinary MP4 a native H.264/AVC + AAC stream-copy contract. Codec
+- Version 1.0.4 originally made ordinary MP4 a native H.264/AVC + AAC stream-copy contract. Codec
   compatibility is evaluated before resolution/FPS/bitrate; AV1 format 399-like candidates cannot
   enter the fast-MP4 plan merely because their extension is MP4.
 - The default `lower_resolution` policy selects the highest lower compatible H.264 stream and
@@ -28,8 +33,8 @@ Generated: 2026-07-28
 - Native MP4/M4A merging explicitly supplies `-c:v copy -c:a copy -movflags +faststart`; no
   `libx264`, scaling, FPS filter, CRF, or AAC encode argument is present on that path.
 - CI and the tag publication workflow run the same packaged, network-free selector smoke inside the
-  final runtime image, asserting `137+140`, rejecting `399`, checking native `248+251` WebM,
-  stream-copy-only merger arguments, and Best Original normalization.
+  final runtime image, asserting AV1 `401+140`, H.264 `137+140`, native `248+251` WebM,
+  stream-copy-only merger arguments, no `libx264`, and Best Original normalization.
 - The v1.0.3 updater runs from an isolated copy, validates complete staged scripts/Compose/config,
   restores archive executable modes, installs application entries through rollback snapshots,
   performs runtime-user filesystem and SQLite WAL probes, verifies post-start health, and restores
@@ -49,7 +54,7 @@ Generated: 2026-07-28
   restored if permission migration is unsafe.
 - The runtime image guarantees both `7zz` and `7z`; CI and publication smoke tests create, split,
   and verify a real archive rather than checking package text only.
-- Project and package metadata are aligned at `1.0.5`; the lockfile changed only the editable
+- Project and package metadata are aligned at `1.0.6`; the lockfile changed only the editable
   project version, with no dependency upgrade.
 - Instagram automatic downloads now create and enqueue the same native-only `best_original`
   contract. `force_mp4` selects native MP4 video plus M4A audio for merge/remux only; disabling it
@@ -61,8 +66,8 @@ Generated: 2026-07-28
   quality-pass result.
 - Structured selection/transcode logs include source container/codecs/size, selected format IDs,
   reason, target codec, CRF or bitrate, and final size.
-- The exact v1.0.0 configuration fixture and representative v1.0.1/v1.0.2/v1.0.3/v1.0.4
-  configurations load unchanged under v1.0.5. Mocked Linux and Windows
+- The exact v1.0.0 configuration fixture and representative v1.0.1 through v1.0.5 configurations
+  load unchanged under v1.0.6. Mocked Linux and Windows
   patch-upgrade tests confirm that only `TMB_IMAGE` changes in `.env`, while config, cookies,
   SQLite, Redis, and existing downloads remain intact.
 - CI and release image builds now share the
@@ -109,9 +114,9 @@ session is present.
 - Ruff lint: passed.
 - Ruff format check: passed for 111 Python files.
 - Strict mypy: passed for 102 source/test files.
-- Default test suite: 269 passed, 7 skipped on this Windows host (the destructive large-file case
+- Default test suite: 271 passed, 7 skipped on this Windows host (the destructive large-file case
   plus 6 Linux-only full-script Bash parse cases), and 10 external contracts deselected.
-- Core branch coverage: 83.05%, above the enforced 80% floor.
+- Core branch coverage: 83.15%, above the enforced 80% floor.
 - Architecture boundary check: passed; only
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
 - Opt-in contracts: both built-in YouTube inspection/selection plans passed; 8
@@ -130,7 +135,7 @@ session is present.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
-- Python 1.0.5 sdist and wheel builds passed.
+- Python 1.0.6 sdist and wheel builds passed.
 - The privileged filesystem/SQLite/Docker upgrade test could not start because no
   Docker, Podman, or Nerdctl executable is installed on this host.
 - `config.example.yaml` passed `config-check` without printing secrets.

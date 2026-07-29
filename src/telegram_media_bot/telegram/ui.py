@@ -5,6 +5,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram_media_bot.application.services.native_options import (
     NativeOptionCatalog,
     build_native_option_catalog,
+    display_video_codec,
 )
 from telegram_media_bot.domain.models import (
     DeliveryProgressEvent,
@@ -51,7 +52,7 @@ def container_keyboard(
 ) -> InlineKeyboardMarkup:
     resolved = catalog or build_native_option_catalog(selection.media)
     labels = {
-        OutputContainer.MP4: "🎬 MP4 Native · H.264 + AAC",
+        OutputContainer.MP4: "🎬 MP4 Native · AV1 / H.264",
         OutputContainer.WEBM: "🎞 WebM Native · VP9 + Opus",
         OutputContainer.MP3: "🎵 صوت MP3",
     }
@@ -118,11 +119,34 @@ def render_media_info(
     ]
     if info.duration_seconds is not None:
         lines.append(f"مدت: {_duration(info.duration_seconds)}")
-    if info.estimated_size_bytes is not None:
-        lines.append(f"حجم بهترین نسخهٔ اصلی: حدود {_size(info.estimated_size_bytes)}")
     if info.item_count is not None:
         lines.append(f"تعداد آیتم: {info.item_count}")
     resolved = catalog or build_native_option_catalog(info)
+    best_original = resolved.best_original()
+    if best_original is not None:
+        summary = [
+            (
+                f"{best_original.actual_height}p"
+                if best_original.actual_height is not None
+                else f"{best_original.actual_width}px"
+                if best_original.actual_width is not None
+                else "کیفیت نامشخص"
+            ),
+            (
+                "MP4"
+                if best_original.container is OutputContainer.MP4
+                else "WebM"
+                if best_original.container is OutputContainer.WEBM
+                else best_original.container.value.upper()
+            ),
+            display_video_codec(best_original.video_codec),
+        ]
+        if best_original.size_bytes is None:
+            summary.append("حجم نامشخص")
+        else:
+            size = _size(best_original.size_bytes)
+            summary.append(f"حدود {size}" if best_original.size_is_approximate else size)
+        lines.extend(("بهترین نسخهٔ اصلی:", " · ".join(summary)))
     if container is not None:
         options = resolved.for_container(container)
         title = {
@@ -136,7 +160,7 @@ def render_media_info(
         lines.extend(
             (
                 "نوع خروجی را انتخاب کنید:",
-                "خروجی‌های ویدیویی Native هستند و بدون بازکدگذاری ویدئو ارسال می‌شوند.",
+                "خروجی‌های ویدیویی Native هستند و بدون بازکدگذاری ارسال می‌شوند.",
             )
         )
     return "\n".join(lines)

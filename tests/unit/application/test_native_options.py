@@ -112,7 +112,7 @@ def test_identity_keeps_real_fps_and_dynamic_range_variants() -> None:
     }
 
 
-def test_transcode_and_wrong_codec_options_are_hidden() -> None:
+def test_transcode_and_unsupported_codec_options_are_hidden() -> None:
     transcode = _option(
         DownloadMode.VIDEO_2160,
         container=OutputContainer.MP4,
@@ -122,12 +122,12 @@ def test_transcode_and_wrong_codec_options_are_hidden() -> None:
         audio_codec="mp4a.40.2",
         requires_transcode=True,
     )
-    wrong_native_claim = _option(
+    unsupported_native_claim = _option(
         DownloadMode.VIDEO_1440,
         container=OutputContainer.MP4,
         selected_format_ids=("400", "140"),
         height=1440,
-        video_codec="av01.0.12M.08",
+        video_codec="hevc",
         audio_codec="mp4a.40.2",
     )
     native = _option(
@@ -139,14 +139,42 @@ def test_transcode_and_wrong_codec_options_are_hidden() -> None:
         audio_codec="aac",
     )
 
-    catalog = build_native_option_catalog(_info(transcode, wrong_native_claim, native))
+    catalog = build_native_option_catalog(_info(transcode, unsupported_native_claim, native))
 
     assert catalog.for_container(OutputContainer.MP4)[0].actual_height == 1080
     assert catalog.hidden_transcode_option_count == 2
     assert not is_native_video_option(transcode)
-    assert not is_native_video_option(wrong_native_claim)
+    assert not is_native_video_option(unsupported_native_claim)
     assert is_native_video_option(native)
     assert all(not option.transcode_required for option in catalog.options)
+
+
+def test_native_av1_and_h264_at_same_resolution_remain_distinct() -> None:
+    av1 = _option(
+        DownloadMode.VIDEO_1080,
+        container=OutputContainer.MP4,
+        selected_format_ids=("399", "140"),
+        height=1080,
+        video_codec="av01.0.08M.08",
+        audio_codec="mp4a.40.2",
+    )
+    h264 = _option(
+        DownloadMode.VIDEO_1080,
+        container=OutputContainer.MP4,
+        selected_format_ids=("137", "140"),
+        height=1080,
+        video_codec="avc1.640028",
+        audio_codec="mp4a.40.2",
+    )
+
+    visible = build_native_option_catalog(_info(av1, h264)).for_container(OutputContainer.MP4)
+
+    assert len(visible) == 2
+    assert {option.video_codec for option in visible} == {
+        "av01.0.08M.08",
+        "avc1.640028",
+    }
+    assert {option.display_label.split(" · ")[2] for option in visible} == {"AV1", "H.264"}
 
 
 def test_size_label_distinguishes_exact_approximate_and_unknown() -> None:

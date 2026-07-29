@@ -137,19 +137,20 @@ A genuine change to the project-owned engine port requires an ADR and coordinate
 - `> telegram.max_upload_size_mb` and `<= multipart.max_total_size_mb`: stored multi-volume ZIP
   documents, each bounded by `multipart.part_size_mb` and sent through Local Bot API.
 
-`best_original` is native-only and never transcoded. Public MP4 selection is the fast native
-H.264/AVC + AAC contract: codec compatibility is filtered before quality/bitrate ranking, and the
-configured deterministic fallback either chooses the highest lower H.264 resolution or reports no
-compatible format. Public WebM selects native VP9 + Opus. Every public video option is checked once
+`best_original` is native-only and never transcoded. Public MP4 selection is a zero-transcode
+container contract supporting AV1/AAC and H.264/AAC: codec families are planned independently
+before quality/bitrate ranking, and the configured deterministic fallback either chooses the
+highest lower resolution in that family or reports no compatible format. Public WebM selects native
+VP9 + Opus. Every public video option is checked once
 while building the catalog and again immediately before durable job creation; neither button starts
-a codec conversion. Public video jobs retain the codec-filtered `GUARANTEED` contract: a
+a codec conversion. Public video jobs retain the codec-family-filtered `GUARANTEED` contract: a
 source-format change between inspection and download fails safely, while only
 `EXPLICIT_TRANSCODE` may encode. The internal explicit-MP4 policy may still convert AV1/VP9 for non-public
 administrative/development flows after a conservative timeout estimate accepts the work.
 
 Container mux compatibility, Telegram inline-video streamability, and document delivery are
-separate decisions. VP9 inside MP4 is a valid native MP4 artifact and is valid for document
-delivery, but it does not satisfy the H.264/AAC inline-video profile. `best_original` normalizes
+separate decisions. AV1/AAC MP4 is a valid native artifact and is delivered as a document when it
+does not satisfy the H.264/AAC inline-video profile. `best_original` normalizes
 every accidental guaranteed-container request to native-only before it reaches the adapter.
 Transcoding first uses a quality-oriented CRF pass; the configured maximum is only a ceiling, and
 bitrate limiting is a fallback when that pass exceeds the ceiling or would multiply a small
@@ -161,7 +162,7 @@ terminates the process group, and an operator may disable forced conversion. Pro
 FFmpeg's machine-readable channel without exposing source paths. Docker can optionally add a worker
 CPU quota through `.env`.
 
-Fixed-resolution candidates are exact-height contracts except for the documented fast-MP4 native
+Fixed-resolution candidates are exact-height contracts except for the documented MP4 codec-family
 fallback. The application planner labels only actual selected height/FPS/dynamic range/codecs and
 deduplicates plans by selected streams plus those output properties. Thus several requested modes
 that resolve to one 1080p stream produce one 1080p choice. Exact `filesize` wins over

@@ -16,6 +16,7 @@ from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.application.services.native_options import (
     build_native_option_catalog,
     is_native_video_option,
+    native_video_codec,
 )
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
@@ -303,6 +304,7 @@ def build_router(
             mode=view.mode,
             container=view.container,
             container_policy=matching_option.container_policy,
+            native_video_codec=native_video_codec(view.video_codec),
         )
         if record.status is JobStatus.DELIVERY_UNCERTAIN:
             await callback.answer(
@@ -327,6 +329,7 @@ def build_router(
                     mode=view.mode,
                     container=view.container,
                     container_policy=record.container_policy,
+                    native_video_codec=record.native_video_codec,
                 )
             except Exception as exc:
                 await asyncio.to_thread(

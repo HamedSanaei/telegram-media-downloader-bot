@@ -8,10 +8,10 @@ Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
-Patch `1.0.5` makes the public video UI native-only. It renders actual selected resolution/FPS/HDR
-and component sizes, deduplicates fallback modes, adds persisted-selection Back navigation, and
-safely redirects every legacy generic/converted callback without enqueueing. Existing v1.0.0
-through v1.0.4 configuration and durable runtime state remain upgrade-compatible.
+Patch `1.0.6` corrects Native to mean zero transcoding: MP4 now exposes both AV1/AAC and H.264/AAC
+plans, preserves the selected codec family across durable/queue recovery, sends non-inline AV1 as a
+document, and makes Best Original summaries point to selectable plans. Existing v1.0.0 through
+v1.0.5 configuration and durable runtime state remain upgrade-compatible.
 
 ## Implemented production controls
 
@@ -37,7 +37,7 @@ through v1.0.4 configuration and durable runtime state remain upgrade-compatible
   independent external extractor plugin template.
 - Fail-closed all-channel membership with Redis positive/negative cache and admin bypass.
 - yt-dlp-only HTTP(S)/SOCKS proxy switching with legacy behavior and secret-safe configuration.
-- Two-stage native-only MP4/WebM quality selection with actual-plan labels, opaque versioned
+- Two-stage zero-transcode AV1/H.264 MP4 and VP9 WebM selection with actual-plan labels, opaque versioned
   callbacks, deduplication, deterministic Back navigation, automatic best-MP4 Instagram
   multi-video delivery, and runtime bot attribution in every caption.
 - Permanent SQLite user profiles, daily counters, and job-idempotent delivery byte accounting.
@@ -72,6 +72,9 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-29: Prepared 1.0.6 with selectable AV1/AAC MP4 plans, codec-aware labels and
+  deduplication, durable codec-family constraints, selectable Best Original summaries, document
+  delivery for non-inline AV1, and packaged zero-encode/stream-copy runtime assertions.
 - 2026-07-29: Prepared 1.0.5 with native-only public video choices, actual selected-stream labels
   and sizes, fallback/Best Original deduplication, deterministic Back navigation, dual pre-enqueue
   transcode validation, structured option-catalog logging, and safe legacy callback redirects.

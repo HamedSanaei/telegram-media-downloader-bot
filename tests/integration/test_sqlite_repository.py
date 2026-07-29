@@ -25,6 +25,7 @@ from telegram_media_bot.domain.models import (
     MediaFormatOption,
     MediaInfo,
     MediaKind,
+    NativeVideoCodec,
     OutputContainer,
     SelectionRecord,
     SelectionToken,
@@ -128,6 +129,7 @@ def test_initialize_non_destructively_migrates_legacy_jobs_table(tmp_path: Path)
     assert record is not None
     assert record.container is None
     assert record.container_policy is ContainerPolicy.NATIVE_ONLY
+    assert record.native_video_codec is None
     with closing(sqlite3.connect(path)) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
         user_tables = connection.execute(
@@ -136,7 +138,7 @@ def test_initialize_non_destructively_migrates_legacy_jobs_table(tmp_path: Path)
             WHERE type = 'table' AND name IN ('users', 'user_usage_daily', 'download_usage_events')
             """
         ).fetchone()
-    assert {"container", "container_policy"} <= columns
+    assert {"container", "container_policy", "native_video_codec"} <= columns
     assert user_tables == (3,)
 
 
@@ -295,11 +297,13 @@ def test_container_fields_and_format_options_survive_round_trip(
         mode=DownloadMode.VIDEO_1080,
         container=OutputContainer.WEBM,
         container_policy=ContainerPolicy.GUARANTEED,
+        native_video_codec=NativeVideoCodec.VP9,
     )
     loaded = repository.get_job(record.job_id)
     assert loaded is not None
     assert loaded.container is OutputContainer.WEBM
     assert loaded.container_policy is ContainerPolicy.GUARANTEED
+    assert loaded.native_video_codec is NativeVideoCodec.VP9
 
 
 def test_user_usage_is_idempotent_and_persistent(

@@ -8,6 +8,7 @@ from telegram_media_bot.domain.models import (
     MediaInfo,
     MediaKind,
     Mp4NativeFallback,
+    NativeVideoCodec,
     OutputContainer,
 )
 from telegram_media_bot.infrastructure.ytdlp.options import inspect_format_option
@@ -35,6 +36,7 @@ def test_production_like_metadata_selects_native_mp4_and_webm_without_transcode(
         container=OutputContainer.MP4,
         container_policy=ContainerPolicy.GUARANTEED,
         compatible_container=OutputContainer.MP4,
+        native_video_codec=NativeVideoCodec.H264,
         mp4_native_fallback=Mp4NativeFallback.LOWER_RESOLUTION,
     )
     webm = inspect_format_option(
@@ -52,7 +54,7 @@ def test_production_like_metadata_selects_native_mp4_and_webm_without_transcode(
     assert mp4 is not None
     assert mp4.height == 1080
     assert mp4.requires_transcode is False
-    assert mp4.selection_reason == "native_h264_exact_resolution"
+    assert mp4.selection_reason == "native_mp4_exact_resolution"
     assert webm is not None
     assert webm.height == 1080
     assert webm.requires_transcode is False
@@ -87,20 +89,27 @@ def test_native_catalog_exposes_only_real_unique_mp4_and_webm_resolutions() -> N
     planned: list[MediaFormatOption] = []
     for mode in modes:
         for container in (OutputContainer.MP4, OutputContainer.WEBM):
-            option = inspect_format_option(
-                _best_components,
-                context,
-                mode=mode,
-                max_size_bytes=1024 * 1024 * 1024,
-                duration_seconds=300,
-                mp3_bitrate_kbps=192,
-                container=container,
-                container_policy=ContainerPolicy.GUARANTEED,
-                compatible_container=container,
-                mp4_native_fallback=Mp4NativeFallback.LOWER_RESOLUTION,
+            codec_families = (
+                (NativeVideoCodec.AV1, NativeVideoCodec.H264)
+                if container is OutputContainer.MP4
+                else (NativeVideoCodec.VP9,)
             )
-            assert option is not None
-            planned.append(option)
+            for codec_family in codec_families:
+                option = inspect_format_option(
+                    _best_components,
+                    context,
+                    mode=mode,
+                    max_size_bytes=1024 * 1024 * 1024,
+                    duration_seconds=300,
+                    mp3_bitrate_kbps=192,
+                    container=container,
+                    container_policy=ContainerPolicy.GUARANTEED,
+                    compatible_container=container,
+                    native_video_codec=codec_family,
+                    mp4_native_fallback=Mp4NativeFallback.LOWER_RESOLUTION,
+                )
+                if option is not None:
+                    planned.append(option)
     catalog = build_native_option_catalog(
         MediaInfo(
             media_id="fixture",
@@ -115,9 +124,13 @@ def test_native_catalog_exposes_only_real_unique_mp4_and_webm_resolutions() -> N
     mp4 = catalog.for_container(OutputContainer.MP4)
     webm = catalog.for_container(OutputContainer.WEBM)
 
-    assert [option.actual_height for option in mp4] == [1080, 720, 480]
+    assert [option.actual_height for option in mp4] == [2160, 1440, 1080, 720, 480]
     assert [option.actual_height for option in webm] == [2160, 1440, 1080, 720, 480]
-    assert all(option.video_codec and option.video_codec.startswith("avc1") for option in mp4)
+    assert [option.video_codec for option in mp4[:2]] == [
+        "av01.0.12M.08",
+        "av01.0.12M.08",
+    ]
+    assert all(option.video_codec and option.video_codec.startswith("avc1") for option in mp4[2:])
     assert all(option.audio_codec and option.audio_codec.startswith("mp4a") for option in mp4)
     assert all(option.video_codec == "vp9" for option in webm)
     assert all(option.audio_codec == "opus" for option in webm)

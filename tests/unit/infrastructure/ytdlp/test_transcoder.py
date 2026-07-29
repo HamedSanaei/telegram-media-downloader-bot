@@ -12,7 +12,7 @@ from telegram_media_bot.domain.errors import (
     PostProcessingError,
     TranscodeRejectedError,
 )
-from telegram_media_bot.domain.models import OutputContainer
+from telegram_media_bot.domain.models import NativeVideoCodec, OutputContainer
 from telegram_media_bot.infrastructure.ytdlp import transcoder
 
 
@@ -168,6 +168,35 @@ def test_vp9_mp4_is_native_but_not_inline_streamable(
     assert transcoder.is_native_container_compatible(source, OutputContainer.MP4)
     assert not transcoder.is_inline_video_streamable(source)
     assert not transcoder.is_guaranteed_container_compatible(source, OutputContainer.MP4)
+
+
+def test_av1_mp4_satisfies_selected_native_plan_but_not_inline_video(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "native-av1.mp4"
+    source.write_bytes(b"media")
+    monkeypatch.setattr(transcoder, "_find_executable", lambda name: name)
+    monkeypatch.setattr(
+        transcoder,
+        "_probe_video",
+        lambda _ffprobe, _source: transcoder.VideoProbe(
+            30.0,
+            2160,
+            True,
+            video_codec="av1",
+            audio_codec="aac",
+            source_container="mov,mp4,m4a,3gp,3g2,mj2",
+        ),
+    )
+
+    assert transcoder.is_native_container_compatible(source, OutputContainer.MP4)
+    assert transcoder.is_guaranteed_container_compatible(
+        source,
+        OutputContainer.MP4,
+        native_video_codec=NativeVideoCodec.AV1,
+    )
+    assert not transcoder.is_inline_video_streamable(source)
 
 
 def test_transcode_gate_limits_concurrent_encodes() -> None:

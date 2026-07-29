@@ -20,6 +20,7 @@ from telegram_media_bot.domain.models import (
     DownloadMode,
     JobAbortResult,
     JobId,
+    NativeVideoCodec,
     OutputContainer,
     QueueJobStatus,
     normalize_container_policy,
@@ -69,6 +70,7 @@ class ArqJobQueue(JobQueue):
         mode: DownloadMode,
         container: OutputContainer | None = None,
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
+        native_video_codec: NativeVideoCodec | None = None,
     ) -> JobId:
         container_policy = normalize_container_policy(mode, container_policy)
         await self._redis.enqueue_job(
@@ -79,6 +81,7 @@ class ArqJobQueue(JobQueue):
             mode=mode.value,
             container=container.value if container else None,
             container_policy=container_policy.value,
+            native_video_codec=native_video_codec.value if native_video_codec else None,
             _job_id=str(job_id),
             _queue_name=self._queue_name,
         )

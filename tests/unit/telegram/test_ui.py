@@ -75,7 +75,7 @@ def test_file_type_page_only_exposes_native_video_audio_and_back() -> None:
     callbacks = [row[0].callback_data for row in keyboard.inline_keyboard]
 
     assert labels == [
-        "🎬 MP4 Native · H.264 + AAC",
+        "🎬 MP4 Native · AV1 / H.264",
         "🎞 WebM Native · VP9 + Opus",
         "🎵 صوت MP3",
         BACK_TEXT,
@@ -104,9 +104,9 @@ def test_quality_page_uses_actual_plan_fields_and_opaque_option_id() -> None:
     keyboard = selection_keyboard(selection, OutputContainer.MP4, catalog)
     text = render_media_info(selection.media, OutputContainer.MP4, catalog)
 
-    assert keyboard.inline_keyboard[0][0].text == "1080p · 30fps · SDR · 82.5 MiB"
-    assert "2160p" not in text
-    assert "1080p · 30fps · SDR · 82.5 MiB" in text
+    assert keyboard.inline_keyboard[0][0].text == "1080p · 30fps · H.264 · 82.5 MiB"
+    assert "• 2160p" not in text
+    assert "1080p · 30fps · H.264 · 82.5 MiB" in text
     callback = keyboard.inline_keyboard[0][0].callback_data
     assert callback is not None
     assert callback.startswith("o2:opaque-token-123:")
@@ -118,7 +118,8 @@ def test_media_and_progress_ui_use_owned_models_only() -> None:
     info = _selection().media
     text = render_media_info(info)
     assert "01:01" in text
-    assert "حجم بهترین نسخهٔ اصلی: حدود 2.0 KiB" in text
+    assert "بهترین نسخهٔ اصلی:" in text
+    assert "2160p · WebM · VP9 · 500.0 MiB" in text
     assert "نوع خروجی را انتخاب کنید:" in text
     assert cancellation_keyboard(JobId("job")).inline_keyboard[0][0].callback_data == "cancel:job"
     assert "50٪" in render_progress(50, 512, 1024)

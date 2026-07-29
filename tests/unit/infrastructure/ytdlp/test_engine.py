@@ -11,7 +11,6 @@ from telegram_media_bot.domain.errors import (
     DownloadFailedError,
     JobCancelledError,
     MediaTooLargeError,
-    MediaUnavailableError,
     RateLimitedError,
     UnsafeUrlError,
 )
@@ -21,6 +20,7 @@ from telegram_media_bot.domain.models import (
     DownloadRequest,
     JobId,
     MediaKind,
+    NativeVideoCodec,
     OutputContainer,
     ProgressEvent,
 )
@@ -429,7 +429,7 @@ def test_fast_mp4_selects_native_h264_and_never_transcodes(
     assert "399" not in ProductionYoutubeDL.selected_ids
 
 
-def test_fast_mp4_with_only_av1_fails_before_transcoder(
+def test_native_mp4_av1_downloads_without_transcoder(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -467,27 +467,62 @@ def test_fast_mp4_with_only_av1_fails_before_transcoder(
 
         def extract_info(self, _url: str, *, download: bool) -> dict[str, Any]:
             assert download
-            list(self.format_selector({"formats": self.formats}))
-            raise AssertionError("The incompatible selector should have failed")
+            selected = next(iter(self.format_selector({"formats": self.formats})))
+            output = Path(self.options["paths"]["home"])
+            output.mkdir(parents=True, exist_ok=True)
+            (output / "video.mp4").write_bytes(b"native-av1")
+            return {
+                "id": "video",
+                "title": "AV1 Video",
+                "extractor_key": "Youtube",
+                "webpage_url": "https://example.test/video",
+                "ext": "mp4",
+                "vcodec": "av01.0.08M.08",
+                "acodec": "aac",
+                "height": 1080,
+                "formats": self.formats,
+                "requested_formats": selected["requested_formats"],
+            }
 
     def unexpected_transcode(*_args: object, **_kwargs: object) -> Path:
-        raise AssertionError("Fast MP4 must reject before FFmpeg")
+        raise AssertionError("Native AV1 MP4 must never start FFmpeg encoding")
 
     monkeypatch.setattr(engine_module, "YoutubeDL", Av1OnlyYoutubeDL)
     monkeypatch.setattr(engine_module, "transcode_video_to_container", unexpected_transcode)
+    monkeypatch.setattr(
+        engine_module,
+        "is_guaranteed_container_compatible",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(engine_module, "is_inline_video_streamable", lambda *_args: False)
+    monkeypatch.setattr(
+        engine_module,
+        "probe_video",
+        lambda _path: VideoProbe(
+            60.0,
+            1080,
+            True,
+            video_codec="av1",
+            audio_codec="aac",
+            source_container="mov,mp4",
+        ),
+    )
     configured = _without_dns_checks(settings)
 
-    with pytest.raises(MediaUnavailableError):
-        engine_module.YtDlpEngine(configured).download(
-            DownloadRequest(
-                job_id=JobId("av1-only"),
-                url="https://example.test/video",
-                mode=DownloadMode.VIDEO_1080,
-                output_directory=configured.storage.downloads_path() / "av1-only",
-                container=OutputContainer.MP4,
-                container_policy=ContainerPolicy.GUARANTEED,
-            )
+    result = engine_module.YtDlpEngine(configured).download(
+        DownloadRequest(
+            job_id=JobId("av1-only"),
+            url="https://example.test/video",
+            mode=DownloadMode.VIDEO_1080,
+            output_directory=configured.storage.downloads_path() / "av1-only",
+            container=OutputContainer.MP4,
+            container_policy=ContainerPolicy.GUARANTEED,
+            native_video_codec=NativeVideoCodec.AV1,
         )
+    )
+
+    assert result.file_path.name == "video.mp4"
+    assert result.inline_video_streamable is False
 
 
 def test_download_rejects_output_outside_storage(settings: Settings, tmp_path: Path) -> None:

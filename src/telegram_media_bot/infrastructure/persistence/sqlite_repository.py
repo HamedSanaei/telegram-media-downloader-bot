@@ -34,6 +34,7 @@ from telegram_media_bot.domain.models import (
     MediaFormatOption,
     MediaInfo,
     MediaKind,
+    NativeVideoCodec,
     OutputContainer,
     RecoveryDecision,
     SelectionRecord,
@@ -101,6 +102,7 @@ class SqliteJobRepository(JobRepository):
                     mode TEXT,
                     container TEXT,
                     container_policy TEXT NOT NULL DEFAULT 'native_only',
+                    native_video_codec TEXT,
                     idempotency_key TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -189,6 +191,7 @@ class SqliteJobRepository(JobRepository):
                 "container_policy",
                 "TEXT NOT NULL DEFAULT 'native_only'",
             )
+            _ensure_column(connection, "jobs", "native_video_codec", "TEXT")
 
     def healthy(self) -> bool:
         try:
@@ -287,11 +290,11 @@ class SqliteJobRepository(JobRepository):
                 """
                 INSERT INTO jobs (
                     job_id, kind, status, chat_id, user_id, url, mode, container,
-                    container_policy, idempotency_key,
+                    container_policy, native_video_codec, idempotency_key,
                     created_at, updated_at, status_message_id, source, error_category,
                     error_summary, cancel_requested, delivery_file_id,
                     delivery_file_unique_id, attempt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _job_values(record),
             )
@@ -976,6 +979,9 @@ def _job_from_row(row: sqlite3.Row) -> JobRecord:
             if row["container_policy"]
             else ContainerPolicy.NATIVE_ONLY.value
         ),
+        native_video_codec=(
+            NativeVideoCodec(str(row["native_video_codec"])) if row["native_video_codec"] else None
+        ),
         status_message_id=(int(row["status_message_id"]) if row["status_message_id"] else None),
         source=str(row["source"]) if row["source"] else None,
         error_category=(
@@ -1002,6 +1008,7 @@ def _job_values(record: JobRecord) -> tuple[Any, ...]:
         record.mode.value if record.mode else None,
         record.container.value if record.container else None,
         record.container_policy.value,
+        record.native_video_codec.value if record.native_video_codec else None,
         record.idempotency_key,
         _dump_datetime(record.created_at),
         _dump_datetime(record.updated_at),

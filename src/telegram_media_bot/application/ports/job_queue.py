@@ -5,6 +5,7 @@ from telegram_media_bot.domain.models import (
     DownloadMode,
     JobAbortResult,
     JobId,
+    NativeVideoCodec,
     OutputContainer,
 )
 
@@ -31,6 +32,7 @@ class JobQueue(Protocol):
         mode: DownloadMode,
         container: OutputContainer | None = None,
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
+        native_video_codec: NativeVideoCodec | None = None,
     ) -> JobId:
         """Enqueue a download and return its opaque project job ID."""
         ...

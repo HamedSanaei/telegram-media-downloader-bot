@@ -28,14 +28,15 @@ def main() -> None:
     catalog = build_native_option_catalog(selection.media)
     mp4 = catalog.for_container(OutputContainer.MP4)
     webm = catalog.for_container(OutputContainer.WEBM)
-    assert [option.actual_height for option in mp4] == [1080]
+    assert [option.actual_height for option in mp4] == [2160, 1080]
+    assert [option.video_codec for option in mp4] == ["av01.0.12M.08", "avc1.640028"]
     assert [option.actual_height for option in webm] == [2160]
     assert all(not option.transcode_required for option in (*mp4, *webm))
 
     types = container_keyboard(selection, catalog)
     labels = [row[0].text for row in types.inline_keyboard]
     assert labels[:3] == [
-        "🎬 MP4 Native · H.264 + AAC",
+        "🎬 MP4 Native · AV1 / H.264",
         "🎞 WebM Native · VP9 + Opus",
         "🎵 صوت MP3",
     ]
@@ -65,6 +66,7 @@ def main() -> None:
         json.dumps(
             {
                 "mp4_heights": [option.actual_height for option in mp4],
+                "mp4_codecs": [option.video_codec for option in mp4],
                 "webm_heights": [option.actual_height for option in webm],
                 "hidden_transcode_options": catalog.hidden_transcode_option_count,
                 "generic_video_buttons": False,
@@ -118,8 +120,8 @@ def _fixture() -> SelectionRecord:
             MediaFormatOption(
                 mode=DownloadMode.VIDEO_2160,
                 container=OutputContainer.MP4,
-                container_policy=ContainerPolicy.EXPLICIT_TRANSCODE,
-                requires_transcode=True,
+                container_policy=ContainerPolicy.GUARANTEED,
+                requires_transcode=False,
                 width=3840,
                 height=2160,
                 selected_format_ids=("399", "140"),

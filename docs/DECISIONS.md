@@ -206,7 +206,7 @@ payloads continue to resolve to the ordinary native policy.
 
 ## ADR-020: Public video choices are actual native plans
 
-**Status:** accepted; supersedes the public-UI portions of ADR-014 and ADR-019
+**Status:** superseded by ADR-021
 
 The Telegram UI exposes only native H.264/AAC MP4 and native VP9/Opus WebM video. Explicit
 transcoding remains an internal bounded capability and is never a public button, even when its
@@ -222,3 +222,17 @@ digest, never raw format IDs.
 Back navigation is a deterministic presentation transition over the existing owner-bound selection:
 quality returns to output type, output type returns to the send-link prompt, and neither transition
 calls the engine or creates/enqueues a job.
+
+## ADR-021: Native MP4 is a zero-transcode AV1/H.264 contract
+
+**Status:** accepted; supersedes the codec restriction in ADR-020
+
+Native describes processing, not playback compatibility. Public MP4 plans may contain AV1/AAC or
+H.264/AAC when both streams can be merged/remuxed with stream copy and neither stream requires
+encoding. Codec families are planned, labeled, deduplicated, persisted, queued, and revalidated
+independently so a user's AV1 choice cannot silently become H.264 after enqueue or restart.
+
+Telegram inline-video streamability remains a separate H.264/AAC decision. A native AV1 MP4 that is
+not inline-streamable is delivered as a document without invoking an encoder. The Best Original
+summary is derived from a visible native plan, so every advertised resolution/container/codec/size
+has a corresponding selectable opaque option.

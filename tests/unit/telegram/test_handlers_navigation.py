@@ -20,6 +20,7 @@ from telegram_media_bot.domain.models import (
     MediaFormatOption,
     MediaInfo,
     MediaKind,
+    NativeVideoCodec,
     OutputContainer,
     SelectionRecord,
     SelectionToken,
@@ -254,6 +255,7 @@ async def test_native_option_is_revalidated_before_enqueue(
                     mode=kwargs["mode"],  # type: ignore[arg-type]
                     container=kwargs["container"],  # type: ignore[arg-type]
                     container_policy=kwargs["container_policy"],  # type: ignore[arg-type]
+                    native_video_codec=kwargs["native_video_codec"],  # type: ignore[arg-type]
                     idempotency_key="key",
                     created_at=now,
                     updated_at=now,
@@ -279,6 +281,7 @@ async def test_native_option_is_revalidated_before_enqueue(
     assert queue.enqueued == 1
     assert queue.kwargs["container"] is OutputContainer.MP4
     assert queue.kwargs["container_policy"] is ContainerPolicy.GUARANTEED
+    assert queue.kwargs["native_video_codec"] is NativeVideoCodec.AV1
 
 
 def _callback_handler(router: object, name: str) -> Any:
@@ -330,8 +333,8 @@ def _selection() -> SelectionRecord:
                 MediaFormatOption(
                     mode=DownloadMode.VIDEO_2160,
                     container=OutputContainer.MP4,
-                    container_policy=ContainerPolicy.EXPLICIT_TRANSCODE,
-                    requires_transcode=True,
+                    container_policy=ContainerPolicy.GUARANTEED,
+                    requires_transcode=False,
                     width=3840,
                     height=2160,
                     selected_format_ids=("399", "140"),
@@ -340,7 +343,7 @@ def _selection() -> SelectionRecord:
                 ),
             ),
         ),
-        allowed_modes=(DownloadMode.VIDEO_1080,),
+        allowed_modes=(DownloadMode.VIDEO_2160, DownloadMode.VIDEO_1080),
         created_at=now,
         expires_at=now + timedelta(minutes=10),
     )

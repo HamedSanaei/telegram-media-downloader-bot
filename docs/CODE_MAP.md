@@ -11,8 +11,8 @@
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic access, required-channel membership, and rate policy |
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
-| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, codec-first native MP4/WebM selection, native/inline compatibility probing, and preflight/thread/concurrency/timeout-bounded explicit transcoding |
-| `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for native MP4/WebM selection, stream-copy arguments, and Best Original policy |
+| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, zero-transcode AV1/H.264 MP4 and VP9 WebM selection, native/inline compatibility probing, and preflight/thread/concurrency/timeout-bounded explicit transcoding |
+| `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for AV1/H.264 MP4 and VP9 WebM selection, stream-copy arguments, and Best Original policy |
 | `src/telegram_media_bot/infrastructure/queue/` | ARQ enqueue plus official abort and transient-key finalization |
 | `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL jobs, durable-first cancellation, users, daily usage, delivery, block, and recovery store |
 | `src/telegram_media_bot/infrastructure/security/telegram_membership.py` | Telegram membership gateway with positive/negative Redis cache |
@@ -44,7 +44,7 @@
 ## Upstream compatibility hot spots
 
 - `infrastructure/ytdlp/engine.py`: `YoutubeDL` lifecycle and calls;
-- `infrastructure/ytdlp/options.py`: semantic mode mapping, codec-first native selection, deterministic lower-resolution policy, and bounded complete-stream selection;
+- `infrastructure/ytdlp/options.py`: semantic mode mapping, codec-family native selection, deterministic lower-resolution policy, and bounded complete-stream selection;
 - `infrastructure/ytdlp/transcoder.py`: separate native-container and inline-streamability probes,
   quality-first MP4 H.264/AAC and WebM VP9/Opus conversion, and size-limited fallback;
 - `infrastructure/ytdlp/mapper.py`: upstream metadata to `MediaInfo`;

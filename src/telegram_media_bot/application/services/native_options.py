@@ -8,6 +8,7 @@ from telegram_media_bot.domain.models import (
     MediaFormatOption,
     MediaInfo,
     NativeOptionView,
+    NativeVideoCodec,
     OutputContainer,
     SizeConfidence,
 )
@@ -37,6 +38,12 @@ class NativeOptionCatalog:
 
     def resolve(self, option_id: str) -> NativeOptionView | None:
         return next((option for option in self.options if option.option_id == option_id), None)
+
+    def best_original(self) -> NativeOptionView | None:
+        candidates = tuple(
+            option for option in self.options if option.container in _VIDEO_CONTAINERS
+        )
+        return max(candidates, key=_best_original_sort_key, default=None)
 
 
 def build_native_option_catalog(info: MediaInfo) -> NativeOptionCatalog:
@@ -82,8 +89,33 @@ def is_native_video_option(option: MediaFormatOption | NativeOptionView) -> bool
     video_codec = option.video_codec
     audio_codec = option.audio_codec
     if container is OutputContainer.MP4:
-        return _is_h264(video_codec) and _is_aac(audio_codec)
+        return native_video_codec(video_codec) in {
+            NativeVideoCodec.AV1,
+            NativeVideoCodec.H264,
+        } and _is_aac(audio_codec)
     return _is_vp9(video_codec) and _is_opus(audio_codec)
+
+
+def native_video_codec(codec: str | None) -> NativeVideoCodec | None:
+    value = _normalized_codec(codec)
+    if value == "av1" or value.startswith("av01"):
+        return NativeVideoCodec.AV1
+    if value == "h264" or value.startswith("avc1"):
+        return NativeVideoCodec.H264
+    if value == "vp9" or value.startswith("vp09"):
+        return NativeVideoCodec.VP9
+    return None
+
+
+def display_video_codec(codec: str | None) -> str:
+    family = native_video_codec(codec)
+    if family is NativeVideoCodec.AV1:
+        return "AV1"
+    if family is NativeVideoCodec.H264:
+        return "H.264"
+    if family is NativeVideoCodec.VP9:
+        return "VP9"
+    return (codec or "نامشخص").strip()
 
 
 def _identity_key(option: MediaFormatOption) -> tuple[object, ...]:
@@ -160,7 +192,7 @@ def _display_label(option: MediaFormatOption, dynamic_range: str) -> str:
     if option.fps is not None:
         details.append(f"{option.fps:g}fps")
     if option.height is not None:
-        details.append(dynamic_range.upper())
+        details.append(display_video_codec(option.video_codec))
     if option.size_bytes is None or option.size_confidence is SizeConfidence.UNKNOWN:
         details.append("حجم نامشخص")
     else:
@@ -188,13 +220,19 @@ def _view_sort_key(option: NativeOptionView) -> tuple[object, ...]:
     )
 
 
+def _best_original_sort_key(option: NativeOptionView) -> tuple[object, ...]:
+    return (
+        option.actual_height or 0,
+        option.actual_width or 0,
+        option.actual_fps or 0.0,
+        option.dynamic_range != "SDR",
+        option.quality_score or 0.0,
+        option.size_bytes or 0,
+    )
+
+
 def _normalized_codec(codec: str | None) -> str:
     return (codec or "").strip().casefold()
-
-
-def _is_h264(codec: str | None) -> bool:
-    value = _normalized_codec(codec)
-    return value == "h264" or value.startswith("avc1")
 
 
 def _is_aac(codec: str | None) -> bool:

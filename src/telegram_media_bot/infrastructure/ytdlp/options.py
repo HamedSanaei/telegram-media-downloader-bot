@@ -17,6 +17,7 @@ from telegram_media_bot.domain.models import (
     DownloadRequest,
     MediaFormatOption,
     Mp4NativeFallback,
+    NativeVideoCodec,
     OutputContainer,
     SizeConfidence,
 )
@@ -160,6 +161,7 @@ def bounded_format_selector(
     mode: DownloadMode,
     max_size_bytes: int,
     compatible_container: OutputContainer | None = None,
+    native_video_codec: NativeVideoCodec | None = None,
     mp4_native_fallback: Mp4NativeFallback = Mp4NativeFallback.FAIL,
 ) -> FormatSelector:
     """Choose the best complete configured selection whose known stream sum fits."""
@@ -169,7 +171,13 @@ def bounded_format_selector(
         candidate_count = len(formats)
         if compatible_container is not None:
             formats = [
-                item for item in formats if _component_matches_container(item, compatible_container)
+                item
+                for item in formats
+                if _component_matches_container(
+                    item,
+                    compatible_container,
+                    native_video_codec=native_video_codec,
+                )
             ]
         target_height = video_target_height(mode)
         allow_lower_height = (
@@ -282,6 +290,7 @@ def inspect_format_option(
     container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
     requires_transcode: bool = False,
     compatible_container: OutputContainer | None = None,
+    native_video_codec: NativeVideoCodec | None = None,
     mp4_native_fallback: Mp4NativeFallback = Mp4NativeFallback.FAIL,
 ) -> MediaFormatOption | None:
     try:
@@ -292,6 +301,7 @@ def inspect_format_option(
                     mode=mode,
                     max_size_bytes=max_size_bytes,
                     compatible_container=compatible_container,
+                    native_video_codec=native_video_codec,
                     mp4_native_fallback=mp4_native_fallback,
                 )(context)
             ),
@@ -565,9 +575,13 @@ def _components_match_container(
         if item.get("acodec") not in {None, "none"}
     }
     if container is OutputContainer.MP4:
-        return all(codec == "h264" or codec.startswith("avc1") for codec in video_codecs) and all(
-            codec == "aac" or codec.startswith("mp4a") for codec in audio_codecs
-        )
+        return all(
+            codec == "h264"
+            or codec.startswith("avc1")
+            or codec == "av1"
+            or codec.startswith("av01")
+            for codec in video_codecs
+        ) and all(codec == "aac" or codec.startswith("mp4a") for codec in audio_codecs)
     if container is OutputContainer.WEBM:
         return all(codec == "vp9" or codec.startswith("vp09") for codec in video_codecs) and all(
             codec == "opus" for codec in audio_codecs
@@ -578,6 +592,8 @@ def _components_match_container(
 def _component_matches_container(
     item: Mapping[str, Any],
     container: OutputContainer,
+    *,
+    native_video_codec: NativeVideoCodec | None = None,
 ) -> bool:
     ext = str(item.get("ext") or item.get("container") or "").casefold()
     video_codec = str(item.get("vcodec") or "").casefold()
@@ -587,14 +603,20 @@ def _component_matches_container(
     if not has_video and not has_audio:
         return False
     if container is OutputContainer.MP4:
-        video_ok = not has_video or (
-            ext in {"mp4", "m4v"} and (video_codec == "h264" or video_codec.startswith("avc1"))
-        )
+        if native_video_codec is NativeVideoCodec.AV1:
+            video_codec_ok = video_codec == "av1" or video_codec.startswith("av01")
+        elif native_video_codec is NativeVideoCodec.H264:
+            video_codec_ok = video_codec == "h264" or video_codec.startswith("avc1")
+        else:
+            video_codec_ok = video_codec == "h264" or video_codec.startswith("avc1")
+        video_ok = not has_video or (ext in {"mp4", "m4v"} and video_codec_ok)
         audio_ok = not has_audio or (
             ext in {"m4a", "mp4"} and (audio_codec == "aac" or audio_codec.startswith("mp4a"))
         )
         return video_ok and audio_ok
     if container is OutputContainer.WEBM:
+        if native_video_codec not in {None, NativeVideoCodec.VP9}:
+            return False
         video_ok = not has_video or (
             ext == "webm" and (video_codec == "vp9" or video_codec.startswith("vp09"))
         )
@@ -621,16 +643,16 @@ def _selection_reason(
         return None
     target_height = video_target_height(mode)
     if target_height is not None and selected_height == target_height:
-        return "native_h264_exact_resolution"
+        return "native_mp4_exact_resolution"
     if (
         target_height is not None
         and selected_height is not None
         and selected_height < target_height
     ):
-        return "native_h264_lower_resolution"
+        return "native_mp4_lower_resolution"
     if len(components) == 1:
-        return "native_combined_h264_mp4"
-    return "native_h264_exact_resolution"
+        return "native_combined_mp4"
+    return "native_mp4_exact_resolution"
 
 
 def _fallback_reason(
@@ -646,7 +668,7 @@ def _fallback_reason(
         and selected_height is not None
         and selected_height < target_height
     ):
-        return "exact_h264_not_available"
+        return "exact_native_mp4_not_available"
     return None
 
 

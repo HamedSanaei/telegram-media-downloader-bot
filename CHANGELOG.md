@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.0.6 - 2026-07-29
+
+- Expanded MP4 Native to include real AV1/AAC and H.264/AAC plans; Native is now defined by zero
+  video/audio transcoding, with stream-copy merge/remux remaining permitted.
+- Added truthful codec-aware option labels and kept AV1 and H.264 plans distinct when they share a
+  resolution. Selected codec families remain durable across SQLite, Redis, restart recovery, and
+  download-time validation.
+- Made the Best Original summary point to an actually selectable Native plan and report that
+  plan's resolution, container, codec, and selected-stream size.
+- Route non-inline AV1 MP4 through document delivery without re-encoding; runtime-image smoke tests
+  assert both native AV1 and H.264 visibility, zero transcoding, no `libx264`, and stream-copy args.
+
 ## 1.0.5 - 2026-07-29
 
 - Made every public video choice native-only: Telegram now exposes only H.264/AAC MP4 Native and

@@ -39,6 +39,12 @@ class Mp4NativeFallback(StrEnum):
     FAIL = "fail"
 
 
+class NativeVideoCodec(StrEnum):
+    AV1 = "av1"
+    H264 = "h264"
+    VP9 = "vp9"
+
+
 def normalize_container_policy(
     mode: DownloadMode,
     policy: ContainerPolicy,
@@ -208,6 +214,7 @@ class DownloadRequest:
     temp_directory: Path | None = None
     container: OutputContainer | None = None
     container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY
+    native_video_codec: NativeVideoCodec | None = None
     allow_collection: bool = False
 
     def __post_init__(self) -> None:
@@ -335,6 +342,7 @@ class JobRecord:
     updated_at: datetime
     container: OutputContainer | None = None
     container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY
+    native_video_codec: NativeVideoCodec | None = None
     status_message_id: int | None = None
     source: str | None = None
     error_category: ErrorCategory | None = None

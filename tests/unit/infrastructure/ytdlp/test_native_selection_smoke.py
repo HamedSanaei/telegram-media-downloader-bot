@@ -12,6 +12,11 @@ def test_packaged_native_selection_smoke(capsys: pytest.CaptureFixture[str]) -> 
 
     assert result["mp4_format_ids"] == ["137", "140"]
     assert result["mp4_transcode_required"] is False
+    assert result["mp4_av1_format_ids"] == ["401", "140"]
+    assert result["mp4_av1_visible"] is True
+    assert result["mp4_av1_transcode_required"] is False
+    assert result["libx264_invoked"] is False
+    assert result["stream_copy"] is True
     assert result["webm_format_ids"] == ["248", "251"]
     assert result["best_original_policy"] == "native_only"
     assert result["mp4_merger_args"] == [

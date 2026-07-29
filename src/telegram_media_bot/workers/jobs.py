@@ -51,6 +51,7 @@ from telegram_media_bot.domain.models import (
     JobId,
     JobKind,
     JobStatus,
+    NativeVideoCodec,
     OutputContainer,
     ProgressEvent,
     SelectionRecord,
@@ -179,6 +180,25 @@ async def process_inspection_job(
                         "actual_width": option.actual_width,
                         "actual_fps": option.actual_fps,
                         "actual_size_bytes": option.size_bytes,
+                        "video_filesize": next(
+                            (
+                                item.video_size_bytes
+                                for item in info.format_options
+                                if item.selected_format_ids == option.selected_format_ids
+                                and item.container is option.container
+                            ),
+                            None,
+                        ),
+                        "audio_filesize": next(
+                            (
+                                item.audio_size_bytes
+                                for item in info.format_options
+                                if item.selected_format_ids == option.selected_format_ids
+                                and item.container is option.container
+                            ),
+                            None,
+                        ),
+                        "final_size_bytes": option.size_bytes,
                         "size_is_approximate": option.size_is_approximate,
                         "video_codec": option.video_codec,
                         "audio_codec": option.audio_codec,
@@ -294,6 +314,7 @@ async def process_download_job(
     mode: str,
     container: str | None = None,
     container_policy: str = ContainerPolicy.NATIVE_ONLY.value,
+    native_video_codec: str | None = None,
 ) -> str:
     settings = cast(Settings, ctx["settings"])
     repository = cast(JobRepository, ctx["repository"])
@@ -367,6 +388,9 @@ async def process_download_job(
         selected_mode = DownloadMode(mode)
         selected_container = OutputContainer(container) if container else None
         selected_policy = ContainerPolicy(container_policy)
+        selected_native_video_codec = (
+            NativeVideoCodec(native_video_codec) if native_video_codec else None
+        )
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
         reporter = asyncio.create_task(
             _report_progress(
@@ -386,6 +410,7 @@ async def process_download_job(
             common_download_arguments.update(
                 container=selected_container,
                 container_policy=selected_policy,
+                native_video_codec=selected_native_video_codec,
             )
         download_task = asyncio.create_task(
             asyncio.to_thread(service.download, **common_download_arguments)

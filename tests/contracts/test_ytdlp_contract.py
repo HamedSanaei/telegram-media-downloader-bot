@@ -13,7 +13,7 @@ from telegram_media_bot.domain.models import (
     SelectionToken,
 )
 from telegram_media_bot.infrastructure.ytdlp.engine import YtDlpEngine
-from telegram_media_bot.telegram.ui import container_keyboard
+from telegram_media_bot.telegram.ui import container_keyboard, render_media_info
 
 _SOURCE_FIXTURES = (
     ("youtube", "CONTRACT_YOUTUBE_URL"),
@@ -45,40 +45,52 @@ def test_operator_supplied_public_url_inspection(
 
 
 @pytest.mark.contract
-def test_youtube_production_regression_selects_native_h264_plan(settings: Settings) -> None:
+def test_youtube_production_regression_selects_native_av1_and_h264_plans(
+    settings: Settings,
+) -> None:
     if os.environ.get("RUN_CONTRACT_TESTS") != "1":
         pytest.skip("Set RUN_CONTRACT_TESTS=1 to enable external contract tests")
 
-    info = YtDlpEngine(settings).inspect("https://www.youtube.com/watch?v=kyLrKXBETNg")
-    option = next(
+    info = YtDlpEngine(settings).inspect("https://www.youtube.com/watch?v=7bOptq-NPJQ")
+    av1 = next(
+        (
+            item
+            for item in info.format_options
+            if item.mode is DownloadMode.VIDEO_2160
+            and item.container is OutputContainer.MP4
+            and item.container_policy is ContainerPolicy.GUARANTEED
+            and item.video_codec is not None
+            and (
+                item.video_codec.casefold() == "av1"
+                or item.video_codec.casefold().startswith("av01")
+            )
+        ),
+        None,
+    )
+    h264 = next(
         (
             item
             for item in info.format_options
             if item.mode is DownloadMode.VIDEO_1080
             and item.container is OutputContainer.MP4
             and item.container_policy is ContainerPolicy.GUARANTEED
+            and item.video_codec is not None
+            and (
+                item.video_codec.casefold() == "h264"
+                or item.video_codec.casefold().startswith("avc1")
+            )
         ),
         None,
     )
 
-    assert option is not None
-    assert option.height == 1080
-    assert option.requires_transcode is False
-    assert option.selection_reason == "native_h264_exact_resolution"
-    webm = next(
-        (
-            item
-            for item in info.format_options
-            if item.mode is DownloadMode.VIDEO_1080
-            and item.container is OutputContainer.WEBM
-            and item.container_policy is ContainerPolicy.GUARANTEED
-        ),
-        None,
-    )
-    assert webm is not None
-    assert webm.height == 1080
-    assert webm.requires_transcode is False
-    assert webm.selection_reason == "webm_native"
+    assert av1 is not None
+    assert av1.height == 2160
+    assert av1.size_bytes is not None
+    assert av1.selected_format_ids
+    assert av1.requires_transcode is False
+    assert h264 is not None
+    assert h264.height == 1080
+    assert h264.requires_transcode is False
 
 
 @pytest.mark.contract
@@ -100,6 +112,8 @@ def test_youtube_native_ui_catalog_is_truthful_and_unique(settings: Settings) ->
         and (
             option.video_codec.casefold() == "h264"
             or option.video_codec.casefold().startswith("avc1")
+            or option.video_codec.casefold() == "av1"
+            or option.video_codec.casefold().startswith("av01")
         )
         and option.audio_codec
         and (
@@ -119,6 +133,22 @@ def test_youtube_native_ui_catalog_is_truthful_and_unique(settings: Settings) ->
         for option in webm
     )
     assert all(not option.transcode_required for option in (*mp4, *webm))
+    assert any(
+        option.actual_height == 2160
+        and option.video_codec is not None
+        and (
+            option.video_codec.casefold() == "av1"
+            or option.video_codec.casefold().startswith("av01")
+        )
+        for option in mp4
+    )
+    best_original = catalog.best_original()
+    assert best_original in (*mp4, *webm)
+    assert best_original is not None
+    assert best_original.actual_height == 2160
+    summary = render_media_info(info, catalog=catalog)
+    assert "بهترین نسخهٔ اصلی:" in summary
+    assert "2160p" in summary
     assert all(
         option.actual_height is None or f"{option.actual_height}p" in option.display_label
         for option in (*mp4, *webm)

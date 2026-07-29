@@ -21,7 +21,7 @@ from telegram_media_bot.domain.errors import (
     PostProcessingError,
     TranscodeRejectedError,
 )
-from telegram_media_bot.domain.models import OutputContainer
+from telegram_media_bot.domain.models import NativeVideoCodec, OutputContainer
 
 _SIZE_MARGIN = 0.88
 _MUX_OVERHEAD_BITS_PER_SECOND = 16_000
@@ -101,13 +101,23 @@ def is_inline_video_streamable(source: Path) -> bool:
     )
 
 
-def is_guaranteed_container_compatible(source: Path, container: OutputContainer) -> bool:
+def is_guaranteed_container_compatible(
+    source: Path,
+    container: OutputContainer,
+    *,
+    native_video_codec: NativeVideoCodec | None = None,
+) -> bool:
     """Return whether a semantic guaranteed-output codec contract is already met."""
     probe = probe_video(source)
     if container is OutputContainer.MP4:
+        expected_codec = (
+            native_video_codec.value
+            if native_video_codec in {NativeVideoCodec.AV1, NativeVideoCodec.H264}
+            else NativeVideoCodec.H264.value
+        )
         return (
             (source.suffix.casefold() == ".mp4" or "mp4" in probe.source_container.split(","))
-            and probe.video_codec == "h264"
+            and probe.video_codec == expected_codec
             and (not probe.has_audio or probe.audio_codec == "aac")
         )
     if container is OutputContainer.WEBM:

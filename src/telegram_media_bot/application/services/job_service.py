@@ -12,6 +12,7 @@ from telegram_media_bot.domain.models import (
     JobKind,
     JobRecord,
     JobStatus,
+    NativeVideoCodec,
     OutputContainer,
     normalize_container_policy,
 )
@@ -39,6 +40,7 @@ class JobService:
         mode: DownloadMode,
         container: OutputContainer | None = None,
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
+        native_video_codec: NativeVideoCodec | None = None,
     ) -> tuple[JobRecord, bool]:
         container_policy = normalize_container_policy(mode, container_policy)
         return self._create(
@@ -49,6 +51,7 @@ class JobService:
             mode=mode,
             container=container,
             container_policy=container_policy,
+            native_video_codec=native_video_codec,
         )
 
     def _create(
@@ -61,6 +64,7 @@ class JobService:
         mode: DownloadMode | None,
         container: OutputContainer | None = None,
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
+        native_video_codec: NativeVideoCodec | None = None,
     ) -> tuple[JobRecord, bool]:
         key = _idempotency_key(
             kind=kind,
@@ -68,6 +72,7 @@ class JobService:
             url=url,
             mode=mode,
             container=container,
+            native_video_codec=native_video_codec,
         )
         existing = self._repository.find_active_job(key)
         if existing is not None:
@@ -86,6 +91,7 @@ class JobService:
             updated_at=now,
             container=container,
             container_policy=container_policy,
+            native_video_codec=native_video_codec,
         )
         persisted = self._repository.create_job(candidate)
         return persisted, persisted.job_id == candidate.job_id
@@ -98,9 +104,12 @@ def _idempotency_key(
     url: str,
     mode: DownloadMode | None,
     container: OutputContainer | None = None,
+    native_video_codec: NativeVideoCodec | None = None,
 ) -> str:
     parts = [kind.value, str(user_id), url, mode.value if mode else "inspect"]
     if container is not None:
         parts.append(container.value)
+    if native_video_codec is not None:
+        parts.append(native_video_codec.value)
     material = "\x00".join(parts)
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
