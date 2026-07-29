@@ -213,9 +213,9 @@ def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
             tags.append(f"{image}:latest")
         return tags
 
-    assert expected_tags("v1.0.7") == [
-        f"{image}:v1.0.7",
-        f"{image}:1.0.7",
+    assert expected_tags("v1.0.8") == [
+        f"{image}:v1.0.8",
+        f"{image}:1.0.8",
         f"{image}:1.0",
         f"{image}:latest",
     ]
@@ -228,15 +228,15 @@ def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
     assert "linux/arm64" not in workflow
 
 
-def test_v1_0_4_release_tag_exactly_matches_project_version() -> None:
+def test_release_tag_exactly_matches_project_version() -> None:
     project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     workflow = Path(".github/workflows/publish-container.yml").read_text(encoding="utf-8")
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.0.7"
+    assert version == "1.0.8"
     assert __version__ == version
-    assert tag == "v1.0.7"
+    assert tag == "v1.0.8"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
     assert 'if tag != f"v{version}":' in workflow
 
@@ -273,6 +273,27 @@ def test_release_waits_for_published_image_smoke_test_and_attaches_verified_asse
         "telegram-media-downloader-bot.zip.sha256",
     ):
         assert asset in workflow
+
+
+def test_management_cleanup_is_project_scoped_and_runs_after_update_verification() -> None:
+    linux = Path("scripts/tmb.sh").read_text(encoding="utf-8")
+    windows = Path("scripts/tmb.ps1").read_text(encoding="utf-8")
+    repository = "ghcr.io/hamedsanaei/telegram-media-downloader-bot"
+
+    for script in (linux, windows):
+        assert repository in script
+        assert "prune_old_project_images_after_success" in script
+        assert "cleanup-workspaces" in script
+        assert "docker image prune" not in script
+        assert "docker system prune" not in script
+        assert "docker volume prune" not in script
+
+    assert linux.index("verify_runtime_release || return 1") < linux.index(
+        "cleanup_project_resources false"
+    )
+    assert windows.index('"telegram-media-bot", "doctor"') < windows.index(
+        "try { Invoke-TmbCleanup"
+    )
 
 
 def test_runtime_image_guarantees_compatible_7zip_commands_and_shared_identity() -> None:

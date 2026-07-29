@@ -36,6 +36,45 @@ printf 'docker %s\n' "$*" >>"$TMB_TEST_LOG"
 if [[ "$*" == *" ps --services --filter status=running"* ]]; then
   printf 'bot\nworker\nlocal-api\nredis\n'
 fi
+if [[ "$*" == *" ps -a -q"* ]]; then
+  printf 'stopped-project-container\n'
+fi
+if [[ "$*" == *"run --rm --no-deps worker python -c"* ]]; then
+  printf '1.0.3\n'
+fi
+if [[ "$*" == *"operations.update.prune_old_project_images_after_success"* ]]; then
+  printf 'true\n'
+fi
+if [[ "$*" == image\ inspect\ --format\ \{\{.Id\}\}\ * ]]; then
+  printf 'sha256:current\n'
+fi
+if [[ "$*" == "image inspect --format {{.Size}} sha256:old-unused" ]]; then
+  printf '12345\n'
+fi
+if [[ "$*" == "image ls --no-trunc --format {{.Repository}}|{{.ID}}" ]]; then
+  printf '%s\n' \
+    'ghcr.io/hamedsanaei/telegram-media-downloader-bot|sha256:current' \
+    'ghcr.io/hamedsanaei/telegram-media-downloader-bot|sha256:old-unused' \
+    'ghcr.io/hamedsanaei/telegram-media-downloader-bot|sha256:old-used' \
+    'ghcr.io/hamedsanaei/telegram-media-downloader-bot|sha256:shared-tag' \
+    'example/another-project|sha256:shared-tag' \
+    'redis|sha256:redis'
+fi
+if [[ "$*" == "ps -aq" ]]; then
+  printf 'referenced-container\n'
+fi
+if [[ "$*" == "inspect --format {{.Image}} referenced-container" ]]; then
+  printf 'sha256:old-used\n'
+  exit 0
+fi
+if [[ "$*" == "inspect --format {{.State.Status}} stopped-project-container" ]]; then
+  printf 'exited\n'
+  exit 0
+fi
+if [[ "$*" == "inspect --format {{.Image}} stopped-project-container" ]]; then
+  printf 'sha256:old-unused\n'
+  exit 0
+fi
 case "$*" in
   *" ps -q bot") printf 'bot-container\n' ;;
   *" ps -q worker") printf 'worker-container\n' ;;
@@ -204,6 +243,31 @@ run_success_case() {
     TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" tmb status >/dev/null
   grep -q 'docker .* up -d --no-build --force-recreate bot worker local-api' "$log" \
     || fail "successful update did not recreate the stack"
+  grep -q 'docker compose .*run --rm --no-deps worker python -c' "$log" \
+    || fail "successful update did not verify the runtime version"
+  grep -q 'docker compose .*run --rm --no-deps worker telegram-media-bot doctor' "$log" \
+    || fail "successful update did not run doctor"
+  grep -q 'docker image rm sha256:old-unused' "$log" \
+    || fail "unused old project image was not removed after verification"
+  grep -q 'docker rm stopped-project-container' "$log" \
+    || fail "stopped old Compose project container was not removed"
+  if grep -q 'docker image rm sha256:old-used' "$log"; then
+    fail "container-referenced old project image was removed"
+  fi
+  if grep -q 'docker image rm sha256:redis' "$log"; then
+    fail "image from another repository was removed"
+  fi
+  if grep -q 'docker image rm sha256:shared-tag' "$log"; then
+    fail "image ID with a foreign repository tag was removed"
+  fi
+  if grep -Eq 'docker (image prune|system prune|volume prune)' "$log"; then
+    fail "unsafe global prune command was used"
+  fi
+  local doctor_line cleanup_line
+  doctor_line="$(grep -n 'doctor --config /app/config.yaml' "$log" | tail -n 1 | cut -d: -f1)"
+  cleanup_line="$(grep -n 'docker image rm sha256:old-unused' "$log" | tail -n 1 | cut -d: -f1)"
+  ((doctor_line < cleanup_line)) \
+    || fail "old image cleanup ran before runtime verification"
 }
 
 run_checksum_failure_case() {
@@ -300,6 +364,30 @@ run_health_failure_case() {
     || fail "crash-looping candidate service was not stopped"
   grep -q 'docker .* up -d --no-build bot worker local-api' "$log" \
     || fail "health failure did not restart the previous service set"
+  if grep -q 'docker image rm' "$log"; then
+    fail "health failure removed rollback images"
+  fi
+}
+
+run_cleanup_dry_run_case() {
+  local case_root="$TEST_ROOT/cleanup-dry-run"
+  local log="$case_root/operations.log"
+  prepare_case "$case_root"
+  (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh cleanup --dry-run
+  )
+  grep -q 'cleanup-workspaces --config /app/config.yaml --dry-run' "$log" \
+    || fail "cleanup dry-run did not plan workspace cleanup"
+  if grep -q 'docker image rm' "$log" || grep -q '^docker rm ' "$log"; then
+    fail "cleanup dry-run changed Docker resources"
+  fi
+  if grep -Eq 'docker (image prune|system prune|volume prune)' "$log"; then
+    fail "cleanup dry-run invoked unsafe prune"
+  fi
 }
 
 run_success_case
@@ -307,4 +395,5 @@ run_checksum_failure_case
 run_download_failure_case
 run_permission_failure_case
 run_health_failure_case
+run_cleanup_dry_run_case
 echo "Linux tmb update recovery tests passed."

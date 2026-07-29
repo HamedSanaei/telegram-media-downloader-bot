@@ -25,6 +25,10 @@ from telegram_media_bot.infrastructure.observability.metrics import MetricsRegis
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.queue.arq_queue import ArqJobQueue
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
+from telegram_media_bot.infrastructure.storage.workspace import (
+    cleanup_job_workspace,
+    sweep_workspaces,
+)
 from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
 from telegram_media_bot.infrastructure.ytdlp.engine import YtDlpEngine
 from telegram_media_bot.telegram.bot_factory import TelegramRuntime, create_telegram_runtime
@@ -94,7 +98,11 @@ async def startup(ctx: dict[str, Any]) -> None:
                     finalize_stale=True,
                 )
                 await asyncio.to_thread(
-                    _cleanup_cancelled_directories, settings, str(record.job_id)
+                    cleanup_job_workspace,
+                    settings,
+                    record.job_id,
+                    terminal_status=JobStatus.CANCELLED.value,
+                    cleanup_reason="startup_cancelled_recovery",
                 )
                 cancelled_count += 1
                 await logger.ainfo(
@@ -148,6 +156,20 @@ async def startup(ctx: dict[str, Any]) -> None:
                 recovery_decision=recovery.decision.value,
                 final_status=record.status.value,
             )
+        startup_cleanup = await asyncio.to_thread(
+            sweep_workspaces,
+            settings,
+            repository,
+            datetime.now(UTC),
+            cleanup_reason="startup",
+        )
+        metrics.record_workspace_cleanup(
+            files_deleted=startup_cleanup.files_deleted,
+            directories_deleted=startup_cleanup.directories_deleted,
+            bytes_reclaimed=startup_cleanup.bytes_reclaimed,
+            failed_paths=startup_cleanup.failed_paths_count,
+            duration_seconds=startup_cleanup.duration_seconds,
+        )
         server = HealthServer(
             host=settings.observability.health_host,
             port=settings.observability.health_port,
@@ -163,6 +185,9 @@ async def startup(ctx: dict[str, Any]) -> None:
             recovered_jobs=len(recovered),
             requeued_jobs=requeued_count,
             cancelled_jobs=cancelled_count,
+            cleanup_directories=startup_cleanup.directories_deleted,
+            cleanup_bytes_reclaimed=startup_cleanup.bytes_reclaimed,
+            cleanup_failed_paths=startup_cleanup.failed_paths_count,
         )
     except Exception:
         ctx.pop("bot", None)
@@ -224,13 +249,6 @@ def _storage_writable(settings: Settings) -> bool:
     except OSError:
         return False
     return True
-
-
-def _cleanup_cancelled_directories(settings: Settings, job_id: str) -> None:
-    for root in (settings.storage.downloads_path(), settings.storage.temp_path()):
-        target = (root / job_id).resolve()
-        if target != root.resolve() and target.is_relative_to(root.resolve()) and target.exists():
-            shutil.rmtree(target)
 
 
 _settings = load_settings(require_token=True)

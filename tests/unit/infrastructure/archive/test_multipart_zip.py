@@ -30,13 +30,22 @@ def test_multipart_builder_creates_ordered_manifest(
         )
     )
 
-    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        archive = Path(args[-2])
-        archive.with_name(f"{archive.name}.001").write_bytes(b"part-one")
-        archive.with_name(f"{archive.name}.002").write_bytes(b"part-two")
-        return subprocess.CompletedProcess(args, 0, "", "")
+    class FakePopen:
+        def __init__(self, args: list[str], **_kwargs: object) -> None:
+            self.args = args
+            self.returncode = 0
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+        def communicate(self, *, timeout: int) -> tuple[str, str]:
+            assert timeout == 86400
+            archive = Path(self.args[-2])
+            archive.with_name(f"{archive.name}.001").write_bytes(b"part-one")
+            archive.with_name(f"{archive.name}.002").write_bytes(b"part-two")
+            return "", ""
+
+        def poll(self) -> int:
+            return self.returncode
+
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
 
     result = builder.build(source)
     manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
@@ -45,6 +54,17 @@ def test_multipart_builder_creates_ordered_manifest(
     assert manifest["extract_from"].endswith(".zip.001")
     assert manifest["original"]["sha256"] == hashlib.sha256(b"original-content").hexdigest()
     assert manifest["volumes"][1]["sha256"] == hashlib.sha256(b"part-two").hexdigest()
+
+
+def test_multipart_builder_isolates_active_process_state(tmp_path: Path) -> None:
+    executable = tmp_path / "7zz.exe"
+    executable.write_bytes(b"binary")
+    builder = MultipartZipBuilder(MultipartSection(seven_zip_executable=executable))
+
+    isolated = builder.isolated()
+
+    assert isolated is not builder
+    assert isolated.executable() == builder.executable()
 
 
 def test_default_7zz_name_falls_back_to_distro_7z(

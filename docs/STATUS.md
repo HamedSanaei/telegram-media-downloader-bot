@@ -8,10 +8,11 @@ Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
-Patch `1.0.7` makes every YouTube URL with a valid video ID single-video intent, strips Mix and
-playlist context before persistence/queue/execution, and applies yt-dlp `noplaylist` in inspection
-and download. Genuine playlist URLs and the 1.0.6 Native option behavior are unchanged. Existing
-v1.0.0 through v1.0.6 configuration and durable runtime state remain upgrade-compatible.
+Patch `1.0.8` adds strict terminal workspace zero-retention and safe project-only Docker image
+reclamation. Confirmed multipart items are deleted one by one, archive cancellation is job-scoped,
+startup/maintenance sweepers recover abandoned files, and updater cleanup runs only after candidate
+verification. Existing v1.0.0 through v1.0.7 configuration and durable runtime state remain
+upgrade-compatible.
 
 ## Implemented production controls
 
@@ -64,6 +65,12 @@ v1.0.0 through v1.0.6 configuration and durable runtime state remain upgrade-com
   snapshots, probe real runtime-user writes plus SQLite WAL, verify post-start health, and restore
   the prior application/image/permissions/service set on failure. Container restart retries are
   bounded to prevent a persistent permission failure from consuming CPU indefinitely.
+- Terminal job workspaces are removed idempotently after success, failure, cancellation, timeout,
+  or uncertain delivery; startup and maintenance sweepers preserve active jobs while reclaiming
+  stale or terminal directories, with structured cleanup metrics.
+- Verified updates and `tmb cleanup [--dry-run]` may reclaim only unreferenced old project-image
+  IDs and superseded stopped project containers. Current/referenced images, other repositories,
+  volumes, and build caches are protected.
 
 ## Verification
 
@@ -72,6 +79,9 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-29: Prepared 1.0.8 with job-scoped zero-retention, per-part multipart cleanup, cancellable
+  isolated 7-Zip processes, observable orphan sweeping, and verified project-only Docker image
+  cleanup with a dry-run operator command.
 - 2026-07-29: Prepared 1.0.7 with centralized YouTube single-video canonicalization, durable and
   queue-safe canonical URLs, execution-boundary recovery normalization, and `noplaylist` defenses
   that prevent Mix expansion without changing real-playlist or Native format behavior.

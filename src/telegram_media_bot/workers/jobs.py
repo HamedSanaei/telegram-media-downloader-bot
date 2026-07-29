@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-import shutil
 import threading
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from time import monotonic
 from typing import Any, cast
 
@@ -59,6 +57,10 @@ from telegram_media_bot.domain.models import (
     SelectionToken,
 )
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
+from telegram_media_bot.infrastructure.storage.workspace import (
+    cleanup_job_workspace,
+    sweep_workspaces,
+)
 from telegram_media_bot.telegram.delivery import render_caption
 from telegram_media_bot.telegram.texts import (
     AUTH_REQUIRED_TEXT,
@@ -337,6 +339,8 @@ async def process_download_job(
     )
     reporter: asyncio.Task[None] | None = None
     cleanup_allowed = True
+    cleanup_complete = False
+    cleanup_reason = "job_finalizer"
     loop = asyncio.get_running_loop()
     last_delivery_progress: DeliveryProgressEvent | None = None
 
@@ -452,6 +456,22 @@ async def process_download_job(
         )
         if cancellation():
             raise JobCancelledError("Download was cancelled during delivery")
+        if settings.storage.delete_after_upload and settings.media.workspace.cleanup_on_success:
+            cleanup = await asyncio.to_thread(
+                cleanup_job_workspace,
+                settings,
+                job_id,
+                terminal_status=JobStatus.SUCCEEDED.value,
+                cleanup_reason="delivery_confirmed",
+            )
+            metrics.record_workspace_cleanup(
+                files_deleted=cleanup.files_deleted,
+                directories_deleted=cleanup.directories_deleted,
+                bytes_reclaimed=cleanup.bytes_reclaimed,
+                failed_paths=cleanup.failed_paths_count,
+                duration_seconds=cleanup.duration_seconds,
+            )
+            cleanup_complete = cleanup.failed_paths_count == 0
         try:
             await asyncio.to_thread(
                 repository.complete_download,
@@ -484,6 +504,7 @@ async def process_download_job(
         )
         return str(job_id)
     except JobCancelledError:
+        cleanup_reason = "cancellation"
         newly_cancelled = await asyncio.to_thread(
             repository.finalize_cancelled, job_id, source="user"
         )
@@ -506,6 +527,7 @@ async def process_download_job(
         )
         return str(job_id)
     except DeliveryError as exc:
+        cleanup_reason = "delivery_failure"
         quarantine_persisted = True
         try:
             await asyncio.to_thread(
@@ -551,11 +573,13 @@ async def process_download_job(
         )
         return str(job_id)
     except MediaBotError as exc:
+        cleanup_reason = "timeout" if "timed out" in str(exc).casefold() else "controlled_failure"
         await _handle_controlled_failure(ctx, job_id, chat_id, exc, attempt)
         return str(job_id)
     except asyncio.CancelledError:
         cancel_requested = await asyncio.to_thread(repository.is_cancel_requested, job_id)
         if cancel_requested:
+            cleanup_reason = "cancellation"
             await asyncio.to_thread(repository.finalize_cancelled, job_id, source="user")
             await logger.ainfo(
                 "download_cancelled",
@@ -574,6 +598,7 @@ async def process_download_job(
         )
         raise
     except Exception as exc:
+        cleanup_reason = "unexpected_failure"
         if await asyncio.to_thread(repository.is_cancel_requested, job_id):
             await asyncio.to_thread(repository.finalize_cancelled, job_id, source="user")
             return str(job_id)
@@ -605,13 +630,28 @@ async def process_download_job(
         if reporter is not None:
             await progress_queue.put(None)
             await reporter
-        if settings.storage.delete_after_upload and cleanup_allowed:
-            await asyncio.gather(
-                asyncio.to_thread(
-                    _safe_remove, output_directory, settings.storage.downloads_path()
-                ),
-                asyncio.to_thread(_safe_remove, temp_directory, settings.storage.temp_path()),
+        if cleanup_allowed and not cleanup_complete:
+            current_record = await asyncio.to_thread(repository.get_job, job_id)
+            current_status = (
+                current_record.status if current_record is not None else JobStatus.FAILED
             )
+            if settings.storage.delete_after_upload and _cleanup_enabled(
+                settings, current_status, cleanup_reason
+            ):
+                cleanup = await asyncio.to_thread(
+                    cleanup_job_workspace,
+                    settings,
+                    job_id,
+                    terminal_status=current_status.value,
+                    cleanup_reason=cleanup_reason,
+                )
+                metrics.record_workspace_cleanup(
+                    files_deleted=cleanup.files_deleted,
+                    directories_deleted=cleanup.directories_deleted,
+                    bytes_reclaimed=cleanup.bytes_reclaimed,
+                    failed_paths=cleanup.failed_paths_count,
+                    duration_seconds=cleanup.duration_seconds,
+                )
         metrics.observe_duration(monotonic() - started)
         structlog.contextvars.clear_contextvars()
 
@@ -628,9 +668,29 @@ async def maintenance_job(ctx: dict[str, Any]) -> int:
     purged = await asyncio.to_thread(
         repository.purge_expired, now, settings.storage.job_retention_days
     )
-    removed = await asyncio.to_thread(_cleanup_orphans, settings, repository, now)
-    await logger.ainfo("maintenance_completed", purged_records=purged, removed_directories=removed)
-    return purged + removed
+    cleanup = await asyncio.to_thread(
+        sweep_workspaces,
+        settings,
+        repository,
+        now,
+        cleanup_reason="maintenance",
+    )
+    metrics = cast(MetricsRegistry, ctx["metrics"])
+    metrics.record_workspace_cleanup(
+        files_deleted=cleanup.files_deleted,
+        directories_deleted=cleanup.directories_deleted,
+        bytes_reclaimed=cleanup.bytes_reclaimed,
+        failed_paths=cleanup.failed_paths_count,
+        duration_seconds=cleanup.duration_seconds,
+    )
+    await logger.ainfo(
+        "maintenance_completed",
+        purged_records=purged,
+        removed_directories=cleanup.directories_deleted,
+        bytes_reclaimed=cleanup.bytes_reclaimed,
+        failed_paths_count=cleanup.failed_paths_count,
+    )
+    return purged + cleanup.directories_deleted
 
 
 async def _handle_controlled_failure(
@@ -829,24 +889,14 @@ def _consume_task_exception(task: asyncio.Future[Any]) -> None:
         task.exception()
 
 
-def _safe_remove(path: Path, root: Path) -> None:
-    resolved = path.resolve()
-    resolved_root = root.resolve()
-    if resolved == resolved_root or not resolved.is_relative_to(resolved_root):
-        raise RuntimeError("Refusing to remove a path outside the job root")
-    if resolved.exists():
-        shutil.rmtree(resolved)
-
-
-def _cleanup_orphans(settings: Settings, repository: JobRepository, now: datetime) -> int:
-    removed = 0
-    cutoff = now.timestamp() - settings.storage.orphan_grace_seconds
-    for root in (settings.storage.downloads_path(), settings.storage.temp_path()):
-        for child in root.iterdir():
-            if not child.is_dir() or child.stat().st_mtime > cutoff:
-                continue
-            record = repository.get_job(JobId(child.name))
-            if record is None or record.status.terminal:
-                _safe_remove(child, root)
-                removed += 1
-    return removed
+def _cleanup_enabled(settings: Settings, status: JobStatus, cleanup_reason: str) -> bool:
+    policy = settings.media.workspace
+    if not status.terminal:
+        return False
+    if cleanup_reason == "timeout":
+        return policy.cleanup_on_timeout
+    if status is JobStatus.SUCCEEDED:
+        return policy.cleanup_on_success
+    if status is JobStatus.CANCELLED:
+        return policy.cleanup_on_cancel
+    return policy.cleanup_on_failure

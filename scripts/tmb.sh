@@ -354,6 +354,104 @@ verify_services_healthy() {
   return 1
 }
 
+verify_runtime_release() {
+  local runtime_version
+  runtime_version="$(
+    compose --profile local-api run --rm --no-deps worker \
+      python -c 'import telegram_media_bot; print(telegram_media_bot.__version__)'
+  )" || return 1
+  [[ "${runtime_version##*$'\n'}" == "$RELEASE_VERSION" ]] || {
+    echo "Runtime version does not match release $RELEASE_VERSION." >&2
+    return 1
+  }
+  compose --profile local-api run --rm --no-deps worker \
+    telegram-media-bot doctor --config /app/config.yaml >/dev/null || return 1
+  compose --profile local-api ps >/dev/null || return 1
+}
+
+project_image_cleanup_enabled() {
+  local configured
+  configured="$(
+    docker run --rm \
+      -v "$ROOT_DIR/config.yaml:/app/config.yaml:ro" \
+      "$(configured_image)" \
+      python -c '
+from telegram_media_bot.bootstrap.config import load_settings
+print(str(load_settings("/app/config.yaml").operations.update.prune_old_project_images_after_success).lower())
+      ' 2>/dev/null
+  )" || configured="true"
+  [[ "${configured##*$'\n'}" != "false" ]]
+}
+
+cleanup_project_resources() {
+  local dry_run="${1:-false}" current_image current_id container state image_id
+  local repository image_size
+  local -a project_containers=()
+  local -a referenced_ids=()
+  local -a project_ids=()
+  local -a foreign_ids=()
+  local -a candidate_ids=()
+  local reclaimed=0
+
+  current_image="$(configured_image)"
+  current_id="$(docker image inspect --format '{{.Id}}' "$current_image")" || return 1
+
+  while IFS= read -r container; do
+    [[ -n "$container" ]] && project_containers+=("$container")
+  done < <(compose --profile local-api ps -a -q)
+  for container in "${project_containers[@]}"; do
+    state="$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)"
+    image_id="$(docker inspect --format '{{.Image}}' "$container" 2>/dev/null || true)"
+    if [[ "$state" != "running" && -n "$image_id" && "$image_id" != "$current_id" ]]; then
+      if [[ "$dry_run" == "true" ]]; then
+        echo "Would remove stopped project container: $container"
+      else
+        docker rm "$container" >/dev/null || return 1
+      fi
+    fi
+  done
+
+  while IFS= read -r container; do
+    [[ -n "$container" ]] || continue
+    image_id="$(docker inspect --format '{{.Image}}' "$container" 2>/dev/null || true)"
+    [[ -n "$image_id" ]] && referenced_ids+=("$image_id")
+  done < <(docker ps -aq)
+
+  while IFS='|' read -r repository image_id; do
+    [[ -n "$image_id" ]] || continue
+    if [[ "$repository" == "$IMAGE_REPOSITORY" ]]; then
+      project_ids+=("$image_id")
+    else
+      foreign_ids+=("$image_id")
+    fi
+  done < <(docker image ls --no-trunc --format '{{.Repository}}|{{.ID}}')
+
+  for image_id in "${project_ids[@]}"; do
+    [[ "$image_id" == "$current_id" ]] && continue
+    if printf '%s\n' "${referenced_ids[@]}" | grep -Fxq -- "$image_id"; then
+      continue
+    fi
+    if printf '%s\n' "${foreign_ids[@]}" | grep -Fxq -- "$image_id"; then
+      continue
+    fi
+    if ! printf '%s\n' "${candidate_ids[@]}" | grep -Fxq -- "$image_id"; then
+      candidate_ids+=("$image_id")
+    fi
+  done
+
+  for image_id in "${candidate_ids[@]}"; do
+    image_size="$(docker image inspect --format '{{.Size}}' "$image_id" 2>/dev/null || printf '0')"
+    [[ "$image_size" =~ ^[0-9]+$ ]] || image_size=0
+    reclaimed=$((reclaimed + image_size))
+    if [[ "$dry_run" == "true" ]]; then
+      echo "Would remove old project image: $image_id"
+    else
+      docker image rm "$image_id" >/dev/null || return 1
+    fi
+  done
+  echo "Project cleanup candidates: ${#candidate_ids[@]} image(s); approximate bytes: $reclaimed"
+}
+
 rollback_update() {
   local previous_image="$1"
   shift
@@ -393,6 +491,12 @@ perform_update() {
   start_services true "$@" || return 1
   verify_services_healthy "$@" || return 1
   repair_tmb_command || return 1
+  verify_runtime_release || return 1
+  if project_image_cleanup_enabled; then
+    cleanup_project_resources false || {
+      echo "Update succeeded, but old project image cleanup failed; retry with tmb cleanup." >&2
+    }
+  fi
 }
 
 menu() {
@@ -407,6 +511,7 @@ Telegram Media Bot
 7) Configure
 8) Update
 9) Backup
+10) Cleanup
 0) Exit
 EOF
   read -r -p "Select: " choice
@@ -420,6 +525,7 @@ EOF
     7) run config ;;
     8) run update ;;
     9) run backup ;;
+    10) run cleanup ;;
     0) exit 0 ;;
     *) echo "Invalid selection" >&2; exit 2 ;;
   esac
@@ -475,6 +581,22 @@ run() {
         return 1
       fi
       ;;
+    cleanup)
+      local dry_run=false
+      local -a workspace_cleanup_arguments=(
+        telegram-media-bot cleanup-workspaces --config /app/config.yaml
+      )
+      if [[ "${2:-}" == "--dry-run" ]]; then
+        dry_run=true
+        workspace_cleanup_arguments+=(--dry-run)
+      elif [[ -n "${2:-}" ]]; then
+        echo "Usage: tmb cleanup [--dry-run]" >&2
+        return 2
+      fi
+      compose --profile local-api run --rm --no-deps worker \
+        "${workspace_cleanup_arguments[@]}"
+      cleanup_project_resources "$dry_run"
+      ;;
     backup) backup ;;
     uninstall)
       compose --profile local-api down
@@ -485,7 +607,7 @@ run() {
       fi
       echo "Services stopped. Remove $ROOT_DIR manually when no longer needed."
       ;;
-    *) echo "Usage: tmb start|stop|restart|status|logs [service]|doctor|config|update|backup|uninstall" >&2; exit 2 ;;
+    *) echo "Usage: tmb start|stop|restart|status|logs [service]|doctor|config|update|backup|cleanup [--dry-run]|uninstall" >&2; exit 2 ;;
   esac
 }
 

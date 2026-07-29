@@ -75,6 +75,16 @@ def test_local_api_serve_and_configure_commands_are_explicit() -> None:
     assert configure.config == Path("custom.yaml")
 
 
+def test_cleanup_workspace_parser_supports_dry_run() -> None:
+    args = cli.build_parser().parse_args(
+        ["cleanup-workspaces", "--config", "custom.yaml", "--dry-run"]
+    )
+
+    assert args.command == "cleanup-workspaces"
+    assert args.config == Path("custom.yaml")
+    assert args.dry_run is True
+
+
 def test_interactive_configure_never_prints_secrets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

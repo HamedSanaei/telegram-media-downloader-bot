@@ -4,6 +4,19 @@ Generated: 2026-07-29
 
 ## Current change addendum
 
+- Version 1.0.8 enforces symlink-safe, idempotent zero-retention for exact job workspaces after
+  success, failure, cancellation, timeout, and delivery uncertainty. Startup and maintenance
+  sweepers preserve active/retryable jobs while reclaiming terminal and age-gated orphan work.
+- Multi-artifact media and multipart volumes/manifests are deleted individually after Telegram
+  returns success and the receipt is durable. Each multipart delivery owns an isolated cancellable
+  7-Zip process, so cancelling one job cannot terminate another job's archive process.
+- Cleanup emits structured per-job totals and Prometheus counters for files, directories, bytes,
+  failures, and duration. No media filename, URL, global cookie, SQLite/Redis state, configuration,
+  or sibling job is included in the deletion scope.
+- Linux and Windows management commands now expose `tmb cleanup [--dry-run]`. A verified update can
+  remove superseded stopped containers from this Compose project and unreferenced old image IDs
+  from the exact project repository. Current/referenced images, IDs with foreign repository tags,
+  unrelated images, volumes, and build cache are protected.
 - Version 1.0.7 canonicalizes supported YouTube URLs with a valid video ID before SQLite, Redis,
   inspection, and download. `watch`, `youtu.be`, `shorts`, and `live` links lose Mix/playlist
   context while explicit `/playlist?list=...` links retain the existing bounded-playlist policy.
@@ -63,7 +76,7 @@ Generated: 2026-07-29
   restored if permission migration is unsafe.
 - The runtime image guarantees both `7zz` and `7z`; CI and publication smoke tests create, split,
   and verify a real archive rather than checking package text only.
-- Project and package metadata are aligned at `1.0.7`; the lockfile changed only the editable
+- Project and package metadata are aligned at `1.0.8`; the lockfile changed only the editable
   project version, with no dependency upgrade.
 - Instagram automatic downloads now create and enqueue the same native-only `best_original`
   contract. `force_mp4` selects native MP4 video plus M4A audio for merge/remux only; disabling it
@@ -76,7 +89,7 @@ Generated: 2026-07-29
 - Structured selection/transcode logs include source container/codecs/size, selected format IDs,
   reason, target codec, CRF or bitrate, and final size.
 - The exact v1.0.0 configuration fixture and representative v1.0.1 through v1.0.6 configurations
-  load unchanged under v1.0.7. Mocked Linux and Windows
+  load unchanged under v1.0.8. Mocked Linux and Windows
   patch-upgrade tests confirm that only `TMB_IMAGE` changes in `.env`, while config, cookies,
   SQLite, Redis, and existing downloads remain intact.
 - CI and release image builds now share the
@@ -121,22 +134,24 @@ session is present.
 - `uv lock --check`: passed.
 - `uv sync --frozen --group dev`: passed; 80 installed packages checked.
 - Ruff lint: passed.
-- Ruff format check: passed for 114 Python files.
-- Strict mypy: passed for 105 source/test files.
-- Default test suite: 293 passed, 7 skipped on this Windows host (the destructive large-file case
-  plus 6 Linux-only full-script Bash parse cases), and 11 external contracts deselected.
-- Core branch coverage: 83.52%, above the enforced 80% floor.
+- Ruff format check: passed for 117 Python files.
+- Strict mypy: passed for 108 source/test files.
+- Default test suite: 303 passed, 8 skipped on this Windows host (the destructive large-file case,
+  6 Linux-only full-script Bash parse cases, and one unavailable unprivileged symlink case), and 11
+  external contracts deselected.
+- Core branch coverage: 82.36%, above the enforced 80% floor.
 - Architecture boundary check: passed; only
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
 - Opt-in production regression contract: metadata-only inspection of the YouTube Mix URL passed in
   6.93 seconds as video `DGbwtVtthu8`, with canonical webpage URL and Native format options.
-- UTF-8/text integrity: passed for the complete tracked text set.
-- Deterministic source manifest regenerated and verified with 182 release entries.
+- UTF-8/text integrity: passed for the complete 179-file tracked text set.
+- Deterministic source manifest regenerated and verified with 185 release entries.
 - SQLite migration, WAL contention, atomic usage, and cancel-safe recovery tests passed.
 - Linux and Windows mocked `tmb update` tests passed for success, release-download failure, and
   checksum failure. Linux additionally passed permission rollback, candidate crash-state rollback,
   transaction ordering, lost executable-mode recovery, state preservation, global `tmb` repair,
-  `command -v`, installed-script `bash -n`, and `tmb status` assertions.
+  `command -v`, installed-script `bash -n`, `tmb status`, post-verification old-image cleanup,
+  referenced/foreign-image protection, and cleanup dry-run assertions.
 - External extractor SDK: lock/sync passed; 1 default test passed and 1 contract was deselected.
 - `config.example.yaml`, Compose YAML, both workflow YAML files, and JSON schema parsed successfully.
 - PowerShell AST parsing: passed for all 5 scripts.
@@ -144,7 +159,7 @@ session is present.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
-- Python 1.0.7 sdist and wheel builds passed.
+- Python 1.0.8 sdist and wheel builds passed.
 - The privileged filesystem/SQLite/Docker upgrade test could not start because no
   Docker, Podman, or Nerdctl executable is installed on this host.
 - `config.example.yaml` passed `config-check` without printing secrets.

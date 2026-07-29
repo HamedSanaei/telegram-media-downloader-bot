@@ -10,6 +10,8 @@ directories. Concurrency and restart tests cover deduplication and recovery.
 Reconciliation treats `cancel_requested` as authoritative for queued, running, and retrying jobs:
 they become terminal cancelled records and are excluded from every requeue path. Existing healthy
 abandoned-job and delivery-uncertainty behavior remains unchanged.
+Startup and scheduled maintenance now use the same symlink-safe sweeper: terminal directories are
+immediate, unknown stale directories are grace-period gated, and active job directories survive.
 
 ## Deliverables
 

@@ -75,9 +75,12 @@ Example:
 
 ## Cleanup and capacity
 
-ZIP volumes and manifests are created inside the unique job directory and follow the normal
-`storage.delete_after_upload` cleanup policy. Capacity planning must temporarily allow the source
-file plus approximately one additional source-file-sized set of stored volumes.
+ZIP volumes and manifests are created inside the unique job directory. After each successful
+Telegram response and durable delivery receipt, that part is deleted immediately. The final worker
+cleanup removes the source, any unsent parts, the manifest, and the job directory on every terminal
+outcome. Cancellation terminates the job-scoped 7-Zip process group before cleanup. Capacity
+planning must temporarily allow the source file plus approximately one additional
+source-file-sized set of stored volumes.
 
 The recipient requires 7-Zip. The multipart route intentionally favors operational simplicity over
 single-message delivery for files above the direct Local Bot API ceiling.

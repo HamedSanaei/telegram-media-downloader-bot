@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 from contextlib import suppress
+from datetime import UTC, datetime
 from getpass import getpass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -19,6 +20,8 @@ from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.bootstrap.logging import configure_logging
 from telegram_media_bot.domain.errors import ConfigurationError, DeliveryError, LocalBotApiError
 from telegram_media_bot.infrastructure.archive.multipart_zip import resolve_seven_zip
+from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
+from telegram_media_bot.infrastructure.storage.workspace import sweep_workspaces
 from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
 
 
@@ -37,6 +40,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", help="Check local runtime prerequisites")
     doctor.add_argument("--config", type=Path, default=None)
+
+    cleanup = subparsers.add_parser(
+        "cleanup-workspaces",
+        help="Safely clean terminal and orphan job workspaces",
+    )
+    cleanup.add_argument("--config", type=Path, default=None)
+    cleanup.add_argument("--dry-run", action="store_true")
 
     configure = subparsers.add_parser(
         "configure",
@@ -106,6 +116,25 @@ def main() -> None:
         elif args.command == "doctor":
             settings = load_settings(args.config, require_token=False)
             _run_doctor(settings)
+        elif args.command == "cleanup-workspaces":
+            settings = load_settings(args.config, require_token=False)
+            settings.create_runtime_directories()
+            repository = SqliteJobRepository(settings.database_path())
+            repository.initialize()
+            report = sweep_workspaces(
+                settings,
+                repository,
+                datetime.now(UTC),
+                cleanup_reason="operator_dry_run" if args.dry_run else "operator",
+                dry_run=bool(args.dry_run),
+            )
+            action = "Would reclaim" if args.dry_run else "Reclaimed"
+            print(
+                f"{action} {report.bytes_reclaimed} bytes; "
+                f"{report.files_deleted} files and "
+                f"{report.directories_deleted} directories; "
+                f"{report.failed_paths_count} failures."
+            )
         elif args.command == "configure":
             _run_interactive_configure(args.config)
         elif args.command == "local-api":

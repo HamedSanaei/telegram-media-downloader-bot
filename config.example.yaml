@@ -126,6 +126,11 @@ media:
     max_concurrent: 1
     timeout_seconds: 1500
     progress_interval_seconds: 10
+  workspace:
+    cleanup_on_success: true
+    cleanup_on_failure: true
+    cleanup_on_cancel: true
+    cleanup_on_timeout: true
 
 multipart:
   enabled: true
@@ -168,3 +173,7 @@ observability:
   health_port: 8080
   telegram_readiness_check: true
   metrics_enabled: true
+
+operations:
+  update:
+    prune_old_project_images_after_success: true

@@ -58,12 +58,57 @@ function Invoke-UpdateCase {
             param($ScriptPath, $OperationLog, $ShouldFailChecksum, $ShouldFailDownload)
 
             function docker {
-                Add-Content -Encoding utf8 $OperationLog ("docker " + ($args -join " "))
-                if (($args -join " ") -match " ps --services --filter status=running$") {
+                $Joined = $args -join " "
+                Add-Content -Encoding utf8 $OperationLog ("docker " + $Joined)
+                if ($Joined -match " ps --services --filter status=running$") {
                     Write-Output "bot"
                     Write-Output "worker"
                     Write-Output "local-api"
                     Write-Output "redis"
+                }
+                elseif ($Joined -match " ps -a -q$") {
+                    Write-Output "stopped-project-container"
+                }
+                elseif ($Joined -match " ps -q (bot|worker|local-api)$") {
+                    Write-Output "$($Matches[1])-container"
+                }
+                elseif ($Joined -eq "inspect --format {{.State.Status}} stopped-project-container") {
+                    Write-Output "exited"
+                }
+                elseif ($Joined -eq "inspect --format {{.Image}} stopped-project-container") {
+                    Write-Output "sha256:old-unused"
+                }
+                elseif ($Joined -match "^inspect --format \{\{\.State\.Status\}\}") {
+                    Write-Output "running"
+                }
+                elseif ($Joined -match "^inspect --format \{\{if \.State\.Health\}\}") {
+                    Write-Output "healthy"
+                }
+                elseif ($Joined -match "run --rm --no-deps worker python -c") {
+                    Write-Output "1.0.3"
+                }
+                elseif ($Joined -match "operations\.update\.prune_old_project_images") {
+                    Write-Output "true"
+                }
+                elseif ($Joined -match "^image inspect --format \{\{\.Id\}\}") {
+                    Write-Output "sha256:current"
+                }
+                elseif ($Joined -eq "ps -aq") {
+                    Write-Output "referenced-container"
+                }
+                elseif ($Joined -eq "inspect --format {{.Image}} referenced-container") {
+                    Write-Output "sha256:old-used"
+                }
+                elseif ($Joined -match "^image ls .*Repository.*ID") {
+                    Write-Output "ghcr.io/hamedsanaei/telegram-media-downloader-bot|sha256:current"
+                    Write-Output "ghcr.io/hamedsanaei/telegram-media-downloader-bot|sha256:old-unused"
+                    Write-Output "ghcr.io/hamedsanaei/telegram-media-downloader-bot|sha256:old-used"
+                    Write-Output "ghcr.io/hamedsanaei/telegram-media-downloader-bot|sha256:shared-tag"
+                    Write-Output "example/another-project|sha256:shared-tag"
+                    Write-Output "redis|sha256:redis"
+                }
+                elseif ($Joined -eq "image inspect --format {{.Size}} sha256:old-unused") {
+                    Write-Output "12345"
                 }
                 $global:LASTEXITCODE = 0
             }
@@ -201,6 +246,22 @@ function Invoke-UpdateCase {
         "stop, consistent backup, and download ordering is wrong"
     Assert-True ([bool]($Log -match " up -d --no-build --force-recreate bot worker local-api$")) `
         "successful update did not recreate the stack"
+    Assert-True ([bool]($Log -match "run --rm --no-deps worker python -c")) `
+        "successful update did not verify runtime version"
+    Assert-True ([bool]($Log -match "run --rm --no-deps worker telegram-media-bot doctor")) `
+        "successful update did not run doctor"
+    Assert-True ([bool]($Log -match "image rm sha256:old-unused")) `
+        "unused old project image was not removed"
+    Assert-True ([bool]($Log -match "docker rm stopped-project-container")) `
+        "stopped old Compose project container was not removed"
+    Assert-True (-not ($Log -match "image rm sha256:old-used")) `
+        "container-referenced image was removed"
+    Assert-True (-not ($Log -match "image rm sha256:redis")) `
+        "image from another repository was removed"
+    Assert-True (-not ($Log -match "image rm sha256:shared-tag")) `
+        "image ID with a foreign repository tag was removed"
+    Assert-True (-not ($Log -match "(image|system|volume) prune")) `
+        "unsafe global prune command was used"
 }
 
 try {

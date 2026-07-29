@@ -21,6 +21,7 @@
 | `src/telegram_media_bot/infrastructure/observability/` | Health HTTP server and Prometheus metrics registry |
 | `src/telegram_media_bot/infrastructure/telegram/local_api.py` | Local Bot API lifecycle, durable migration, endpoint leases, and safe status |
 | `src/telegram_media_bot/infrastructure/archive/` | Safe 7-Zip multi-volume packaging and SHA-256 manifests |
+| `src/telegram_media_bot/infrastructure/storage/` | Exact job-workspace cleanup, symlink-safe deletion, and startup/maintenance sweeping |
 | `src/telegram_media_bot/telegram/` | Versioned Back/Native callback dispatch, real-plan rendering, middleware, and tracked delivery adapter |
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction |
 | `src/telegram_media_bot/workers/` | ARQ worker settings and job functions |
@@ -36,7 +37,7 @@
 | `scripts/compare_canary.py` | Baseline/canary failure-rate promotion gate |
 | `scripts/generate_file_manifest.py` | Deterministic SHA-256 source-manifest generation |
 | `install.sh`, `install.ps1` | Interactive Docker-first one-line installers and global management command setup |
-| `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup command; Linux adds isolated transactional replacement, runtime probes, health verification, rollback, and `tmb` repair |
+| `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup/cleanup command; Linux adds isolated transactional replacement, runtime probes, health verification, rollback, `tmb` repair, and guarded project-image reclamation |
 | `scripts/build_release_archives.sh` | Reproducible tar/ZIP assets and v1.0.2-safe executable Linux updater packaging |
 | `scripts/tests/` | Mocked recovery plus opt-in privileged filesystem/SQLite release-upgrade integration tests |
 | `.github/workflows/ci.yml` | Quality/security gates, Compose validation, shared-cache Docker build, runtime dependency doctor, native-selector/remux, CLI, and multipart smoke tests |

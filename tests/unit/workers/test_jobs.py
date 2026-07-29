@@ -14,7 +14,12 @@ from arq import Retry
 from telegram_media_bot.application.ports.delivery import DeliveryGateway
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.errors import DeliveryError, JobCancelledError, RateLimitedError
+from telegram_media_bot.domain.errors import (
+    DeliveryError,
+    JobCancelledError,
+    MediaTooLargeError,
+    RateLimitedError,
+)
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DeliveryMethod,
@@ -23,6 +28,7 @@ from telegram_media_bot.domain.models import (
     DeliveryStage,
     DownloadMode,
     DownloadResult,
+    ErrorCategory,
     JobId,
     JobStatus,
     MediaInfo,
@@ -32,6 +38,8 @@ from telegram_media_bot.domain.models import (
 )
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
+from telegram_media_bot.infrastructure.storage.workspace import WorkspaceCleanupReport
+from telegram_media_bot.workers import jobs as jobs_module
 from telegram_media_bot.workers.jobs import process_download_job, process_inspection_job
 
 
@@ -87,9 +95,12 @@ class FakeDelivery:
         self.deliveries = 0
         self.edits: list[str] = []
         self.failure: Exception | None = None
+        self.file_present_during_delivery = False
 
     async def deliver(self, **kwargs: object) -> DeliveryReceipt:
         self.deliveries += 1
+        result = cast(DownloadResult, kwargs["result"])
+        self.file_present_during_delivery = result.file_path.is_file()
         if self.failure is not None:
             progress = kwargs.get("progress")
             if callable(progress):
@@ -184,6 +195,7 @@ async def test_worker_download_persists_receipt_and_cleans(
     assert record.delivery_file_id == "file-id"
     assert service.calls == 1
     assert delivery.deliveries == 1
+    assert delivery.file_present_during_delivery
     with closing(sqlite3.connect(repository._path)) as connection:
         usage = connection.execute(
             "SELECT successful_download_count, delivered_bytes FROM users WHERE user_id = 20"
@@ -351,7 +363,70 @@ async def test_ambiguous_delivery_is_quarantined_with_specific_user_message(
     record = repository.get_job(JobId(str(context["job_id"])))
     assert record is not None
     assert record.status is JobStatus.DELIVERY_UNCERTAIN
+    configured = cast(Settings, context["settings"])
+    assert not (configured.storage.downloads_path() / str(record.job_id)).exists()
+    assert not (configured.storage.temp_path() / str(record.job_id)).exists()
     assert any("دانلود کامل شد" in text for text in delivery.edits)
+
+
+async def test_partial_download_failure_removes_every_job_file(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+) -> None:
+    context, repository, _service, delivery = worker_context
+    configured = cast(Settings, context["settings"])
+
+    class PartialFailureService(FakeDownloadService):
+        def download(self, **kwargs: Any) -> DownloadResult:
+            output = cast(Path, kwargs["output_directory"])
+            temporary = cast(Path, kwargs["temp_directory"])
+            output.mkdir(parents=True)
+            temporary.mkdir(parents=True)
+            (output / "video.part").write_bytes(b"partial")
+            (output / "metadata.info.json").write_text("{}", encoding="utf-8")
+            (temporary / "ffmpeg.tmp.mp4").write_bytes(b"incomplete")
+            raise MediaTooLargeError("source exceeded limit")
+
+    context["download_service"] = PartialFailureService()
+    job_id = JobId(str(context["job_id"]))
+
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media",
+        mode=DownloadMode.BEST.value,
+    )
+
+    record = repository.get_job(job_id)
+    assert record is not None and record.status is JobStatus.FAILED
+    assert delivery.deliveries == 0
+    assert not (configured.storage.downloads_path() / str(job_id)).exists()
+    assert not (configured.storage.temp_path() / str(job_id)).exists()
+
+
+async def test_cleanup_failure_does_not_hide_the_original_job_failure(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context, repository, service, _delivery = worker_context
+    service.failure = MediaTooLargeError("original failure")
+    monkeypatch.setattr(
+        jobs_module,
+        "cleanup_job_workspace",
+        lambda *_args, **_kwargs: WorkspaceCleanupReport(failed_paths_count=1),
+    )
+
+    result = await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media",
+        mode=DownloadMode.BEST.value,
+    )
+
+    record = repository.get_job(JobId(result))
+    assert record is not None and record.status is JobStatus.FAILED
+    assert record.error_category is ErrorCategory.TOO_LARGE
 
 
 async def test_completion_persistence_failure_never_retries_delivery(

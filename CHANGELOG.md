@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 1.0.8 - 2026-07-29
+
+- Enforce job-scoped zero-retention after confirmed delivery, failure, cancellation, timeout, and
+  uncertain delivery; cleanup is idempotent, symlink-safe, observable, and repeated by startup and
+  maintenance sweepers without touching active jobs or shared state.
+- Delete each delivered multipart volume immediately after its Telegram receipt is persisted,
+  terminate active 7-Zip process groups on cancellation, and retain no media/archive workspace
+  after a terminal job.
+- Add safe `tmb cleanup [--dry-run]` workspace/container/image cleanup and remove only unused old
+  images from `ghcr.io/hamedsanaei/telegram-media-downloader-bot` after successful health, runtime
+  version, doctor, and status verification. Referenced/current images, other repositories, volumes,
+  and global build caches are never pruned.
+
 ## 1.0.7 - 2026-07-29
 
 - Canonicalize YouTube watch, short, live, and `youtu.be` video URLs containing Mix or playlist

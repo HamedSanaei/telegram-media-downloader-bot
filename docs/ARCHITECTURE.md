@@ -137,6 +137,14 @@ A genuine change to the project-owned engine port requires an ADR and coordinate
 - `> telegram.max_upload_size_mb` and `<= multipart.max_total_size_mb`: stored multi-volume ZIP
   documents, each bounded by `multipart.part_size_mb` and sent through Local Bot API.
 
+Each multipart build owns an isolated 7-Zip process handle. Cancellation terminates only that
+job's process group. After a Telegram item receipt is durably persisted, its volume or manifest is
+unlinked immediately. The worker then applies idempotent, symlink-safe cleanup to the exact
+`downloads/<job_id>` and `temp/<job_id>` directories on success, failure, cancellation, timeout,
+and uncertain delivery. Cleanup errors are logged and counted but never replace the primary job
+outcome. Startup and maintenance sweepers remove terminal workspaces immediately and unknown stale
+workspaces only after the orphan grace period; active jobs and storage-root sentinels are preserved.
+
 `best_original` is native-only and never transcoded. Public MP4 selection is a zero-transcode
 container contract supporting AV1/AAC and H.264/AAC: codec families are planned independently
 before quality/bitrate ranking, and the configured deterministic fallback either chooses the
@@ -190,6 +198,13 @@ entries use rollback snapshots, while local configuration/state remain outside r
 same-UID filesystem write and SQLite WAL probe must pass before candidate startup. Container
 running/health state is then mandatory; any post-stop failure restores the prior source, image,
 usable permissions, command link, and previous service set.
+
+Only after candidate health, exact runtime version, dependency doctor, and Compose status pass may
+the updater clean Docker resources. It removes stopped containers from this Compose project only
+when they use a superseded image, then removes unreferenced image IDs whose repository is exactly
+`ghcr.io/hamedsanaei/telegram-media-downloader-bot`. The current image, images referenced by any
+container, other repositories, volumes, and build cache are outside its authority. The same
+operation is exposed as `tmb cleanup --dry-run`.
 
 ## Telegram endpoint control plane
 

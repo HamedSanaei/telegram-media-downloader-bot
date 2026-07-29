@@ -18,6 +18,13 @@ function Invoke-Compose {
     if ($LASTEXITCODE -ne 0) { throw "Docker Compose command failed." }
 }
 
+function Invoke-Docker {
+    param([string[]]$Arguments)
+    $Output = @(& docker @Arguments)
+    if ($LASTEXITCODE -ne 0) { throw "Docker command failed." }
+    return $Output
+}
+
 function New-TmbBackup {
     $BackupDirectory = Join-Path $RootDirectory "backups"
     New-Item -ItemType Directory -Force $BackupDirectory | Out-Null
@@ -106,6 +113,123 @@ function Start-TmbServices {
     Invoke-Compose $Arguments
 }
 
+function Wait-TmbServicesHealthy {
+    param([string[]]$Services)
+    $Deadline = (Get-Date).AddSeconds(180)
+    while ((Get-Date) -lt $Deadline) {
+        $AllReady = $true
+        foreach ($CurrentService in $Services) {
+            $Container = @(Invoke-Compose @("ps", "-q", $CurrentService) |
+                Where-Object { $_ }) | Select-Object -First 1
+            if (-not $Container) { $AllReady = $false; continue }
+            $State = @(Invoke-Docker @(
+                    "inspect", "--format", "{{.State.Status}}", $Container
+                )) | Select-Object -Last 1
+            $Health = @(Invoke-Docker @(
+                    "inspect", "--format",
+                    "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+                    $Container
+                )) | Select-Object -Last 1
+            if ($State -in @("exited", "dead", "restarting")) {
+                throw "Service $CurrentService entered a crash/restart state."
+            }
+            if ($State -ne "running" -or $Health -notin @("healthy", "none")) {
+                $AllReady = $false
+            }
+        }
+        if ($AllReady) { return }
+        Start-Sleep -Seconds 5
+    }
+    throw "Updated services did not become healthy before the timeout."
+}
+
+function Test-ProjectImageCleanupEnabled {
+    $Image = Get-ConfiguredImage
+    $Output = @(& docker run --rm `
+            -v "${RootDirectory}/config.yaml:/app/config.yaml:ro" `
+            $Image python -c `
+            "from telegram_media_bot.bootstrap.config import load_settings; print(str(load_settings('/app/config.yaml').operations.update.prune_old_project_images_after_success).lower())")
+    if ($LASTEXITCODE -ne 0 -or $Output.Count -eq 0) { return $true }
+    return $Output[-1].Trim() -ne "false"
+}
+
+function Invoke-TmbCleanup {
+    param([switch]$DryRun)
+    $WorkspaceArguments = @(
+        "run", "--rm", "--no-deps", "worker",
+        "telegram-media-bot", "cleanup-workspaces", "--config", "/app/config.yaml"
+    )
+    if ($DryRun) { $WorkspaceArguments += "--dry-run" }
+    Invoke-Compose $WorkspaceArguments | Out-Host
+
+    $CurrentImage = Get-ConfiguredImage
+    $CurrentId = @(Invoke-Docker @(
+            "image", "inspect", "--format", "{{.Id}}", $CurrentImage
+        )) | Select-Object -Last 1
+    $ProjectContainers = @(Invoke-Compose @("ps", "-a", "-q") | Where-Object { $_ })
+    foreach ($Container in $ProjectContainers) {
+        $State = @(Invoke-Docker @(
+                "inspect", "--format", "{{.State.Status}}", $Container
+            )) | Select-Object -Last 1
+        $ImageId = @(Invoke-Docker @(
+                "inspect", "--format", "{{.Image}}", $Container
+            )) | Select-Object -Last 1
+        if ($State -ne "running" -and $ImageId -and $ImageId -ne $CurrentId) {
+            if ($DryRun) {
+                Write-Host "Would remove stopped project container: $Container"
+            }
+            else {
+                Invoke-Docker @("rm", $Container) | Out-Null
+            }
+        }
+    }
+
+    $Referenced = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($Container in @(Invoke-Docker @("ps", "-aq") | Where-Object { $_ })) {
+        $ImageId = @(Invoke-Docker @(
+                "inspect", "--format", "{{.Image}}", $Container
+            )) | Select-Object -Last 1
+        if ($ImageId) { [void]$Referenced.Add($ImageId) }
+    }
+    $ProjectImages = [System.Collections.Generic.HashSet[string]]::new()
+    $ForeignImages = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($Line in @(Invoke-Docker @(
+                "image", "ls", "--no-trunc", "--format", "{{.Repository}}|{{.ID}}"
+            ))) {
+        $Parts = $Line -split "\|", 2
+        if ($Parts.Count -ne 2 -or -not $Parts[1]) { continue }
+        if ($Parts[0] -eq $ImageRepository) {
+            [void]$ProjectImages.Add($Parts[1])
+        }
+        else {
+            [void]$ForeignImages.Add($Parts[1])
+        }
+    }
+    $Candidates = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($ImageId in $ProjectImages) {
+        if ($ImageId -ne $CurrentId -and -not $Referenced.Contains($ImageId) -and
+            -not $ForeignImages.Contains($ImageId)) {
+            [void]$Candidates.Add($ImageId)
+        }
+    }
+    [long]$Reclaimed = 0
+    foreach ($ImageId in $Candidates) {
+        $SizeText = @(Invoke-Docker @(
+                "image", "inspect", "--format", "{{.Size}}", $ImageId
+            )) | Select-Object -Last 1
+        [long]$Size = 0
+        [void][long]::TryParse($SizeText, [ref]$Size)
+        $Reclaimed += $Size
+        if ($DryRun) {
+            Write-Host "Would remove old project image: $ImageId"
+        }
+        else {
+            Invoke-Docker @("image", "rm", $ImageId) | Out-Null
+        }
+    }
+    Write-Host "Project cleanup candidates: $($Candidates.Count) image(s); approximate bytes: $Reclaimed"
+}
+
 function Get-ConfiguredImage {
     if ($env:TMB_IMAGE) { return $env:TMB_IMAGE }
     $EnvironmentPath = Join-Path $RootDirectory ".env"
@@ -118,12 +242,12 @@ function Get-ConfiguredImage {
 }
 
 if (-not $Command) {
-    Write-Host "1 Start`n2 Stop`n3 Restart`n4 Status`n5 Logs`n6 Doctor`n7 Config`n8 Update`n9 Backup`n0 Exit"
+    Write-Host "1 Start`n2 Stop`n3 Restart`n4 Status`n5 Logs`n6 Doctor`n7 Config`n8 Update`n9 Backup`n10 Cleanup`n0 Exit"
     $Choice = Read-Host "Select"
     $Command = @{
         "1" = "start"; "2" = "stop"; "3" = "restart"; "4" = "status"
         "5" = "logs"; "6" = "doctor"; "7" = "config"; "8" = "update"
-        "9" = "backup"; "0" = "exit"
+        "9" = "backup"; "10" = "cleanup"; "0" = "exit"
     }[$Choice]
 }
 
@@ -160,6 +284,24 @@ switch ($Command) {
             Get-ChildItem -LiteralPath $Release.Payload -Force |
                 Copy-Item -Destination $RootDirectory -Recurse -Force
             Start-TmbServices -Services $PreviousServices -ForceRecreate
+            Wait-TmbServicesHealthy -Services $PreviousServices
+            $RuntimeVersion = @(Invoke-Compose @(
+                    "run", "--rm", "--no-deps", "worker", "python", "-c",
+                    "import telegram_media_bot; print(telegram_media_bot.__version__)"
+                )) | Select-Object -Last 1
+            if ($RuntimeVersion.Trim() -ne $Release.Version) {
+                throw "Runtime version does not match release $($Release.Version)."
+            }
+            Invoke-Compose @(
+                "run", "--rm", "--no-deps", "worker",
+                "telegram-media-bot", "doctor", "--config", "/app/config.yaml"
+            ) | Out-Null
+            Invoke-Compose @("ps") | Out-Null
+            if (Test-ProjectImageCleanupEnabled) {
+                try { Invoke-TmbCleanup } catch {
+                    Write-Warning "Update succeeded, but old project image cleanup failed."
+                }
+            }
         }
         catch {
             Set-ConfiguredImage $PreviousImage
@@ -174,6 +316,12 @@ switch ($Command) {
             }
         }
     }
+    "cleanup" {
+        if ($Service -and $Service -ne "--dry-run") {
+            throw "Usage: tmb cleanup [--dry-run]"
+        }
+        Invoke-TmbCleanup -DryRun:($Service -eq "--dry-run")
+    }
     "backup" { New-TmbBackup }
     "uninstall" {
         Invoke-Compose @("down")
@@ -183,5 +331,5 @@ switch ($Command) {
         }
     }
     "exit" { exit 0 }
-    default { throw "Usage: tmb start|stop|restart|status|logs [service]|doctor|config|update|backup|uninstall" }
+    default { throw "Usage: tmb start|stop|restart|status|logs [service]|doctor|config|update|backup|cleanup [--dry-run]|uninstall" }
 }

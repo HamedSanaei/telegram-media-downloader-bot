@@ -4,6 +4,7 @@ import asyncio
 import re
 import unicodedata
 from collections.abc import AsyncGenerator, Callable
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 from time import monotonic
@@ -358,6 +359,11 @@ class RoutedDeliveryGateway(DeliveryGateway):
             receipts.extend(
                 replace(item, ordinal=ordinal_offset + item.ordinal) for item in child_receipt.items
             )
+            await _delete_confirmed_delivery_file(
+                artifact.file_path,
+                job_id=result.job_id,
+                cleanup_reason="artifact_delivered",
+            )
             completed_bytes += artifact.file_size_bytes
         return DeliveryReceipt(items=tuple(receipts))
 
@@ -385,7 +391,19 @@ class RoutedDeliveryGateway(DeliveryGateway):
                     total_bytes=result.file_size_bytes,
                 )
             )
-        archive = await asyncio.to_thread(self._multipart.build, result.file_path)
+        multipart = (
+            self._multipart.isolated()
+            if isinstance(self._multipart, MultipartZipBuilder)
+            else self._multipart
+        )
+        archive_task = asyncio.create_task(asyncio.to_thread(multipart.build, result.file_path))
+        try:
+            archive = await asyncio.shield(archive_task)
+        except asyncio.CancelledError:
+            await asyncio.to_thread(multipart.cancel_active)
+            with suppress(Exception):
+                await archive_task
+            raise
         paths = (*archive.volumes, archive.manifest)
         total_upload_bytes = sum(path.stat().st_size for path in paths)
         completed_bytes = 0
@@ -440,6 +458,11 @@ class RoutedDeliveryGateway(DeliveryGateway):
             receipts.append(item)
             if item_delivered is not None:
                 await item_delivered(item)
+            await _delete_confirmed_delivery_file(
+                path,
+                job_id=result.job_id,
+                cleanup_reason="multipart_part_delivered",
+            )
             completed_bytes += part.file_size_bytes
         await self._direct.send_text(
             chat_id,
@@ -448,6 +471,43 @@ class RoutedDeliveryGateway(DeliveryGateway):
             "بررسی کنید.",
         )
         return DeliveryReceipt(items=tuple(receipts))
+
+
+async def _delete_confirmed_delivery_file(
+    path: Path,
+    *,
+    job_id: object,
+    cleanup_reason: str,
+) -> None:
+    started = monotonic()
+    try:
+        size = await asyncio.to_thread(lambda: path.stat().st_size)
+        await asyncio.to_thread(path.unlink, missing_ok=True)
+    except OSError:
+        await logger.awarning(
+            "job_workspace_cleanup_failed",
+            job_id=job_id,
+            terminal_status="delivery_confirmed",
+            cleanup_reason=cleanup_reason,
+            files_deleted=0,
+            directories_deleted=0,
+            bytes_reclaimed=0,
+            duration_seconds=round(monotonic() - started, 6),
+            failed_paths_count=1,
+        )
+        return
+    await logger.ainfo(
+        "job_workspace_file_deleted",
+        job_id=job_id,
+        terminal_status="delivery_confirmed",
+        cleanup_reason=cleanup_reason,
+        files_deleted=1,
+        directories_deleted=0,
+        bytes_reclaimed=size,
+        duration_seconds=round(monotonic() - started, 6),
+        failed_paths_count=0,
+        entry_kind="delivered_file",
+    )
 
 
 def render_caption(

@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -376,6 +377,9 @@ async def test_routed_delivery_sends_multipart_immediately_above_direct_limit(
     assert progress[0].stage is DeliveryStage.PACKAGING
     assert progress[-1].item_ordinal == 3
     assert progress[-1].item_count == 3
+    assert not volume_one.exists()
+    assert not volume_two.exists()
+    assert not manifest.exists()
 
 
 async def test_multipart_persists_first_receipt_before_later_network_failure(
@@ -438,6 +442,54 @@ async def test_multipart_persists_first_receipt_before_later_network_failure(
         )
 
     assert persisted == [1]
+    assert not volume_one.exists()
+    assert volume_two.exists()
+    assert manifest.exists()
+
+
+async def test_multipart_cancellation_stops_active_archive_process(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["max_upload_size_mb"] = 1
+    raw["media"]["max_file_size_mb"] = 10
+    raw["media"]["max_source_size_mb"] = 10
+    configured = Settings.model_validate(raw)
+    source = tmp_path / "result.mp4"
+    source.write_bytes(b"source")
+    result = DownloadResult(
+        job_id=JobId("job"),
+        media_id="media",
+        title="Title",
+        source="youtube",
+        kind=MediaKind.VIDEO,
+        file_path=source,
+        file_size_bytes=2 * 1024 * 1024,
+    )
+    started = threading.Event()
+    cancelled = threading.Event()
+
+    class BlockingBuilder:
+        def build(self, _source: Path) -> MultipartArchive:
+            started.set()
+            if not cancelled.wait(2):
+                raise RuntimeError("archive process was not cancelled")
+            raise RuntimeError("archive process terminated")
+
+        def cancel_active(self) -> None:
+            cancelled.set()
+
+    gateway = RoutedDeliveryGateway(cast(Bot, cast(Any, FakeBot())), configured)
+    gateway._multipart = cast(Any, BlockingBuilder())
+    task = asyncio.create_task(gateway.deliver(chat_id=1, result=result, caption="caption"))
+    assert await asyncio.to_thread(started.wait, 1)
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cancelled.is_set()
 
 
 def _auto_delivery(settings: Settings) -> Settings:

@@ -12,6 +12,9 @@ Compose/config validation precedes service stop; runtime-user filesystem and SQL
 precede startup; post-start health is mandatory; and post-stop failures restore the prior
 application, image, usable permissions, command link, and service set. A privileged Docker
 integration test exercises the published v1.0.2 updater against the v1.0.3 release archive.
+Verified updates may subsequently remove only unused old images from the exact project repository;
+the current/referenced images and all unrelated Docker resources remain protected. Operators can
+preview the same allowlisted action with `tmb cleanup --dry-run`.
 
 ## Deliverables
 

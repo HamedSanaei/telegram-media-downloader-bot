@@ -17,6 +17,8 @@ guarded by unique `job_id`; retries and restarts cannot double-count bytes.
 Cancellation now commits terminal SQLite state before official ARQ abort. Abort support is enabled
 in the worker, finalized transient keys are removed, FFmpeg process groups stop promptly, and a
 shutdown race cannot requeue an already user-cancelled job or leave an uncollected shielded future.
+Terminal cleanup is status-aware and idempotent; cancellation also terminates only the current
+job's FFmpeg or isolated 7-Zip process group.
 
 ## Deliverables
 

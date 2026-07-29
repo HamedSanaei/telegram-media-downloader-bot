@@ -251,3 +251,22 @@ Canonicalization and yt-dlp `noplaylist=true` are independent defenses. Both ins
 download use the canonical URL, preventing an inspection/download mismatch and avoiding needless
 Mix expansion or Deno CPU work. Audit logs retain only allowlisted URL fields so credential-like
 query parameters are neither stored in the event nor exposed.
+
+## ADR-023: Terminal media is zero-retention and update cleanup is project-scoped
+
+**Status:** accepted
+
+Every terminal job outcome owns an idempotent cleanup of its exact download and temporary
+directories. Confirmed delivery receipts are the deletion boundary: multipart volumes and
+multi-artifact files are removed immediately after their receipt is durable, while final worker
+cleanup removes the source, sidecars, partial downloads, manifests, and packaging residue. Deletion
+does not follow symlinks, cannot address a storage root or sibling job, and never masks the primary
+job result. Startup and maintenance repeat cleanup for terminal jobs and age-gated unknown
+workspaces, but preserve active and retryable jobs.
+
+The release updater may reclaim Docker resources only after health, exact version, doctor, and
+service-status verification. Its allowlist is the exact project GHCR repository plus superseded
+stopped containers from the current Compose project. Image IDs referenced by any container, the
+running image, other repositories, volumes, and BuildKit cache are protected. A cleanup failure
+does not roll back an otherwise healthy release; it is visible to the operator and safely
+repeatable through `tmb cleanup [--dry-run]`.

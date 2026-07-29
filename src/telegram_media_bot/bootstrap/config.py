@@ -268,6 +268,13 @@ class TranscodeSection(StrictModel):
     progress_interval_seconds: int = Field(default=10, ge=1, le=300)
 
 
+class WorkspaceCleanupSection(StrictModel):
+    cleanup_on_success: bool = True
+    cleanup_on_failure: bool = True
+    cleanup_on_cancel: bool = True
+    cleanup_on_timeout: bool = True
+
+
 class MediaSection(StrictModel):
     enabled_sources: frozenset[str]
     enabled_modes: tuple[DownloadMode, ...] = tuple(DownloadMode)
@@ -281,6 +288,7 @@ class MediaSection(StrictModel):
     formats: FormatSection
     instagram: InstagramSection = Field(default_factory=InstagramSection)
     transcode: TranscodeSection = Field(default_factory=TranscodeSection)
+    workspace: WorkspaceCleanupSection = Field(default_factory=WorkspaceCleanupSection)
 
     @field_validator("enabled_sources")
     @classmethod
@@ -402,6 +410,14 @@ class ObservabilitySection(StrictModel):
     metrics_enabled: bool = True
 
 
+class UpdateOperationsSection(StrictModel):
+    prune_old_project_images_after_success: bool = True
+
+
+class OperationsSection(StrictModel):
+    update: UpdateOperationsSection = Field(default_factory=UpdateOperationsSection)
+
+
 class Settings(StrictModel):
     app: AppSection
     telegram: TelegramSection
@@ -414,6 +430,7 @@ class Settings(StrictModel):
     security: SecuritySection
     persistence: PersistenceSection
     observability: ObservabilitySection
+    operations: OperationsSection = Field(default_factory=OperationsSection)
 
     def database_path(self) -> Path:
         return self.storage.state_path() / self.persistence.database_filename

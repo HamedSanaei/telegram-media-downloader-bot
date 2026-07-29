@@ -378,6 +378,9 @@
         },
         "transcode": {
           "$ref": "#/$defs/TranscodeSection"
+        },
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceCleanupSection"
         }
       },
       "required": [
@@ -459,6 +462,16 @@
         }
       },
       "title": "ObservabilitySection",
+      "type": "object"
+    },
+    "OperationsSection": {
+      "additionalProperties": false,
+      "properties": {
+        "update": {
+          "$ref": "#/$defs/UpdateOperationsSection"
+        }
+      },
+      "title": "OperationsSection",
       "type": "object"
     },
     "PersistenceSection": {
@@ -860,6 +873,45 @@
       "title": "TranscodeSection",
       "type": "object"
     },
+    "UpdateOperationsSection": {
+      "additionalProperties": false,
+      "properties": {
+        "prune_old_project_images_after_success": {
+          "default": true,
+          "title": "Prune Old Project Images After Success",
+          "type": "boolean"
+        }
+      },
+      "title": "UpdateOperationsSection",
+      "type": "object"
+    },
+    "WorkspaceCleanupSection": {
+      "additionalProperties": false,
+      "properties": {
+        "cleanup_on_success": {
+          "default": true,
+          "title": "Cleanup On Success",
+          "type": "boolean"
+        },
+        "cleanup_on_failure": {
+          "default": true,
+          "title": "Cleanup On Failure",
+          "type": "boolean"
+        },
+        "cleanup_on_cancel": {
+          "default": true,
+          "title": "Cleanup On Cancel",
+          "type": "boolean"
+        },
+        "cleanup_on_timeout": {
+          "default": true,
+          "title": "Cleanup On Timeout",
+          "type": "boolean"
+        }
+      },
+      "title": "WorkspaceCleanupSection",
+      "type": "object"
+    },
     "YtDlpSection": {
       "additionalProperties": false,
       "properties": {
@@ -1025,6 +1077,9 @@
     },
     "observability": {
       "$ref": "#/$defs/ObservabilitySection"
+    },
+    "operations": {
+      "$ref": "#/$defs/OperationsSection"
     }
   },
   "required": [

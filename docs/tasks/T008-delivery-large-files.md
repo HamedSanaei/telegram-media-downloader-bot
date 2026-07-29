@@ -36,6 +36,8 @@ Heavy FFmpeg work is bounded by configurable encoder threads, one conservative c
 a timeout, an operator disable switch, process-tree cleanup, and structured progress. The runtime
 image guarantees compatible `7zz` and `7z` names, and CI/release smoke tests create and verify a real
 multi-volume archive.
+Each multipart item is deleted immediately after its durable delivery receipt. A later failure
+leaves only the not-yet-confirmed items for the worker's terminal workspace cleanup.
 
 ## Deliverables
 

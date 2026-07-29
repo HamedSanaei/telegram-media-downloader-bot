@@ -6,6 +6,8 @@ Structured logs carry request/job/user/chat/source context and pass through recu
 redaction. The worker exposes `/health`, `/ready`, and Prometheus `/metrics`; readiness covers Redis,
 SQLite, writable storage, Telegram, ffmpeg, and the engine. Admin failure summaries contain only
 opaque job IDs and stable error categories.
+Cleanup emits bounded structured events and counters for deleted files/bytes, failures, and sweep
+duration without logging arbitrary media paths.
 
 ## Deliverables
 

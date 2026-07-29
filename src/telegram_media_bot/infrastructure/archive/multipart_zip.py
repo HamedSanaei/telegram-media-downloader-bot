@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import signal
 import subprocess
+import threading
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,9 +24,15 @@ class MultipartArchive:
 class MultipartZipBuilder:
     def __init__(self, settings: MultipartSection) -> None:
         self._settings = settings
+        self._process_lock = threading.Lock()
+        self._active_process: subprocess.Popen[str] | None = None
 
     def executable(self) -> str | None:
         return resolve_seven_zip(self._settings.seven_zip_executable)
+
+    def isolated(self) -> MultipartZipBuilder:
+        """Return a job-scoped builder so cancellation cannot affect another job."""
+        return MultipartZipBuilder(self._settings)
 
     def build(self, source: Path) -> MultipartArchive:
         source = source.resolve()
@@ -38,8 +48,9 @@ class MultipartZipBuilder:
         prefix = f"{archive.name}."
         for stale in source.parent.glob(f"{archive.name}.*"):
             stale.unlink(missing_ok=True)
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
         try:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 [
                     executable,
                     "a",
@@ -51,16 +62,25 @@ class MultipartZipBuilder:
                     str(archive),
                     str(source),
                 ],
-                check=False,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=86400,
+                start_new_session=os.name != "nt",
+                creationflags=creationflags,
             )
+            with self._process_lock:
+                self._active_process = process
+            process.communicate(timeout=86400)
         except (OSError, subprocess.SubprocessError) as exc:
+            if "process" in locals():
+                _terminate_process_tree(process)
             raise PostProcessingError("Unable to create multipart ZIP archive") from exc
-        if completed.returncode != 0:
+        finally:
+            with self._process_lock:
+                self._active_process = None
+        if process.returncode != 0:
             raise PostProcessingError("7-Zip multipart archive creation failed")
         volumes = tuple(
             sorted(
@@ -103,6 +123,12 @@ class MultipartZipBuilder:
         )
         return MultipartArchive(volumes=volumes, manifest=manifest)
 
+    def cancel_active(self) -> None:
+        with self._process_lock:
+            process = self._active_process
+        if process is not None:
+            _terminate_process_tree(process)
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -125,3 +151,35 @@ def resolve_seven_zip(configured_path: Path) -> str | None:
         if resolved := shutil.which(name):
             return resolved
     return None
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        if os.name != "nt":
+            kill_process_group = getattr(os, "killpg")  # noqa: B009
+            kill_process_group(process.pid, signal.SIGTERM)
+        else:
+            process.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
+        process.wait(timeout=5)
+    except OSError, subprocess.TimeoutExpired:
+        try:
+            if os.name != "nt":
+                kill_process_group = getattr(os, "killpg")  # noqa: B009
+                kill_process_group(process.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+            else:
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10,
+                )
+                if process.poll() is None:
+                    process.kill()
+        except OSError, subprocess.TimeoutExpired:
+            pass
+        with suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=10)

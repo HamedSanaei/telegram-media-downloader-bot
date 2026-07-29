@@ -36,7 +36,9 @@ Actual extraction support is determined by the installed `yt-dlp` version.
    bytes read into Local Bot API; the opaque Telegram phase reports only elapsed-time heartbeats.
 7. Result is uploaded using the most suitable Telegram method.
 8. Job state is persisted sufficiently for retries and operator inspection.
-9. Temporary files are deleted according to policy.
+9. After every terminal outcome, the worker removes that job's media, archive volumes, sidecars,
+   `.part` files, and temporary files from both workspace roots. Confirmed multipart parts are
+   removed immediately after their durable Telegram receipt.
 
 For explicitly enabled large-file delivery, results up to the Local Bot API ceiling are uploaded
 directly. Every larger result is emitted as bounded multi-volume ZIP documents through the
@@ -63,6 +65,10 @@ playlist. Genuine `/playlist?list=...` URLs retain the configured bounded-playli
 - Separate bot and download worker processes.
 - Bounded concurrency, retries, timeouts, size limits, and rate limits.
 - Clean shutdown and recovery after restart.
+- Zero-retention cleanup for successful, failed, cancelled, timed-out, and delivery-uncertain jobs,
+  with a startup/maintenance sweeper for terminal and abandoned workspaces.
+- Release updates may remove only unreferenced old images from this project's GHCR repository after
+  candidate health/version/doctor verification; they never perform a global Docker prune.
 - Structured logs with correlation/job IDs.
 - Controlled dependency updates and rollback through Git/lockfile.
 - Unit tests by default; opt-in external contract tests.

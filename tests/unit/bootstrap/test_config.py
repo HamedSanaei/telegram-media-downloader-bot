@@ -18,6 +18,11 @@ def test_example_configuration_is_valid() -> None:
     assert settings.telegram.upload_chunk_size_kb == 1024
     assert settings.telegram.upload_heartbeat_interval_seconds == 30
     assert not settings.telegram.local_bot_api.enabled
+    assert settings.media.workspace.cleanup_on_success
+    assert settings.media.workspace.cleanup_on_failure
+    assert settings.media.workspace.cleanup_on_cancel
+    assert settings.media.workspace.cleanup_on_timeout
+    assert settings.operations.update.prune_old_project_images_after_success
     assert "CHANGE_ME" not in repr(settings.telegram.bot_token)
 
 
@@ -36,6 +41,11 @@ def test_v1_0_0_configuration_remains_valid_without_manual_rewrite() -> None:
     assert settings.media.transcode.timeout_seconds == 1500
     assert not settings.media.transcode.explicit_mp4_enabled
     assert settings.media.mp4_native_fallback is Mp4NativeFallback.LOWER_RESOLUTION
+    assert settings.media.workspace.cleanup_on_success
+    assert settings.media.workspace.cleanup_on_failure
+    assert settings.media.workspace.cleanup_on_cancel
+    assert settings.media.workspace.cleanup_on_timeout
+    assert settings.operations.update.prune_old_project_images_after_success
 
 
 def test_v1_0_1_configuration_remains_valid_without_manual_rewrite() -> None:

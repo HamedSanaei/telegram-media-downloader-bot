@@ -15,8 +15,8 @@ fail startup and `config.yaml` is ignored by Git and Docker build context.
 - `queue`: concurrency, timeout, attempts, retry delay, and ARQ result retention.
 - `storage`: contained download/temp/state paths, terminal cleanup, orphan grace, and job retention.
 - `media`: source allowlist, enabled semantic modes, default mode, playlist policy, final/source
-  size ceilings, operator-owned semantic yt-dlp selectors, Instagram policy, and bounded FFmpeg
-  transcoding controls.
+  size ceilings, operator-owned semantic yt-dlp selectors, Instagram policy, bounded FFmpeg
+  transcoding controls, and terminal workspace cleanup switches.
 - `yt_dlp`: cookies, an explicit yt-dlp-only proxy switch, timeouts/retries, safe filename/media
   settings, audio conversion, user agent, and the selected JavaScript runtime. These are operator
   settings, never user input.
@@ -24,6 +24,7 @@ fail startup and `config.yaml` is ignored by Git and Docker build context.
   enforcement.
 - `persistence`: contained SQLite filename, selection lifetime, and cleanup interval.
 - `observability`: internal health bind address/port, Telegram readiness, and metrics switch.
+- `operations`: safe release-maintenance controls, including project-only old-image cleanup.
 
 `media.enabled_modes` must contain `best`; callbacks use these semantic values and never raw upstream
 format IDs. Storage child paths and the SQLite filename cannot escape configured roots. When
@@ -116,3 +117,19 @@ store-only compression. A bare-metal `7z` installation is accepted as a compatib
 the image guarantees both command names. Every result above `telegram.max_upload_size_mb` uses this route; no Premium account,
 user session, phone number, staging channel, or MTProto process is used. Setup and extraction are
 documented in `docs/MULTIPART_DELIVERY.md`.
+
+## Zero-retention and project image cleanup
+
+`media.workspace.cleanup_on_success`, `cleanup_on_failure`, `cleanup_on_cancel`, and
+`cleanup_on_timeout` default to `true`. Together with the existing
+`storage.delete_after_upload: true`, they enforce terminal cleanup of the exact job directories.
+Keep these defaults enabled in production. `storage.orphan_grace_seconds` applies only to unknown,
+non-terminal directories discovered by the sweeper; known terminal jobs are cleaned immediately.
+Neither cleanup path follows symlinks or removes the shared workspace roots.
+
+`operations.update.prune_old_project_images_after_success` defaults to `true`. After a verified
+update, `tmb`
+may remove unreferenced old images only from
+`ghcr.io/hamedsanaei/telegram-media-downloader-bot`. Run `tmb cleanup --dry-run` to preview
+workspace, stopped-project-container, and old-image candidates. This command never invokes
+`docker system prune`, `docker image prune`, `docker volume prune`, or build-cache pruning.
