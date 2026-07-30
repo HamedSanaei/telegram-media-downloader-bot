@@ -6,10 +6,12 @@ from datetime import UTC, datetime
 import structlog
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup
 
 from telegram_media_bot.application.ports.job_queue import JobQueue
 from telegram_media_bot.application.ports.job_repository import JobRepository
+from telegram_media_bot.application.ports.usage_analytics import UsageChartRenderer
 from telegram_media_bot.application.ports.user_repository import UserRepository
 from telegram_media_bot.application.services.access_policy import AccessPolicyService
 from telegram_media_bot.application.services.job_service import JobService
@@ -19,6 +21,7 @@ from telegram_media_bot.application.services.native_options import (
     native_video_codec,
 )
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
+from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     AccessDeniedError,
@@ -41,6 +44,8 @@ from telegram_media_bot.domain.models import (
     UserProfile,
 )
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
+from telegram_media_bot.telegram.admin_handlers import ADMIN_MENU_TEXT, build_admin_router
+from telegram_media_bot.telegram.admin_menu import build_admin_main_keyboard
 from telegram_media_bot.telegram.middleware import CorrelationMiddleware
 from telegram_media_bot.telegram.texts import (
     ACCESS_DENIED_TEXT,
@@ -76,6 +81,8 @@ def build_router(
     access_policy: AccessPolicyService,
     jobs: JobService,
     users: UserRepository,
+    usage_analytics: UsageAnalyticsService | None = None,
+    usage_chart_renderer: UsageChartRenderer | None = None,
 ) -> Router:
     router = Router(name="main")
     router.message.outer_middleware(CorrelationMiddleware())
@@ -85,7 +92,8 @@ def build_router(
     )
 
     @router.message(CommandStart())
-    async def start(message: Message) -> None:
+    async def start(message: Message, state: FSMContext) -> None:
+        await state.clear()
         if message.from_user is None:
             return
         await _save_user(users, message, started=True)
@@ -106,7 +114,10 @@ def build_router(
         except PolicyBackendError:
             await message.answer(SERVICE_UNAVAILABLE_TEXT)
             return
-        await message.answer(START_TEXT)
+        await message.answer(
+            START_TEXT,
+            reply_markup=build_admin_main_keyboard() if _is_admin(message, settings) else None,
+        )
 
     @router.callback_query(F.data == "membership:recheck")
     async def recheck_membership(callback: CallbackQuery) -> None:
@@ -490,6 +501,14 @@ def build_router(
             )
         if isinstance(callback.message, Message) and not cancellation.already_cancelled:
             await callback.message.edit_text(CANCELLED_TEXT)
+        if (
+            isinstance(callback.message, Message)
+            and callback.from_user.id in settings.telegram.admin_ids
+        ):
+            await callback.message.answer(
+                ADMIN_MENU_TEXT,
+                reply_markup=build_admin_main_keyboard(),
+            )
         await logger.ainfo(
             "job_cancelled",
             job_id=job_id,
@@ -509,10 +528,12 @@ def build_router(
         )
         await callback.answer("درخواست لغو ثبت شد")
 
-    @router.message()
-    async def enqueue_url(message: Message) -> None:
+    async def submit_url(
+        message: Message,
+        invalid_markup: ReplyKeyboardMarkup | None = None,
+    ) -> bool:
         if message.from_user is None:
-            return
+            return False
         await _save_user(users, message)
         try:
             await access_policy.authorize_request(message.from_user.id)
@@ -521,28 +542,28 @@ def build_router(
                 _membership_text(),
                 reply_markup=required_channels_keyboard(exc.channels),
             )
-            return
+            return False
         except AccessDeniedError:
-            await message.answer(ACCESS_DENIED_TEXT)
-            return
+            await message.answer(ACCESS_DENIED_TEXT, reply_markup=invalid_markup)
+            return False
         except UserRateLimitError:
-            await message.answer(RATE_LIMIT_TEXT)
-            return
+            await message.answer(RATE_LIMIT_TEXT, reply_markup=invalid_markup)
+            return False
         except PolicyBackendError:
-            await message.answer(SERVICE_UNAVAILABLE_TEXT)
-            return
+            await message.answer(SERVICE_UNAVAILABLE_TEXT, reply_markup=invalid_markup)
+            return False
         url = extract_first_url(message.text or message.caption)
         if url is None:
-            await message.answer(INVALID_URL_TEXT)
-            return
+            await message.answer(INVALID_URL_TEXT, reply_markup=invalid_markup)
+            return False
         try:
             validated = await asyncio.to_thread(url_validator.validate, url)
         except UnsafeUrlError:
-            await message.answer(UNSAFE_URL_TEXT)
-            return
+            await message.answer(UNSAFE_URL_TEXT, reply_markup=invalid_markup)
+            return False
         except InvalidUrlError:
-            await message.answer(INVALID_URL_TEXT)
-            return
+            await message.answer(INVALID_URL_TEXT, reply_markup=invalid_markup)
+            return False
         intent = canonicalize_media_url(validated)
         if intent.youtube_video_id is not None:
             await logger.ainfo("youtube_url_canonicalized", **intent.log_fields)
@@ -552,7 +573,14 @@ def build_router(
             user_id=message.from_user.id,
             url=intent.canonical_url,
         )
-        response = await message.answer(INSPECTION_QUEUED_TEXT.format(job_id=record.job_id))
+        response = await message.answer(
+            INSPECTION_QUEUED_TEXT.format(job_id=record.job_id),
+            reply_markup=(
+                build_admin_main_keyboard()
+                if message.from_user.id in settings.telegram.admin_ids
+                else None
+            ),
+        )
         await asyncio.to_thread(repository.set_status_message, record.job_id, response.message_id)
         if created:
             await asyncio.to_thread(
@@ -581,7 +609,24 @@ def build_router(
                     job_id=record.job_id,
                     error_type=type(exc).__name__,
                 )
+        return True
 
+    router.include_router(
+        build_admin_router(
+            settings=settings,
+            submit_url=submit_url,
+            analytics=usage_analytics,
+            chart_renderer=usage_chart_renderer,
+        )
+    )
+
+    url_router = Router(name="url")
+
+    @url_router.message()
+    async def enqueue_url(message: Message) -> None:
+        await submit_url(message)
+
+    router.include_router(url_router)
     return router
 
 

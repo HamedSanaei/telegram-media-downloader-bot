@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 1.0.9 - 2026-07-30
+
+- Give configured administrators a persistent role-aware management keyboard from `/start`,
+  `/menu`, or the backward-compatible `/panel`, with authorization repeated for every management
+  message and report callback.
+- Route both the admin download prompt and direct admin URLs through the unchanged public
+  inspection, selection, queue, worker, delivery, cancellation, and zero-retention pipeline.
+- Add single-flight weekly/monthly PNG reports and a complete usage report with Tehran-local daily
+  breakdowns, while excluding current administrator IDs from public KPIs without deleting durable
+  activity records.
+
 ## 1.0.8 - 2026-07-29
 
 - Enforce job-scoped zero-retention after confirmed delivery, failure, cancellation, timeout, and

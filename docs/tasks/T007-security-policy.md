@@ -7,6 +7,10 @@ resolved address. The adapter revalidates extracted and selected media URLs. Sta
 blocks, allowlists, Redis fixed-window rate limiting, and admin health/queue/failure/block commands
 are implemented with abuse-oriented tests.
 
+Administrator UX is available from a persistent role-aware keyboard rather than requiring
+`/panel`. Every management text and callback checks the current configured ID again, forged button
+text fails closed, and the download entry point retains the existing membership policy.
+
 ## Deliverables
 
 - Resolve and reject loopback, private, link-local, reserved, multicast, and metadata-service hosts.

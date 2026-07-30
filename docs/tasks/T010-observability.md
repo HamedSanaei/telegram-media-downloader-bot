@@ -8,6 +8,9 @@ SQLite, writable storage, Telegram, ffmpeg, and the engine. Admin failure summar
 opaque job IDs and stable error categories.
 Cleanup emits bounded structured events and counters for deleted files/bytes, failures, and sweep
 duration without logging arbitrary media paths.
+Weekly/monthly PNG and complete text usage reports use Tehran-local periods, serialize rendering
+per administrator, and exclude administrators from public KPIs without exposing IDs or deleting
+audit records.
 
 ## Deliverables
 

@@ -213,9 +213,9 @@ def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
             tags.append(f"{image}:latest")
         return tags
 
-    assert expected_tags("v1.0.8") == [
-        f"{image}:v1.0.8",
-        f"{image}:1.0.8",
+    assert expected_tags("v1.0.9") == [
+        f"{image}:v1.0.9",
+        f"{image}:1.0.9",
         f"{image}:1.0",
         f"{image}:latest",
     ]
@@ -234,9 +234,9 @@ def test_release_tag_exactly_matches_project_version() -> None:
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.0.8"
+    assert version == "1.0.9"
     assert __version__ == version
-    assert tag == "v1.0.8"
+    assert tag == "v1.0.9"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
     assert 'if tag != f"v{version}":' in workflow
 

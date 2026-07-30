@@ -8,6 +8,8 @@
 | `src/telegram_media_bot/application/services/native_options.py` | Builds the public native-only option catalog, enforces codec/transcode invariants, chooses truthful representatives, deduplicates actual plans, and creates opaque option IDs |
 | `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
 | `src/telegram_media_bot/application/services/url_canonicalization.py` | Parses YouTube URL intent, validates video/playlist IDs, removes Mix context from single-video URLs, and supplies credential-safe structured log fields |
+| `src/telegram_media_bot/application/services/usage_analytics.py` | Builds Tehran-local usage reports and excludes configured administrators from public KPI aggregation |
+| `src/telegram_media_bot/application/ports/usage_analytics.py` | Framework-free usage activity and PNG renderer contracts |
 | `src/telegram_media_bot/application/services/progress.py` | Framework-free download/delivery progress throttling |
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic access, required-channel membership, and rate policy |
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
@@ -16,6 +18,8 @@
 | `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for AV1/H.264 MP4 and VP9 WebM selection, stream-copy arguments, and Best Original policy |
 | `src/telegram_media_bot/infrastructure/queue/` | ARQ enqueue plus official abort and transient-key finalization |
 | `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL jobs, durable-first cancellation, users, daily usage, delivery, block, and recovery store |
+| `src/telegram_media_bot/infrastructure/persistence/sqlite_usage_analytics.py` | Read-only mapping of durable SQLite jobs/events into project-owned usage activity |
+| `src/telegram_media_bot/infrastructure/analytics/` | Dependency-free in-memory PNG usage chart rendering |
 | `src/telegram_media_bot/infrastructure/security/telegram_membership.py` | Telegram membership gateway with positive/negative Redis cache |
 | `src/telegram_media_bot/infrastructure/security/` | Public URL/DNS validation, Redis rate limiting, and membership cache |
 | `src/telegram_media_bot/infrastructure/observability/` | Health HTTP server and Prometheus metrics registry |
@@ -23,6 +27,8 @@
 | `src/telegram_media_bot/infrastructure/archive/` | Safe 7-Zip multi-volume packaging and SHA-256 manifests |
 | `src/telegram_media_bot/infrastructure/storage/` | Exact job-workspace cleanup, symlink-safe deletion, and startup/maintenance sweeping |
 | `src/telegram_media_bot/telegram/` | Versioned Back/Native callback dispatch, real-plan rendering, middleware, and tracked delivery adapter |
+| `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants, FSM state, and reply/inline keyboard builders |
+| `src/telegram_media_bot/telegram/admin_handlers.py` | Role-checked menu/download/report routing and per-admin report single-flight coordination |
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction |
 | `src/telegram_media_bot/workers/` | ARQ worker settings and job functions |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, and composition roots |

@@ -62,6 +62,13 @@ integer `chat_id`, display `title`, and HTTPS `t.me` join URL. The bot must be a
 channel. All channels are required; positive/negative Redis cache lifetimes are separately
 configurable and admins bypass membership only.
 
+Every ID in `telegram.admin_ids` receives the persistent management reply keyboard after `/start`,
+`/menu`, or `/panel`. The same list authorizes every management button and report refresh callback;
+no role is inferred from a previously visible keyboard or FSM state. Administrators retain the
+existing required-channel bypass. Their inspection/download activity remains durable for audit and
+idempotency but is excluded from public weekly, monthly, and complete usage KPIs. Changing the list
+takes effect when the bot restarts and reloads `config.yaml`.
+
 `yt_dlp.proxy_enabled` controls only source inspection/download requests. Supported schemes are
 HTTP, HTTPS, SOCKS4, SOCKS4a, SOCKS5, and SOCKS5h. A legacy configuration that has `proxy` but omits
 `proxy_enabled` remains enabled; explicit `false` always disables it. The value is a secret and is

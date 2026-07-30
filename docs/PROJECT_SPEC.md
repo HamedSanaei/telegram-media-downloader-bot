@@ -40,6 +40,12 @@ Actual extraction support is determined by the installed `yt-dlp` version.
    `.part` files, and temporary files from both workspace roots. Confirmed multipart parts are
    removed immediately after their durable Telegram receipt.
 
+Configured administrators receive a persistent management keyboard from `/start` or `/menu`.
+Its download prompt is only an alternate entry point to the same URL validation, inspection,
+selection, queue, worker, delivery, and cleanup flow used by every user. Weekly/monthly PNG and
+complete text reports exclude administrator IDs from public KPIs at query time without deleting
+their durable jobs or usage events.
+
 For explicitly enabled large-file delivery, results up to the Local Bot API ceiling are uploaded
 directly. Every larger result is emitted as bounded multi-volume ZIP documents through the
 configured 4096 MB aggregate ceiling.
@@ -70,6 +76,8 @@ playlist. Genuine `/playlist?list=...` URLs retain the configured bounded-playli
 - Release updates may remove only unreferenced old images from this project's GHCR repository after
   candidate health/version/doctor verification; they never perform a global Docker prune.
 - Structured logs with correlation/job IDs.
+- Role-authorized management messages/callbacks, single-flight report rendering, and no
+  administrator identity or media metadata in usage reports.
 - Controlled dependency updates and rollback through Git/lockfile.
 - Unit tests by default; opt-in external contract tests.
 

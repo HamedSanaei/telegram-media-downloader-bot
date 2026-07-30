@@ -1,9 +1,21 @@
 # Handoff verification report
 
-Generated: 2026-07-29
+Generated: 2026-07-30
 
 ## Current change addendum
 
+- Version 1.0.9 shows configured administrators a persistent reply keyboard from `/start`, `/menu`,
+  or the backward-compatible `/panel`. Every management message and refresh callback independently
+  checks the current `telegram.admin_ids`; ordinary users receive no management keyboard or data.
+- The guided administrator URL state injects the same URL-submission callable as direct user/admin
+  messages. Validation, required-channel policy, inspection, Native selection, durable jobs,
+  callbacks, workers, cancellation, delivery, and zero-retention remain one shared pipeline.
+- Weekly/monthly reports are dependency-free in-memory PNG charts; the complete report includes
+  sources, formats, delivered volume, terminal outcomes, and a Tehran-local 14-day breakdown.
+  Rendering is single-flight per administrator and failures expose no SQL or internal exception.
+- Public KPIs filter current administrator IDs during aggregation only. Durable administrator jobs
+  and usage events remain available for audit/idempotency, while reports disclose neither IDs nor
+  media URLs, filenames, or content.
 - Version 1.0.8 enforces symlink-safe, idempotent zero-retention for exact job workspaces after
   success, failure, cancellation, timeout, and delivery uncertainty. Startup and maintenance
   sweepers preserve active/retryable jobs while reclaiming terminal and age-gated orphan work.
@@ -76,7 +88,7 @@ Generated: 2026-07-29
   restored if permission migration is unsafe.
 - The runtime image guarantees both `7zz` and `7z`; CI and publication smoke tests create, split,
   and verify a real archive rather than checking package text only.
-- Project and package metadata are aligned at `1.0.8`; the lockfile changed only the editable
+- Project and package metadata are aligned at `1.0.9`; the lockfile changed only the editable
   project version, with no dependency upgrade.
 - Instagram automatic downloads now create and enqueue the same native-only `best_original`
   contract. `force_mp4` selects native MP4 video plus M4A audio for merge/remux only; disabling it
@@ -89,7 +101,7 @@ Generated: 2026-07-29
 - Structured selection/transcode logs include source container/codecs/size, selected format IDs,
   reason, target codec, CRF or bitrate, and final size.
 - The exact v1.0.0 configuration fixture and representative v1.0.1 through v1.0.6 configurations
-  load unchanged under v1.0.8. Mocked Linux and Windows
+  load unchanged under v1.0.9. Mocked Linux and Windows
   patch-upgrade tests confirm that only `TMB_IMAGE` changes in `.env`, while config, cookies,
   SQLite, Redis, and existing downloads remain intact.
 - CI and release image builds now share the
@@ -134,18 +146,18 @@ session is present.
 - `uv lock --check`: passed.
 - `uv sync --frozen --group dev`: passed; 80 installed packages checked.
 - Ruff lint: passed.
-- Ruff format check: passed for 117 Python files.
-- Strict mypy: passed for 108 source/test files.
-- Default test suite: 303 passed, 8 skipped on this Windows host (the destructive large-file case,
+- Ruff format check: passed for 131 Python files.
+- Strict mypy: passed for 122 source/test files.
+- Default test suite: 322 passed, 8 skipped on this Windows host (the destructive large-file case,
   6 Linux-only full-script Bash parse cases, and one unavailable unprivileged symlink case), and 11
   external contracts deselected.
-- Core branch coverage: 82.36%, above the enforced 80% floor.
+- Core branch coverage: 82.63%, above the enforced 80% floor.
 - Architecture boundary check: passed; only
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
 - Opt-in production regression contract: metadata-only inspection of the YouTube Mix URL passed in
   6.93 seconds as video `DGbwtVtthu8`, with canonical webpage URL and Native format options.
-- UTF-8/text integrity: passed for the complete 179-file tracked text set.
-- Deterministic source manifest regenerated and verified with 185 release entries.
+- UTF-8/text integrity: passed for the complete 193-file tracked text set.
+- Deterministic source manifest regenerated and verified with 199 release entries.
 - SQLite migration, WAL contention, atomic usage, and cancel-safe recovery tests passed.
 - Linux and Windows mocked `tmb update` tests passed for success, release-download failure, and
   checksum failure. Linux additionally passed permission rollback, candidate crash-state rollback,
@@ -159,7 +171,7 @@ session is present.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
-- Python 1.0.8 sdist and wheel builds passed.
+- Python 1.0.9 sdist and wheel builds passed.
 - The privileged filesystem/SQLite/Docker upgrade test could not start because no
   Docker, Podman, or Nerdctl executable is installed on this host.
 - `config.example.yaml` passed `config-check` without printing secrets.
@@ -196,8 +208,8 @@ interactive configuration output.
   shared leased database adapter.
 - The installers consume checksummed assets from the latest GitHub Release; a tag must be published
   before the public one-line installer can install that version.
-- Broadcast, user export, and administrative usage-report commands are intentionally outside this
-  release; the permanent data model required for them is present.
+- Broadcast and user export are intentionally outside this release; administrator usage reports
+  are aggregate-only and never expose user/admin IDs, URLs, filenames, or downloaded content.
 
 ## Release commands
 

@@ -270,3 +270,23 @@ stopped containers from the current Compose project. Image IDs referenced by any
 running image, other repositories, volumes, and BuildKit cache are protected. A cleanup failure
 does not roll back an otherwise healthy release; it is visible to the operator and safely
 repeatable through `tmb cleanup [--dry-run]`.
+
+## ADR-024: Administrator UX is role-aware presentation over shared use cases
+
+**Status:** accepted
+
+Administrator capability discovery uses a persistent Telegram reply keyboard shown from `/start`,
+`/menu`, or the backward-compatible `/panel`. Visibility is not authorization: every management
+message and callback checks the sender against the currently loaded `telegram.admin_ids`. Forged
+button text fails closed, and FSM state is cleared when role authorization fails.
+
+The administrator download prompt receives the same URL-submission callable as the ordinary URL
+router. It does not introduce an admin download service, job kind, worker, queue payload, delivery
+path, format contract, or workspace. The ordinary access policy—including the existing
+administrator membership bypass—remains authoritative.
+
+Usage reporting reads project-owned activity through an application port. Public KPI aggregation
+filters configured administrator IDs in memory but retains durable jobs/events for audit and
+idempotency. Tehran-local weekly/monthly windows and the complete report's 14-day detail are
+rendered under a per-administrator single-flight guard. PNG bytes exist only in memory and reports
+never contain administrator IDs, URLs, filenames, SQL, or internal exceptions.

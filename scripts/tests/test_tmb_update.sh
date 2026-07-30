@@ -21,7 +21,22 @@ prepare_case() {
     "$case_root/data/downloads" \
     "$case_root/data/temp"
   cp "$SOURCE_ROOT/scripts/tmb.sh" "$case_root/scripts/tmb.sh"
-  printf 'telegram:\n  bot_token: V1_CONFIG_SENTINEL\n' >"$case_root/config.yaml"
+  cat >"$case_root/config.yaml" <<'EOF'
+telegram:
+  bot_token: V1_CONFIG_SENTINEL
+  required_channels:
+    enabled: true
+    channels:
+      - chat_id: -1000000000001
+        title: Fixture Channel One
+        join_url: https://t.me/fixture_channel_one
+      - chat_id: -1000000000002
+        title: Fixture Channel Two
+        join_url: https://t.me/fixture_channel_two
+      - chat_id: -1000000000003
+        title: Fixture Channel Three
+        join_url: https://t.me/fixture_channel_three
+EOF
   printf 'TMB_IMAGE=example.invalid/tmb:1.0.2\nCOMPOSE_PROFILES=local-api\nAPP_UID=10001\nAPP_GID=10001\nTMB_WORKER_CPUS=1.5\n' \
     >"$case_root/.env"
   printf 'version = "1.0.2"\n' >"$case_root/pyproject.toml"
@@ -202,6 +217,8 @@ run_success_case() {
   ) "$case_root/.env" || fail "update changed .env beyond TMB_IMAGE"
   grep -q 'V1_CONFIG_SENTINEL' "$case_root/config.yaml" \
     || fail "successful update overwrote config.yaml"
+  [[ "$(grep -c 'Fixture Channel' "$case_root/config.yaml")" == "3" ]] \
+    || fail "successful update changed required channels"
   grep -q '^sqlite-v1-state$' "$case_root/data/state/jobs.sqlite3" \
     || fail "successful update overwrote SQLite state"
   grep -q '^cookies-v1-state$' "$case_root/data/cookies/cookies.txt" \

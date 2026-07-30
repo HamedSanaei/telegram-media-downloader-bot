@@ -7,8 +7,13 @@ from aiogram import Dispatcher
 
 from telegram_media_bot.application.services.access_policy import AccessPolicyService
 from telegram_media_bot.application.services.job_service import JobService
+from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.infrastructure.analytics.usage_chart_renderer import PngUsageChartRenderer
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
+from telegram_media_bot.infrastructure.persistence.sqlite_usage_analytics import (
+    SqliteUsageAnalyticsRepository,
+)
 from telegram_media_bot.infrastructure.queue.arq_queue import ArqJobQueue
 from telegram_media_bot.infrastructure.security.redis_rate_limiter import RedisRateLimiter
 from telegram_media_bot.infrastructure.security.telegram_membership import (
@@ -55,6 +60,11 @@ async def run_bot(settings: Settings) -> None:
                 access_policy=access_policy,
                 jobs=JobService(repository),
                 users=repository,
+                usage_analytics=UsageAnalyticsService(
+                    SqliteUsageAnalyticsRepository(settings.database_path()),
+                    admin_ids=settings.telegram.admin_ids,
+                ),
+                usage_chart_renderer=PngUsageChartRenderer(),
             )
         )
         await logger.ainfo("bot_started")

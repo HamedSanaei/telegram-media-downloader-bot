@@ -30,7 +30,22 @@ function Invoke-UpdateCase {
     $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText(
         (Join-Path $CaseRoot "config.yaml"),
-        "telegram:`n  bot_token: V1_CONFIG_SENTINEL",
+        @"
+telegram:
+  bot_token: V1_CONFIG_SENTINEL
+  required_channels:
+    enabled: true
+    channels:
+      - chat_id: -1000000000001
+        title: Fixture Channel One
+        join_url: https://t.me/fixture_channel_one
+      - chat_id: -1000000000002
+        title: Fixture Channel Two
+        join_url: https://t.me/fixture_channel_two
+      - chat_id: -1000000000003
+        title: Fixture Channel Three
+        join_url: https://t.me/fixture_channel_three
+"@,
         $Utf8NoBom
     )
     [System.IO.File]::WriteAllText(
@@ -215,6 +230,12 @@ function Invoke-UpdateCase {
         (Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "config.yaml")) -match
         "V1_CONFIG_SENTINEL"
     ) "successful update overwrote config.yaml"
+    Assert-True (
+        ([regex]::Matches(
+            (Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "config.yaml")),
+            "Fixture Channel"
+        )).Count -eq 3
+    ) "successful update changed required channels"
     Assert-True (
         (Get-Content -Raw -Encoding ascii (Join-Path $CaseRoot "data/state/jobs.sqlite3")) -match
         "sqlite-v1-state"

@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
 ## Release state
 
@@ -8,11 +8,10 @@ Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
-Patch `1.0.8` adds strict terminal workspace zero-retention and safe project-only Docker image
-reclamation. Confirmed multipart items are deleted one by one, archive cancellation is job-scoped,
-startup/maintenance sweepers recover abandoned files, and updater cleanup runs only after candidate
-verification. Existing v1.0.0 through v1.0.7 configuration and durable runtime state remain
-upgrade-compatible.
+Patch `1.0.9` adds a persistent role-authorized administrator keyboard, a shared-pipeline download
+prompt, direct weekly/monthly PNG and complete text usage reports, report single-flight protection,
+and administrator exclusion from public KPI aggregation. Existing v1.0.0 through v1.0.8
+configuration and durable runtime state remain upgrade-compatible.
 
 ## Implemented production controls
 
@@ -71,6 +70,9 @@ upgrade-compatible.
 - Verified updates and `tmb cleanup [--dry-run]` may reclaim only unreferenced old project-image
   IDs and superseded stopped project containers. Current/referenced images, other repositories,
   volumes, and build caches are protected.
+- Administrators see a persistent `/start`/`menu` management keyboard, while ordinary users never
+  receive management buttons. Admin URLs use the ordinary inspection/download pipeline, every
+  management action is reauthorized, and reports exclude current admin IDs without altering jobs.
 
 ## Verification
 
@@ -79,6 +81,9 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-30: Prepared 1.0.9 with a persistent administrator reply keyboard, shared URL entry,
+  per-admin single-flight PNG/text usage reports, Tehran-local breakdowns, forged-action defenses,
+  and public KPI aggregation that excludes administrators without deleting durable activity.
 - 2026-07-29: Prepared 1.0.8 with job-scoped zero-retention, per-part multipart cleanup, cancellable
   isolated 7-Zip processes, observable orphan sweeping, and verified project-only Docker image
   cleanup with a dry-run operator command.

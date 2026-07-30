@@ -88,6 +88,24 @@ choices. Telegram callbacks contain only a short opaque option digest.
 - cleans temporary files;
 - is deployed as one worker container until a leased multi-host store is introduced.
 
+### Administrator presentation and analytics
+
+`telegram/admin_handlers.py` is a role-aware presentation adapter. `/start`, `/menu`, and the
+backward-compatible `/panel` expose a persistent reply keyboard only when the current
+`telegram.admin_ids` contains the sender. Every management message and callback repeats that
+authorization; keyboard visibility and FSM state are never trusted.
+
+The admin download prompt injects the same `submit_url` callable consumed by the ordinary URL
+router. Once a URL is accepted there is no admin-specific job, service, queue payload, worker,
+delivery path, or storage root. The main keyboard is restored when inspection is queued, so it
+remains available throughout success, controlled failure, cancellation, and timeout.
+
+Usage reporting follows `telegram -> application analytics port -> SQLite analytics adapter`.
+The application service computes Tehran-local weekly, monthly, and 14-day breakdowns and filters
+the current administrator IDs during aggregation only. Durable jobs and events remain intact.
+Rendering is single-flight per administrator and produces an in-memory PNG; no report input, media
+URL, administrator ID, or chart file is persisted.
+
 ## File isolation
 
 Each job uses:
