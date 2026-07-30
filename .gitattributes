@@ -5,4 +5,5 @@
 *.jpg binary
 *.jpeg binary
 *.gif binary
+*.ttf binary
 *.zip binary

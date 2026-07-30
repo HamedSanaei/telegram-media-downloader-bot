@@ -8,9 +8,9 @@ Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
-Patch `1.0.9` adds a persistent role-authorized administrator keyboard, a shared-pipeline download
-prompt, direct weekly/monthly PNG and complete text usage reports, report single-flight protection,
-and administrator exclusion from public KPI aggregation. Existing v1.0.0 through v1.0.8
+Patch `1.0.10` replaces the text-incapable raw RGB chart encoder with a deterministic Pillow
+dashboard and package-bundled licensed Noto Sans resource. Visual-region, package, doctor, and
+non-root Docker smoke checks prevent blank chart labels. Existing v1.0.0 through v1.0.9
 configuration and durable runtime state remain upgrade-compatible.
 
 ## Implemented production controls
@@ -81,6 +81,9 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-07-30: Prepared 1.0.10 with bundled Noto Sans/OFL assets, a complete in-memory Pillow
+  reporting dashboard, actionable doctor diagnostics, structural visual regression tests, and
+  offline read-only UID-10001 Docker chart artifacts.
 - 2026-07-30: Prepared 1.0.9 with a persistent administrator reply keyboard, shared URL entry,
   per-admin single-flight PNG/text usage reports, Tehran-local breakdowns, forged-action defenses,
   and public KPI aggregation that excludes administrators without deleting durable activity.

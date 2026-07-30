@@ -33,6 +33,9 @@ function Invoke-UpdateCase {
         @"
 telegram:
   bot_token: V1_CONFIG_SENTINEL
+  admin_ids:
+    - 111111111
+    - 222222222
   required_channels:
     enabled: true
     channels:
@@ -236,6 +239,12 @@ telegram:
             "Fixture Channel"
         )).Count -eq 3
     ) "successful update changed required channels"
+    Assert-True (
+        ([regex]::Matches(
+            (Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "config.yaml")),
+            "(?m)^    - (111111111|222222222)$"
+        )).Count -eq 2
+    ) "successful update changed administrator IDs"
     Assert-True (
         (Get-Content -Raw -Encoding ascii (Join-Path $CaseRoot "data/state/jobs.sqlite3")) -match
         "sqlite-v1-state"

@@ -103,8 +103,17 @@ remains available throughout success, controlled failure, cancellation, and time
 Usage reporting follows `telegram -> application analytics port -> SQLite analytics adapter`.
 The application service computes Tehran-local weekly, monthly, and 14-day breakdowns and filters
 the current administrator IDs during aggregation only. Durable jobs and events remain intact.
-Rendering is single-flight per administrator and produces an in-memory PNG; no report input, media
-URL, administrator ID, or chart file is persisted.
+Rendering is single-flight per administrator and produces an in-memory Pillow PNG; no report
+input, media URL, administrator ID, or chart file is persisted. The renderer resolves Noto Sans
+through `importlib.resources`, caches decoded font sizes, and fails with the project-owned
+`UsageChartFontError` when the licensed resource is missing, empty, corrupt, or lacks required
+ASCII glyphs. The wheel, sdist, and image carry the same font/OFL bytes, so charts have no
+system-font, fontconfig, display-server, network, or external chart-service dependency.
+
+The dashboard contract is 2200x1450 RGB PNG with an English/ASCII header, Tehran-local range,
+generated timestamp, six KPI cards, named three-series legend, numeric Y axis, adaptive X-axis
+dates, zero baseline, and selected bar values. English avoids introducing untested Arabic shaping
+or BiDi behavior; Telegram captions remain Persian.
 
 ## File isolation
 

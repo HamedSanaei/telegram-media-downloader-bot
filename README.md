@@ -17,6 +17,7 @@ do no media extraction or download work. The external plugin SDK is a separate d
 - aiogram polling bot and separate ARQ worker;
 - Redis for queue/rate limiting and SQLite/WAL for durable job state;
 - ffmpeg/ffprobe and pinned Deno 2.9.3 for yt-dlp EJS;
+- Pillow with a package-bundled Noto Sans font for deterministic in-memory administrator charts;
 - Docker Compose startup after one ignored local YAML configuration is created.
 
 ## First run
@@ -72,8 +73,14 @@ uv run ruff format --check .
 uv run mypy src tests
 uv run pytest -m "not contract" --cov=telegram_media_bot --cov-report=term-missing
 uv build
+uv run python scripts/check_package_assets.py --install-smoke
 docker build -t telegram-media-downloader-bot:review .
 ```
+
+The usage-chart font and its SIL OFL 1.1 license are shipped inside the Python package. Runtime
+rendering does not download assets or consult system fonts, fontconfig, a display server, or an
+external chart API. CI publishes deterministic weekly and monthly fixture charts as the
+`usage-chart-smoke` artifact.
 
 External contract tests are opt-in and require operator-maintained safe public fixtures. See
 `docs/OPERATIONS.md` for upgrades, canary promotion, rollback, alert thresholds, and incident

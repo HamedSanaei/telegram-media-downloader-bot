@@ -115,3 +115,7 @@ class LocalBotApiError(MediaBotError):
 
 class PersistenceError(MediaBotError):
     retryable = True
+
+
+class UsageChartFontError(MediaBotError):
+    """The bundled usage-chart font is missing, invalid, or incomplete."""

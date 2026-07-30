@@ -166,6 +166,13 @@ def _run_doctor(settings: Settings) -> None:
     engine_health = YtDlpEngine(settings).health()
     print(f"OK   {engine_health.name}: {engine_health.detail}")
     failed = False
+    from telegram_media_bot.infrastructure.analytics.usage_chart_doctor import (
+        check_usage_chart_runtime,
+    )
+
+    for name, (healthy, detail) in check_usage_chart_runtime().items():
+        print(f"{'OK  ' if healthy else 'FAIL'} {name}: {detail}")
+        failed = failed or not healthy
     for name, path in checks.items():
         if path:
             print(f"OK   {name}: {_binary_version(path)}")

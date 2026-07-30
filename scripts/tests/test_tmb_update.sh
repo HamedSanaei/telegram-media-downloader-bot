@@ -24,6 +24,9 @@ prepare_case() {
   cat >"$case_root/config.yaml" <<'EOF'
 telegram:
   bot_token: V1_CONFIG_SENTINEL
+  admin_ids:
+    - 111111111
+    - 222222222
   required_channels:
     enabled: true
     channels:
@@ -219,6 +222,8 @@ run_success_case() {
     || fail "successful update overwrote config.yaml"
   [[ "$(grep -c 'Fixture Channel' "$case_root/config.yaml")" == "3" ]] \
     || fail "successful update changed required channels"
+  [[ "$(grep -cE '^    - (111111111|222222222)$' "$case_root/config.yaml")" == "2" ]] \
+    || fail "successful update changed administrator IDs"
   grep -q '^sqlite-v1-state$' "$case_root/data/state/jobs.sqlite3" \
     || fail "successful update overwrote SQLite state"
   grep -q '^cookies-v1-state$' "$case_root/data/cookies/cookies.txt" \

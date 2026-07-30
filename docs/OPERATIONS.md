@@ -38,7 +38,10 @@ If the Windows execution policy blocks unsigned local scripts, use
 apply the organization's approved signing policy; do not lower the machine-wide policy silently.
 
 `./manage.sh doctor` prints ffmpeg, ffprobe, the configured JavaScript runtime, and the resolved
-7-Zip executable version. The
+7-Zip executable version. It also prints `OK usage_chart_font` after decoding the package-bundled
+Noto Sans resource and required ASCII glyphs, followed by `OK usage_chart_renderer` after an
+in-memory PNG smoke render. A failure is actionable: reinstall or update the immutable application
+image; do not install a host font package as a workaround. The
 worker container exposes `/health`, `/ready`, and `/metrics` internally on port 8080 by default. The
 port is intentionally not host-published; query it through the container/network or an authenticated
 monitoring sidecar.
@@ -74,6 +77,11 @@ Only IDs in `telegram.admin_ids` can use:
 
 No command returns URLs, tokens, cookies, proxy data, internal exception text, or file paths.
 
+Weekly and monthly administrator charts are generated entirely in memory with Pillow. The font is
+`telegram_media_bot/assets/fonts/NotoSans-Regular.ttf`, licensed by the adjacent `OFL.txt`, and is
+loaded through `importlib.resources`; Windows, Linux, Docker, and clean wheel installs therefore use
+the same bytes.
+
 For required channels, add the bot as administrator before enabling the policy. A user must be a
 member of every configured channel. The “joined, recheck” button bypasses Redis cache; ordinary
 checks use the configured positive/negative TTL.
@@ -93,6 +101,11 @@ Inspect `docker compose logs worker`, the stable error category, Redis health, f
 `doctor`, then the SQLite job record. Never paste secrets or full user URLs into an incident ticket.
 For uncertain delivery, check the target chat/operator evidence before deciding whether to submit a
 new job; do not mutate it into an automatic retry.
+
+If a usage chart has blank labels, run `tmb doctor` in the deployed image. Either chart check
+failing means the package/image is incomplete or corrupt. Verify that the deployed version is
+1.0.10 or newer and replace it through `tmb update`; never download a font during startup or mount
+`/usr/share/fonts` into the container.
 
 ## Controlled yt-dlp update
 

@@ -290,3 +290,18 @@ filters configured administrator IDs in memory but retains durable jobs/events f
 idempotency. Tehran-local weekly/monthly windows and the complete report's 14-day detail are
 rendered under a per-administrator single-flight guard. PNG bytes exist only in memory and reports
 never contain administrator IDs, URLs, filenames, SQL, or internal exceptions.
+# ADR-025: Bundle chart typography and render usage dashboards with Pillow
+
+- **Status:** accepted
+- **Date:** 2026-07-30
+
+The v1.0.9 raw RGB encoder could draw only primitives, so its apparent legend contained colored
+swatches but no title, labels, axes text, dates, or KPI descriptions. Usage charts now use Pillow
+and load the project-bundled Noto Sans Regular bytes through `importlib.resources`. The SIL OFL 1.1
+license is shipped beside the font in wheel, sdist, release archives, and Docker images.
+
+Missing, empty, undecodable, or glyph-incomplete resources raise `UsageChartFontError`; silently
+falling back to Pillow's bitmap font is forbidden. English ASCII chart text deliberately avoids an
+implicit Arabic shaping/BiDi dependency, while Telegram captions remain Persian. Rendering stays
+in memory and preserves zero-retention. CI validates meaningful text regions and publishes weekly
+and monthly fixture charts produced as UID 10001 without network, DISPLAY, or a writable image.

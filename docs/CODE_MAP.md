@@ -19,7 +19,8 @@
 | `src/telegram_media_bot/infrastructure/queue/` | ARQ enqueue plus official abort and transient-key finalization |
 | `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL jobs, durable-first cancellation, users, daily usage, delivery, block, and recovery store |
 | `src/telegram_media_bot/infrastructure/persistence/sqlite_usage_analytics.py` | Read-only mapping of durable SQLite jobs/events into project-owned usage activity |
-| `src/telegram_media_bot/infrastructure/analytics/` | Dependency-free in-memory PNG usage chart rendering |
+| `src/telegram_media_bot/infrastructure/analytics/` | Pillow usage dashboards, bundled-font doctor, and deterministic Docker smoke fixtures |
+| `src/telegram_media_bot/assets/fonts/` | Package-bundled Noto Sans runtime font and SIL OFL 1.1 license |
 | `src/telegram_media_bot/infrastructure/security/telegram_membership.py` | Telegram membership gateway with positive/negative Redis cache |
 | `src/telegram_media_bot/infrastructure/security/` | Public URL/DNS validation, Redis rate limiting, and membership cache |
 | `src/telegram_media_bot/infrastructure/observability/` | Health HTTP server and Prometheus metrics registry |
@@ -42,6 +43,7 @@
 | `scripts/upgrade_ytdlp.py` | Reviewed engine upgrade, verification, and report workflow |
 | `scripts/compare_canary.py` | Baseline/canary failure-rate promotion gate |
 | `scripts/generate_file_manifest.py` | Deterministic SHA-256 source-manifest generation |
+| `scripts/check_package_assets.py` | Wheel/sdist font-license inspection and clean-wheel resource/decode smoke |
 | `install.sh`, `install.ps1` | Interactive Docker-first one-line installers and global management command setup |
 | `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup/cleanup command; Linux adds isolated transactional replacement, runtime probes, health verification, rollback, `tmb` repair, and guarded project-image reclamation |
 | `scripts/build_release_archives.sh` | Reproducible tar/ZIP assets and v1.0.2-safe executable Linux updater packaging |

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.0.10 - 2026-07-30
+
+- Fixed blank chart titles and labels by replacing the raw-pixel renderer with an in-memory Pillow
+  dashboard containing the report title, exact date range, timezone, KPI labels/values, readable
+  legend, numeric Y axis, adaptive date labels, and important bar values.
+- Bundled deterministic Noto Sans and its SIL OFL 1.1 license inside the wheel, sdist, and
+  production image. Rendering never downloads a font or depends on host font packages/fontconfig.
+- Added weekly/monthly visual-region tests, clean-wheel resource validation, `tmb doctor` font and
+  renderer checks, and non-root/read-only/offline Docker chart smoke artifacts.
+- Preserved media zero-retention and all administrator, required-channel, configuration, and
+  durable-state behavior unchanged.
+
 ## 1.0.9 - 2026-07-30
 
 - Give configured administrators a persistent role-aware management keyboard from `/start`,

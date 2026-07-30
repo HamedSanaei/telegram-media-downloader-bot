@@ -11,6 +11,8 @@ duration without logging arbitrary media paths.
 Weekly/monthly PNG and complete text usage reports use Tehran-local periods, serialize rendering
 per administrator, and exclude administrators from public KPIs without exposing IDs or deleting
 audit records.
+PNG reports use Pillow and a bundled OFL-licensed Noto Sans resource; doctor, package, visual-region,
+and non-root Docker smoke tests fail closed if chart text cannot be rendered.
 
 ## Deliverables
 

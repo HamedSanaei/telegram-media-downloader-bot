@@ -1,6 +1,6 @@
 [project]
 name = "telegram-media-downloader-bot"
-version = "1.0.9"
+version = "1.0.10"
 description = "A maintainable Telegram media downloader bot powered by a replaceable yt-dlp adapter."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -10,6 +10,7 @@ dependencies = [
   "aiohttp>=3.14,<4",
   "aiogram>=3.20,<4",
   "arq>=0.27,<1",
+  "Pillow>=12.3,<13",
   "pydantic>=2.11,<3",
   "PyYAML>=6.0.2,<7",
   "redis>=5.2,<7",
@@ -40,6 +41,14 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/telegram_media_bot"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/telegram_media_bot/assets/fonts/NotoSans-Regular.ttf" = "telegram_media_bot/assets/fonts/NotoSans-Regular.ttf"
+"src/telegram_media_bot/assets/fonts/OFL.txt" = "telegram_media_bot/assets/fonts/OFL.txt"
+
+[tool.hatch.build.targets.sdist.force-include]
+"src/telegram_media_bot/assets/fonts/NotoSans-Regular.ttf" = "src/telegram_media_bot/assets/fonts/NotoSans-Regular.ttf"
+"src/telegram_media_bot/assets/fonts/OFL.txt" = "src/telegram_media_bot/assets/fonts/OFL.txt"
 
 [tool.ruff]
 target-version = "py314"

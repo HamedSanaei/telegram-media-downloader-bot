@@ -103,6 +103,12 @@ jobs:
           docker run --rm \
             -v "${PWD}/config.example.yaml:/app/config.example.yaml:ro" \
             "$image" telegram-media-bot doctor --config /app/config.example.yaml
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            -e DISPLAY= \
+            "$image" \
+            python -m telegram_media_bot.infrastructure.analytics.usage_chart_smoke \
+              --output-dir /tmp/usage-chart-smoke --verify-uid 10001
           docker tag "$image" telegram-media-downloader-bot:ci
       - name: Run privileged updater filesystem and SQLite integration test
         shell: bash
