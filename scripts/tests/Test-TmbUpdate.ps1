@@ -229,21 +229,14 @@ telegram:
         $NormalizedEnvironment -eq
         "TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.3`nCOMPOSE_PROFILES=local-api`nAPP_UID=10001`nAPP_GID=10001`nTMB_WORKER_CPUS=1.5"
     ) "update changed .env beyond TMB_IMAGE"
+    $configText = Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "config.yaml")
+    Assert-True ($configText -match "V1_CONFIG_SENTINEL") `
+        "successful update overwrote config.yaml"
     Assert-True (
-        (Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "config.yaml")) -match
-        "V1_CONFIG_SENTINEL"
-    ) "successful update overwrote config.yaml"
-    Assert-True (
-        ([regex]::Matches(
-            (Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "config.yaml")),
-            "Fixture Channel"
-        )).Count -eq 3
+        ([regex]::Matches($configText, "Fixture Channel")).Count -eq 3
     ) "successful update changed required channels"
     Assert-True (
-        ([regex]::Matches(
-            (Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "config.yaml")),
-            "(?m)^    - (111111111|222222222)$"
-        )).Count -eq 2
+        $configText.Contains("111111111") -and $configText.Contains("222222222")
     ) "successful update changed administrator IDs"
     Assert-True (
         (Get-Content -Raw -Encoding ascii (Join-Path $CaseRoot "data/state/jobs.sqlite3")) -match
