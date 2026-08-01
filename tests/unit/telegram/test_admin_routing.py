@@ -19,7 +19,12 @@ from telegram_media_bot.telegram.admin_menu import (
     build_admin_main_keyboard,
 )
 from telegram_media_bot.telegram.handlers import build_router
-from telegram_media_bot.telegram.texts import ACCESS_DENIED_TEXT, START_TEXT
+from telegram_media_bot.telegram.texts import (
+    ACCESS_DENIED_TEXT,
+    INSPECTION_ACTIVE_TEXT,
+    INSPECTION_QUEUED_TEXT,
+    START_TEXT,
+)
 
 
 class FakeResponse:
@@ -48,7 +53,7 @@ class FakeMessage:
 
     async def answer(self, text: str, reply_markup: object | None = None) -> FakeResponse:
         self.answers.append((text, reply_markup))
-        return FakeResponse()
+        return FakeResponse(499 + len(self.answers))
 
 
 class FakeState:
@@ -75,8 +80,9 @@ class FakeRepository:
 
 
 class FakeJobs:
-    def __init__(self) -> None:
+    def __init__(self, *, created: bool = True) -> None:
         self.calls: list[dict[str, object]] = []
+        self.created = created
 
     def create_inspection(self, **kwargs: object) -> tuple[JobRecord, bool]:
         self.calls.append(kwargs)
@@ -93,8 +99,9 @@ class FakeJobs:
                 idempotency_key="key",
                 created_at=now,
                 updated_at=now,
+                status_message_id=321 if not self.created else None,
             ),
-            True,
+            self.created,
         )
 
 
@@ -151,18 +158,59 @@ async def test_panel_denies_regular_user_and_menu_recovers_admin_keyboard(
     assert admin.answers[-1][1] == build_admin_main_keyboard()
 
 
-async def test_direct_admin_url_uses_the_regular_inspection_pipeline_and_restores_menu(
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/watch?v=abcdefghijk",
+        "https://www.instagram.com/reel/DbQqWqBDLXS/",
+    ],
+)
+async def test_direct_admin_url_uses_editable_status_and_regular_inspection_pipeline(
     role_settings: Settings,
+    url: str,
 ) -> None:
     router, jobs, queue = _router(role_settings)
-    message = FakeMessage(99, "https://example.com/video")
+    message = FakeMessage(99, url)
 
     await _handler(router, "enqueue_url")(message)
 
     assert len(jobs.calls) == 1
     assert jobs.calls[0]["user_id"] == 99
     assert len(queue.inspections) == 1
+    assert message.answers[0] == (
+        INSPECTION_QUEUED_TEXT.format(job_id="inspection-job"),
+        None,
+    )
     assert message.answers[-1][1] == build_admin_main_keyboard()
+
+
+async def test_regular_user_status_remains_editable_without_admin_keyboard(
+    role_settings: Settings,
+) -> None:
+    router, jobs, queue = _router(role_settings)
+    message = FakeMessage(20, "https://www.youtube.com/watch?v=abcdefghijk")
+
+    await _handler(router, "enqueue_url")(message)
+
+    assert len(jobs.calls) == 1
+    assert len(queue.inspections) == 1
+    assert message.answers == [(INSPECTION_QUEUED_TEXT.format(job_id="inspection-job"), None)]
+
+
+async def test_existing_inspection_is_reconciled_without_new_pending_status(
+    role_settings: Settings,
+) -> None:
+    jobs = FakeJobs(created=False)
+    queue = FakeQueue()
+    router = _build_router(role_settings, jobs, queue)
+    message = FakeMessage(99, "https://www.instagram.com/reel/DbQqWqBDLXS/")
+
+    await _handler(router, "enqueue_url")(message)
+
+    assert len(queue.inspections) == 1
+    assert queue.inspections[0]["job_id"] == JobId("inspection-job")
+    assert message.answers == [(INSPECTION_ACTIVE_TEXT, build_admin_main_keyboard())]
+    assert all(not text.startswith("بررسی لینک آغاز شد") for text, _ in message.answers)
 
 
 def test_admin_router_precedes_generic_url_router(role_settings: Settings) -> None:
@@ -177,7 +225,11 @@ def test_admin_router_precedes_generic_url_router(role_settings: Settings) -> No
 def _router(settings: Settings) -> tuple[Any, FakeJobs, FakeQueue]:
     jobs = FakeJobs()
     queue = FakeQueue()
-    router = build_router(
+    return _build_router(settings, jobs, queue), jobs, queue
+
+
+def _build_router(settings: Settings, jobs: FakeJobs, queue: FakeQueue) -> Any:
+    return build_router(
         settings=settings,
         queue=queue,  # type: ignore[arg-type]
         repository=FakeRepository(),  # type: ignore[arg-type]
@@ -185,7 +237,6 @@ def _router(settings: Settings) -> tuple[Any, FakeJobs, FakeQueue]:
         jobs=jobs,  # type: ignore[arg-type]
         users=FakeUsers(),  # type: ignore[arg-type]
     )
-    return router, jobs, queue
 
 
 def _handler(router: object, name: str) -> Any:

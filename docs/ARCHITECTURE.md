@@ -97,8 +97,12 @@ authorization; keyboard visibility and FSM state are never trusted.
 
 The admin download prompt injects the same `submit_url` callable consumed by the ordinary URL
 router. Once a URL is accepted there is no admin-specific job, service, queue payload, worker,
-delivery path, or storage root. The main keyboard is restored when inspection is queued, so it
-remains available throughout success, controlled failure, cancellation, and timeout.
+delivery path, or storage root. The editable inspection-status message never carries a reply
+keyboard; the persistent administrator keyboard is restored through a separate message so the
+worker can replace the status with an inline selection. A rejected Telegram edit falls back to a
+new tracked status message. Deduplicated active inspections are idempotently reconciled with ARQ
+without creating another pending status message. The main keyboard remains available throughout
+success, controlled failure, cancellation, and timeout.
 
 Usage reporting follows `telegram -> application analytics port -> SQLite analytics adapter`.
 The application service computes Tehran-local weekly, monthly, and 14-day breakdowns and filters

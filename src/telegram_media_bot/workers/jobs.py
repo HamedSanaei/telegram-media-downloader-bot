@@ -11,6 +11,8 @@ from typing import Any, cast
 import structlog
 import structlog.contextvars
 from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import InlineKeyboardMarkup
 from arq import Retry
 
 from telegram_media_bot.application.ports.delivery import DeliveryGateway
@@ -127,28 +129,27 @@ async def process_inspection_job(
                 container=instagram_container,
                 container_policy=instagram_policy,
             )
-            if record.status_message_id is not None:
-                await asyncio.to_thread(
-                    repository.set_status_message,
-                    download.job_id,
-                    record.status_message_id,
-                )
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=record.status_message_id,
-                    text=("بهترین نسخهٔ اصلی اینستاگرام برای دریافت آماده شد و در صف قرار گرفت."),
-                )
-            if created:
-                queue = cast(JobQueue, ctx["queue"])
-                await queue.enqueue_download(
-                    job_id=download.job_id,
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    url=info.webpage_url,
-                    mode=DownloadMode.BEST_ORIGINAL,
-                    container=instagram_container,
-                    container_policy=instagram_policy,
-                )
+            status_message_id = await _edit_or_send_inspection_message(
+                bot=bot,
+                chat_id=chat_id,
+                message_id=record.status_message_id,
+                text="بهترین نسخهٔ اصلی اینستاگرام برای دریافت آماده شد و در صف قرار گرفت.",
+            )
+            await asyncio.to_thread(
+                repository.set_status_message,
+                download.job_id,
+                status_message_id,
+            )
+            queue = cast(JobQueue, ctx["queue"])
+            await queue.enqueue_download(
+                job_id=download.job_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                url=info.webpage_url,
+                mode=DownloadMode.BEST_ORIGINAL,
+                container=instagram_container,
+                container_policy=instagram_policy,
+            )
             await asyncio.to_thread(
                 repository.transition,
                 job_id,
@@ -156,7 +157,12 @@ async def process_inspection_job(
                 source=info.source,
             )
             metrics.record_job(outcome="inspection_succeeded", source=info.source)
-            await logger.ainfo("instagram_download_enqueued", job_id=job_id)
+            await logger.ainfo(
+                "instagram_download_enqueued",
+                job_id=job_id,
+                download_job_id=download.job_id,
+                download_created=created,
+            )
             return str(job_id)
         catalog = build_native_option_catalog(info)
         allowed_modes = tuple(dict.fromkeys(option.mode for option in catalog.options))
@@ -222,20 +228,14 @@ async def process_inspection_job(
         )
         await asyncio.to_thread(repository.save_selection, selection)
         text = render_media_info(info, catalog=catalog)
-        if record.status_message_id is not None:
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=record.status_message_id,
-                text=text,
-                reply_markup=container_keyboard(selection, catalog),
-            )
-        else:
-            message = await bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                reply_markup=container_keyboard(selection, catalog),
-            )
-            await asyncio.to_thread(repository.set_status_message, job_id, message.message_id)
+        status_message_id = await _edit_or_send_inspection_message(
+            bot=bot,
+            chat_id=chat_id,
+            message_id=record.status_message_id,
+            text=text,
+            reply_markup=container_keyboard(selection, catalog),
+        )
+        await asyncio.to_thread(repository.set_status_message, job_id, status_message_id)
         await asyncio.to_thread(
             repository.transition, job_id, JobStatus.SUCCEEDED, source=info.source
         )
@@ -307,6 +307,38 @@ async def process_inspection_job(
     finally:
         metrics.observe_duration(monotonic() - started)
         structlog.contextvars.clear_contextvars()
+
+
+async def _edit_or_send_inspection_message(
+    *,
+    bot: Bot,
+    chat_id: int,
+    message_id: int | None,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> int:
+    if message_id is not None:
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=reply_markup,
+            )
+            return message_id
+        except TelegramAPIError as exc:
+            await logger.awarning(
+                "inspection_status_edit_failed",
+                chat_id=chat_id,
+                error_type=type(exc).__name__,
+                fallback="send_message",
+            )
+    message = await bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        reply_markup=reply_markup,
+    )
+    return message.message_id
 
 
 async def process_download_job(

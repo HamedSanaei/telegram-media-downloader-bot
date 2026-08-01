@@ -51,6 +51,7 @@ from telegram_media_bot.telegram.texts import (
     ACCESS_DENIED_TEXT,
     CANCELLED_TEXT,
     CANNOT_CANCEL_TEXT,
+    INSPECTION_ACTIVE_TEXT,
     INSPECTION_QUEUED_TEXT,
     INVALID_URL_TEXT,
     QUEUED_TEXT,
@@ -573,21 +574,8 @@ def build_router(
             user_id=message.from_user.id,
             url=intent.canonical_url,
         )
-        response = await message.answer(
-            INSPECTION_QUEUED_TEXT.format(job_id=record.job_id),
-            reply_markup=(
-                build_admin_main_keyboard()
-                if message.from_user.id in settings.telegram.admin_ids
-                else None
-            ),
-        )
-        await asyncio.to_thread(repository.set_status_message, record.job_id, response.message_id)
-        if created:
-            await asyncio.to_thread(
-                users.record_request,
-                message.from_user.id,
-                datetime.now(UTC).date(),
-            )
+        is_admin = message.from_user.id in settings.telegram.admin_ids
+        if not created:
             try:
                 await queue.enqueue_inspection(
                     job_id=record.job_id,
@@ -596,19 +584,60 @@ def build_router(
                     url=record.url,
                 )
             except Exception as exc:
-                await asyncio.to_thread(
-                    repository.transition,
-                    record.job_id,
-                    JobStatus.FAILED,
-                    error_category=ErrorCategory.INTERNAL,
-                    error_summary="queue_enqueue_failed",
+                await message.answer(
+                    SERVICE_UNAVAILABLE_TEXT,
+                    reply_markup=build_admin_main_keyboard() if is_admin else None,
                 )
-                await response.edit_text("ثبت کار در صف ممکن نشد؛ دوباره تلاش کنید.")
                 await logger.aexception(
-                    "inspection_enqueue_failed",
+                    "inspection_reconcile_failed",
                     job_id=record.job_id,
+                    durable_status=record.status.value,
                     error_type=type(exc).__name__,
                 )
+                return True
+            await message.answer(
+                INSPECTION_ACTIVE_TEXT,
+                reply_markup=build_admin_main_keyboard() if is_admin else None,
+            )
+            await logger.ainfo(
+                "inspection_reconciled",
+                job_id=record.job_id,
+                durable_status=record.status.value,
+                status_message_reused=record.status_message_id is not None,
+            )
+            return True
+        response = await message.answer(
+            INSPECTION_QUEUED_TEXT.format(job_id=record.job_id),
+        )
+        await asyncio.to_thread(repository.set_status_message, record.job_id, response.message_id)
+        if is_admin:
+            await message.answer(ADMIN_MENU_TEXT, reply_markup=build_admin_main_keyboard())
+        await asyncio.to_thread(
+            users.record_request,
+            message.from_user.id,
+            datetime.now(UTC).date(),
+        )
+        try:
+            await queue.enqueue_inspection(
+                job_id=record.job_id,
+                chat_id=record.chat_id,
+                user_id=record.user_id,
+                url=record.url,
+            )
+        except Exception as exc:
+            await asyncio.to_thread(
+                repository.transition,
+                record.job_id,
+                JobStatus.FAILED,
+                error_category=ErrorCategory.INTERNAL,
+                error_summary="queue_enqueue_failed",
+            )
+            await response.edit_text("ثبت کار در صف ممکن نشد؛ دوباره تلاش کنید.")
+            await logger.aexception(
+                "inspection_enqueue_failed",
+                job_id=record.job_id,
+                error_type=type(exc).__name__,
+            )
         return True
 
     router.include_router(

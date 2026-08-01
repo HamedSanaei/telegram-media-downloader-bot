@@ -1,6 +1,19 @@
 # Changelog
 
+## [1.0.11] - 2026-08-01
+
+### Fixed
+
+- Fixed admin media requests getting stuck after inspection was queued.
+- Separated the persistent admin reply keyboard from editable inspection status messages.
+- Added a fallback message when Telegram cannot edit an inspection status message.
+- Reconciled existing inspection and Instagram download jobs with ARQ when Redis state is missing.
+
 ## Unreleased
+
+- Keep the administrator reply keyboard on a separate Telegram message from the editable
+  inspection status, fall back to a new message when Telegram rejects a status edit, and reconcile
+  deduplicated active jobs with ARQ instead of creating an inspection message that cannot advance.
 
 ## 1.0.10 - 2026-07-30
 

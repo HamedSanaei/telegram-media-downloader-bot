@@ -6,9 +6,13 @@ import threading
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import EditMessageText
+from aiogram.types import InlineKeyboardMarkup
 from arq import Retry
 
 from telegram_media_bot.application.ports.delivery import DeliveryGateway
@@ -31,10 +35,12 @@ from telegram_media_bot.domain.models import (
     ErrorCategory,
     JobId,
     JobStatus,
+    MediaFormatOption,
     MediaInfo,
     MediaKind,
     OutputContainer,
     ProgressEvent,
+    SizeConfidence,
 )
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
@@ -136,6 +142,56 @@ class FakeInspectionService:
             kind=MediaKind.VIDEO,
             webpage_url=url,
         )
+
+
+class FakeYoutubeInspectionService:
+    def inspect(self, url: str) -> MediaInfo:
+        return MediaInfo(
+            media_id="abcdefghijk",
+            title="YouTube video",
+            source="youtube",
+            kind=MediaKind.VIDEO,
+            webpage_url=url,
+            format_options=(
+                MediaFormatOption(
+                    mode=DownloadMode.VIDEO_1080,
+                    container=OutputContainer.MP4,
+                    container_policy=ContainerPolicy.NATIVE_ONLY,
+                    selected_format_ids=("137", "140"),
+                    width=1920,
+                    height=1080,
+                    fps=30,
+                    video_codec="avc1.640028",
+                    audio_codec="mp4a.40.2",
+                    size_bytes=7_000_000,
+                    size_confidence=SizeConfidence.EXACT,
+                ),
+            ),
+        )
+
+
+class FakeInspectionBot:
+    def __init__(self, *, fail_edit: bool) -> None:
+        self.fail_edit = fail_edit
+        self.edits: list[dict[str, object]] = []
+        self.messages: list[dict[str, object]] = []
+
+    async def edit_message_text(self, **kwargs: object) -> object:
+        self.edits.append(kwargs)
+        if self.fail_edit:
+            raise TelegramBadRequest(
+                method=EditMessageText(
+                    chat_id=cast(int, kwargs["chat_id"]),
+                    message_id=cast(int, kwargs["message_id"]),
+                    text=str(kwargs["text"]),
+                ),
+                message="message can't be edited",
+            )
+        return SimpleNamespace(message_id=kwargs["message_id"])
+
+    async def send_message(self, **kwargs: object) -> object:
+        self.messages.append(kwargs)
+        return SimpleNamespace(message_id=900 + len(self.messages))
 
 
 class CapturingQueue:
@@ -240,15 +296,17 @@ async def test_instagram_auto_download_create_and_enqueue_share_native_policy(
     repository.initialize()
     inspection, _ = JobService(repository).create_inspection(
         chat_id=10,
-        user_id=20,
+        user_id=99,
         url="https://example.test/reel/DbQqWqBDLXS",
     )
+    repository.set_status_message(inspection.job_id, 30)
     queue = CapturingQueue()
+    bot = FakeInspectionBot(fail_edit=True)
     context: dict[str, Any] = {
         "settings": configured,
         "repository": repository,
         "download_service": FakeInspectionService(),
-        "bot": object(),
+        "bot": bot,
         "metrics": MetricsRegistry(),
         "queue": queue,
         "job_id": str(inspection.job_id),
@@ -258,7 +316,7 @@ async def test_instagram_auto_download_create_and_enqueue_share_native_policy(
     await process_inspection_job(
         context,
         chat_id=10,
-        user_id=20,
+        user_id=99,
         url=inspection.url,
     )
 
@@ -270,6 +328,108 @@ async def test_instagram_auto_download_create_and_enqueue_share_native_policy(
     assert persisted is not None
     assert persisted.container is expected_container
     assert persisted.container_policy is ContainerPolicy.NATIVE_ONLY
+    assert persisted.status_message_id == 901
+    assert len(bot.edits) == 1
+    assert len(bot.messages) == 1
+
+
+@pytest.mark.parametrize(("user_id", "fail_edit"), [(99, True), (20, False)])
+async def test_youtube_inspection_publishes_selection_for_admin_and_regular_user(
+    settings: Settings,
+    tmp_path: Path,
+    user_id: int,
+    fail_edit: bool,
+) -> None:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    configured = Settings.model_validate(raw)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    inspection, _ = JobService(repository).create_inspection(
+        chat_id=10,
+        user_id=user_id,
+        url="https://www.youtube.com/watch?v=abcdefghijk",
+    )
+    repository.set_status_message(inspection.job_id, 30)
+    bot = FakeInspectionBot(fail_edit=fail_edit)
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "download_service": FakeYoutubeInspectionService(),
+        "bot": bot,
+        "metrics": MetricsRegistry(),
+        "job_id": str(inspection.job_id),
+        "job_try": 1,
+    }
+
+    await process_inspection_job(
+        context,
+        chat_id=10,
+        user_id=user_id,
+        url=inspection.url,
+    )
+
+    persisted = repository.get_job(inspection.job_id)
+    assert persisted is not None and persisted.status is JobStatus.SUCCEEDED
+    assert persisted.status_message_id == (901 if fail_edit else 30)
+    assert len(bot.edits) == 1
+    assert len(bot.messages) == int(fail_edit)
+    published = bot.messages[0] if fail_edit else bot.edits[0]
+    keyboard = cast(InlineKeyboardMarkup, published["reply_markup"])
+    assert any(
+        button.callback_data is not None and button.callback_data.startswith("c2:")
+        for row in keyboard.inline_keyboard
+        for button in row
+    )
+
+
+async def test_existing_instagram_download_is_reenqueued_for_redis_recovery(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    configured = Settings.model_validate(raw)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    url = "https://example.test/reel/DbQqWqBDLXS"
+    inspection, _ = JobService(repository).create_inspection(
+        chat_id=10,
+        user_id=99,
+        url=url,
+    )
+    existing, created = JobService(repository).create_download(
+        chat_id=10,
+        user_id=99,
+        url=url,
+        mode=DownloadMode.BEST_ORIGINAL,
+        container=OutputContainer.MP4,
+        container_policy=ContainerPolicy.NATIVE_ONLY,
+    )
+    assert created
+    queue = CapturingQueue()
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "download_service": FakeInspectionService(),
+        "bot": FakeInspectionBot(fail_edit=False),
+        "metrics": MetricsRegistry(),
+        "queue": queue,
+        "job_id": str(inspection.job_id),
+        "job_try": 1,
+    }
+
+    await process_inspection_job(
+        context,
+        chat_id=10,
+        user_id=99,
+        url=url,
+    )
+
+    assert queue.download is not None
+    assert queue.download["job_id"] == existing.job_id
 
 
 async def test_worker_honors_pre_start_cancellation(

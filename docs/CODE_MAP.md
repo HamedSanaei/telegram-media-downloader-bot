@@ -30,8 +30,9 @@
 | `src/telegram_media_bot/telegram/` | Versioned Back/Native callback dispatch, real-plan rendering, middleware, and tracked delivery adapter |
 | `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants, FSM state, and reply/inline keyboard builders |
 | `src/telegram_media_bot/telegram/admin_handlers.py` | Role-checked menu/download/report routing and per-admin report single-flight coordination |
+| `src/telegram_media_bot/telegram/handlers.py` | Shared URL submission, editable job-status ownership, active-job queue reconciliation, callbacks, and cancellation routing |
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction |
-| `src/telegram_media_bot/workers/` | ARQ worker settings and job functions |
+| `src/telegram_media_bot/workers/` | ARQ worker settings and job functions, including edit-or-send inspection result publication |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, and composition roots |
 | `tests/unit/` | Fast deterministic tests |
 | `tests/fixtures/` | Versioned configuration fixtures for backward-compatibility regression tests |

@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-07-30
+Last updated: 2026-08-01
 
 ## Release state
 
@@ -81,6 +81,9 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-08-01: Separated the administrator reply keyboard from editable inspection status messages,
+  added Telegram edit-to-send fallback for YouTube selections and Instagram auto-download, and
+  reconciled deduplicated active jobs with ARQ without creating an orphan status message.
 - 2026-07-30: Prepared 1.0.10 with bundled Noto Sans/OFL assets, a complete in-memory Pillow
   reporting dashboard, actionable doctor diagnostics, structural visual regression tests, and
   offline read-only UID-10001 Docker chart artifacts.

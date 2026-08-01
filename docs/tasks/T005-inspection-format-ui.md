@@ -22,7 +22,10 @@ Every pre-enqueue page has Back and reuses this selection without another inspec
 YouTube URLs carrying a valid video ID are inspected once with single-video intent and never show
 playlist-limit messaging solely because a Mix `list` parameter was present.
 The administrator download prompt and direct administrator URLs call this identical inspection
-entry point; no role-specific format, callback, or job flow exists.
+entry point; no role-specific format, callback, or job flow exists. Its persistent reply keyboard
+is sent separately from the editable inspection-status message. Worker publication falls back to a
+new tracked message if Telegram rejects editing an older status, and a deduplicated active job is
+reconciled with ARQ without creating another pending status message.
 
 ## Deliverables
 
