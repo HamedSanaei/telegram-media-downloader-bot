@@ -92,6 +92,53 @@ def test_inspect_returns_project_owned_model(
     assert info.kind is MediaKind.AUDIO
 
 
+@pytest.mark.parametrize(
+    ("extractor", "expected_mode"),
+    [
+        ("Youtube", DownloadMode.YOUTUBE_THUMBNAIL),
+        ("Soundcloud", DownloadMode.SOUNDCLOUD_ARTWORK),
+    ],
+)
+def test_inspect_offers_highest_quality_artwork_without_persisting_cdn_url(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    extractor: str,
+    expected_mode: DownloadMode,
+) -> None:
+    class ArtworkYoutubeDL(FakeYoutubeDL):
+        info: ClassVar[dict[str, Any]] = {
+            "id": "artwork",
+            "title": "Artwork",
+            "extractor_key": extractor,
+            "webpage_url": "https://example.test/media",
+            "thumbnail": "https://cdn.example.test/signed.jpg?token=secret",
+            "vcodec": "none",
+            "acodec": "opus",
+            "ext": "webm",
+        }
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", ArtworkYoutubeDL)
+
+    info = engine_module.YtDlpEngine(_without_dns_checks(settings)).inspect(
+        "https://example.test/media"
+    )
+
+    assert expected_mode in {option.mode for option in info.format_options}
+    assert info.thumbnail_url is None
+
+
+def test_missing_thumbnail_does_not_offer_artwork(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(engine_module, "YoutubeDL", FakeYoutubeDL)
+
+    info = engine_module.YtDlpEngine(_without_dns_checks(settings)).inspect(
+        "https://example.test/media"
+    )
+
+    assert DownloadMode.SOUNDCLOUD_ARTWORK not in {option.mode for option in info.format_options}
+
+
 def test_youtube_mix_is_canonicalized_before_inspection(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,

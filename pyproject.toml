@@ -1,7 +1,7 @@
 [project]
 name = "telegram-media-downloader-bot"
-version = "1.0.11"
-description = "A maintainable Telegram media downloader bot powered by a replaceable yt-dlp adapter."
+version = "1.1.0"
+description = "A maintainable Telegram media downloader bot with replaceable yt-dlp and gallery-dl adapters."
 readme = "README.md"
 requires-python = ">=3.14"
 license = { text = "MIT" }
@@ -10,6 +10,7 @@ dependencies = [
   "aiohttp>=3.14,<4",
   "aiogram>=3.20,<4",
   "arq>=0.27,<1",
+  "gallery-dl==1.32.8",
   "Pillow>=12.3,<13",
   "pydantic>=2.11,<3",
   "PyYAML>=6.0.2,<7",
@@ -45,10 +46,14 @@ packages = ["src/telegram_media_bot"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/telegram_media_bot/assets/fonts/NotoSans-Regular.ttf" = "telegram_media_bot/assets/fonts/NotoSans-Regular.ttf"
 "src/telegram_media_bot/assets/fonts/OFL.txt" = "telegram_media_bot/assets/fonts/OFL.txt"
+"docs/licenses/gallery-dl-GPL-2.0.txt" = "telegram_media_bot/assets/licenses/gallery-dl-GPL-2.0.txt"
+"docs/THIRD_PARTY_NOTICES.md" = "telegram_media_bot/assets/licenses/THIRD_PARTY_NOTICES.md"
 
 [tool.hatch.build.targets.sdist.force-include]
 "src/telegram_media_bot/assets/fonts/NotoSans-Regular.ttf" = "src/telegram_media_bot/assets/fonts/NotoSans-Regular.ttf"
 "src/telegram_media_bot/assets/fonts/OFL.txt" = "src/telegram_media_bot/assets/fonts/OFL.txt"
+"docs/licenses/gallery-dl-GPL-2.0.txt" = "docs/licenses/gallery-dl-GPL-2.0.txt"
+"docs/THIRD_PARTY_NOTICES.md" = "docs/THIRD_PARTY_NOTICES.md"
 
 [tool.ruff]
 target-version = "py314"

@@ -11,6 +11,7 @@ from arq import cron
 from arq.connections import ArqRedis, RedisSettings
 from arq.typing import WorkerSettingsBase
 
+from telegram_media_bot.application.ports.download_engine import DownloadEngine
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.domain.models import (
@@ -20,6 +21,8 @@ from telegram_media_bot.domain.models import (
     JobStatus,
     RecoveryDecision,
 )
+from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
+from telegram_media_bot.infrastructure.media_engine_router import RoutedMediaEngine
 from telegram_media_bot.infrastructure.observability.health_server import HealthServer
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
@@ -51,7 +54,18 @@ async def startup(ctx: dict[str, Any]) -> None:
     try:
         repository = SqliteJobRepository(settings.database_path())
         await asyncio.to_thread(repository.initialize)
-        engine = YtDlpEngine(settings)
+        ytdlp_engine = YtDlpEngine(settings)
+        gallery_engine = GalleryDlEngine(settings)
+        gallery_health = await asyncio.to_thread(gallery_engine.health)
+        gallery_cookie_readability = {
+            source: (
+                (cookie := settings.gallery_dl.cookie_for(source, settings.yt_dlp.cookies_file))
+                is None
+                or cookie.is_file()
+            )
+            for source in sorted(settings.gallery_dl.enabled_platforms)
+        }
+        engine = RoutedMediaEngine(gallery_engine, ytdlp_engine)
         queue = ArqJobQueue(
             cast(ArqRedis, ctx["redis"]), settings.redis.queue_name, owns_pool=False
         )
@@ -146,6 +160,7 @@ async def startup(ctx: dict[str, Any]) -> None:
                     container=record.container,
                     container_policy=record.container_policy,
                     native_video_codec=record.native_video_codec,
+                    selected_format_ids=record.selected_format_ids,
                 )
             requeued_count += 1
             await logger.ainfo(
@@ -188,6 +203,10 @@ async def startup(ctx: dict[str, Any]) -> None:
             cleanup_directories=startup_cleanup.directories_deleted,
             cleanup_bytes_reclaimed=startup_cleanup.bytes_reclaimed,
             cleanup_failed_paths=startup_cleanup.failed_paths_count,
+            gallery_dl_enabled=settings.gallery_dl.enabled,
+            gallery_dl_healthy=gallery_health.healthy,
+            gallery_dl_version=gallery_health.detail,
+            gallery_dl_cookie_readability=gallery_cookie_readability,
         )
     except Exception:
         ctx.pop("bot", None)
@@ -213,9 +232,11 @@ async def _health_report(ctx: dict[str, Any]) -> HealthReport:
     settings = cast(Settings, ctx["settings"])
     repository = cast(SqliteJobRepository, ctx["repository"])
     queue = cast(ArqJobQueue, ctx["queue"])
-    engine = cast(YtDlpEngine, ctx["engine"])
-    redis_ok, database_ok = await asyncio.gather(
-        queue.healthy(), asyncio.to_thread(repository.healthy)
+    engine = cast(DownloadEngine, ctx["engine"])
+    redis_ok, database_ok, engine_health = await asyncio.gather(
+        queue.healthy(),
+        asyncio.to_thread(repository.healthy),
+        asyncio.to_thread(engine.health),
     )
     storage_ok = await asyncio.to_thread(_storage_writable, settings)
     telegram_ok = bool(ctx.get("bot_identity_available", False))
@@ -225,7 +246,7 @@ async def _health_report(ctx: dict[str, Any]) -> HealthReport:
         ComponentHealth("storage", storage_ok),
         ComponentHealth("telegram", telegram_ok),
         ComponentHealth("ffmpeg", shutil.which("ffmpeg") is not None),
-        engine.health(),
+        engine_health,
     ]
     runtime = ctx.get("telegram_runtime")
     if settings.telegram.local_bot_api.enabled and isinstance(runtime, TelegramRuntime):

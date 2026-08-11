@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+## 1.1.0 - 2026-08-01
+
+### Added
+
+- Added original image and ordered mixed-media downloads for single Instagram, TikTok, Twitter/X,
+  and Pinterest posts through an isolated, exactly pinned gallery-dl 1.32.8 subprocess adapter.
+- Added semantic single-image, all-images, all-media, images-only, videos-only, and original-image
+  ZIP choices; YouTube thumbnails and SoundCloud artwork remain on the yt-dlp path.
+- Added signature-based Pillow image validation, chunked Telegram photo/mixed albums, deterministic
+  document fallback, and reuse of the existing multipart archive path for oversized ZIPs.
+- Added per-source cookie settings with backward-compatible Instagram cookie fallback, runtime
+  health/doctor/config checks, sanitized 1.32.8 fixtures, dependency-upgrade contract tooling,
+  package/Docker license smokes, and isolated Renovate updates.
+
+### Security
+
+- Reject bulk social URLs, bound asset count/bytes/runtime/concurrency/output, terminate gallery-dl
+  process groups on cancellation, confine outputs to the job workspace, and persist no signed CDN
+  URL or raw vendor metadata.
+
+### Fixed
+
+- Preserve the current Twitter/X HLS audio-only metadata inference and exact H.264/AAC inspected
+  stream IDs through durable selection and stream-copy download.
+- Classify an empty native codec/container plan separately from deleted/private media, retain the
+  normalized source on planning failure, and emit URL-free structured diagnostics.
+
 ## [1.0.11] - 2026-08-01
 
 ### Fixed
@@ -8,12 +37,6 @@
 - Separated the persistent admin reply keyboard from editable inspection status messages.
 - Added a fallback message when Telegram cannot edit an inspection status message.
 - Reconciled existing inspection and Instagram download jobs with ARQ when Redis state is missing.
-
-## Unreleased
-
-- Keep the administrator reply keyboard on a separate Telegram message from the editable
-  inspection status, fall back to a new message when Telegram rejects a status edit, and reconcile
-  deduplicated active jobs with ARQ instead of creating an inspection message that cannot advance.
 
 ## 1.0.10 - 2026-07-30
 

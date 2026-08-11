@@ -20,6 +20,14 @@ class DownloadMode(StrEnum):
     VIDEO_480 = "video_480"
     AUDIO_BEST = "audio_best"
     AUDIO_MP3 = "audio_mp3"
+    IMAGE_ORIGINAL = "image_original"
+    IMAGES_ORIGINAL = "images_original"
+    ALL_ORIGINAL_MEDIA = "all_original_media"
+    IMAGES_ONLY = "images_only"
+    VIDEOS_ONLY = "videos_only"
+    IMAGES_ZIP = "images_zip"
+    YOUTUBE_THUMBNAIL = "youtube_thumbnail"
+    SOUNDCLOUD_ARTWORK = "soundcloud_artwork"
 
 
 class OutputContainer(StrEnum):
@@ -32,6 +40,12 @@ class ContainerPolicy(StrEnum):
     NATIVE_ONLY = "native_only"
     GUARANTEED = "guaranteed"
     EXPLICIT_TRANSCODE = "explicit_transcode"
+
+
+class MediaProcessingKind(StrEnum):
+    DIRECT = "direct"
+    REMUX = "remux"
+    TRANSCODE = "transcode"
 
 
 class Mp4NativeFallback(StrEnum):
@@ -120,6 +134,7 @@ class ErrorCategory(StrEnum):
     CANCELLED = "cancelled"
     DELIVERY = "delivery"
     DELIVERY_UNCERTAIN = "delivery_uncertain"
+    FORMAT_UNAVAILABLE = "format_unavailable"
     GEO_RESTRICTED = "geo_restricted"
     INTERNAL = "internal"
     INVALID_URL = "invalid_url"
@@ -129,12 +144,20 @@ class ErrorCategory(StrEnum):
     RATE_LIMITED = "rate_limited"
     SOURCE_DISABLED = "source_disabled"
     TOO_LARGE = "too_large"
+    GALLERY_UNAVAILABLE = "gallery_unavailable"
+    GALLERY_OUTPUT_CHANGED = "gallery_output_changed"
+    INVALID_IMAGE = "invalid_image"
+    COLLECTION_TOO_LARGE = "collection_too_large"
+    UNSUPPORTED_GALLERY_URL = "unsupported_gallery_url"
+    GALLERY_COOKIES_EXPIRED = "gallery_cookies_expired"
+    GALLERY_EXTRACTION = "gallery_extraction"
 
 
 class DeliveryMethod(StrEnum):
     AUDIO = "audio"
     VIDEO = "video"
     DOCUMENT = "document"
+    PHOTO = "photo"
 
 
 class DeliveryProvider(StrEnum):
@@ -161,6 +184,23 @@ class MediaInfo:
     item_count: int | None = None
     estimated_size_bytes: int | None = None
     format_options: tuple[MediaFormatOption, ...] = ()
+    assets: tuple[MediaAsset, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MediaAsset:
+    index: int
+    asset_id: str
+    kind: MediaKind
+    extension: str
+    mime_type: str | None
+    source_post_id: str
+    provider: str
+    width: int | None = None
+    height: int | None = None
+    duration_seconds: int | None = None
+    size_bytes: int | None = None
+    title: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +209,7 @@ class MediaFormatOption:
     container: OutputContainer | None = None
     container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY
     requires_transcode: bool = False
+    processing_kind: MediaProcessingKind = MediaProcessingKind.DIRECT
     width: int | None = None
     height: int | None = None
     fps: float | None = None
@@ -202,6 +243,7 @@ class NativeOptionView:
     quality_score: float | None
     selected_format_ids: tuple[str, ...]
     transcode_required: bool
+    processing_kind: MediaProcessingKind
     display_label: str
 
 
@@ -215,6 +257,7 @@ class DownloadRequest:
     container: OutputContainer | None = None
     container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY
     native_video_codec: NativeVideoCodec | None = None
+    selected_format_ids: tuple[str, ...] = ()
     allow_collection: bool = False
 
     def __post_init__(self) -> None:
@@ -343,6 +386,7 @@ class JobRecord:
     container: OutputContainer | None = None
     container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY
     native_video_codec: NativeVideoCodec | None = None
+    selected_format_ids: tuple[str, ...] = ()
     status_message_id: int | None = None
     source: str | None = None
     error_category: ErrorCategory | None = None

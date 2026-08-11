@@ -13,6 +13,10 @@ _YOUTUBE_HOSTS = frozenset(
         "youtu.be",
     }
 )
+_TWITTER_HOSTS = frozenset({"x.com", "www.x.com", "twitter.com", "www.twitter.com"})
+_TWITTER_STATUS_PATTERN = re.compile(
+    r"^/(?P<username>[A-Za-z0-9_]{1,15})/status/(?P<status_id>[0-9]+)(?:/.*)?$"
+)
 _PLAYLIST_QUERY_PARAMETERS = frozenset(
     {
         "list",
@@ -55,6 +59,16 @@ def canonicalize_media_url(url: str) -> MediaUrlIntent:
     candidate = url.strip()
     parsed = urlsplit(candidate)
     hostname = (parsed.hostname or "").rstrip(".").casefold()
+    if parsed.scheme.casefold() in {"http", "https"} and hostname in _TWITTER_HOSTS:
+        match = _TWITTER_STATUS_PATTERN.fullmatch(parsed.path)
+        if match is not None:
+            canonical = _rebuild_url(
+                "https",
+                "x.com",
+                f"/{match.group('username')}/status/{match.group('status_id')}",
+                (),
+            )
+            return MediaUrlIntent(original_url=canonical, canonical_url=canonical)
     if parsed.scheme.casefold() not in {"http", "https"} or hostname not in _YOUTUBE_HOSTS:
         return MediaUrlIntent(original_url=candidate, canonical_url=candidate)
 

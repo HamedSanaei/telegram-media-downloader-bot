@@ -4,7 +4,8 @@ Last updated: 2026-08-01
 
 ## Release state
 
-Tasks T001 through T012 are implemented. The v1 flow is URL validation -> queued inspection ->
+Tasks T001 through T012 are implemented; T013 is the active v1.1.0 feature milestone. The v1 flow
+is URL validation -> queued inspection ->
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
@@ -12,6 +13,22 @@ Patch `1.0.10` replaces the text-incapable raw RGB chart encoder with a determin
 dashboard and package-bundled licensed Noto Sans resource. Visual-region, package, doctor, and
 non-root Docker smoke checks prevent blank chart labels. Existing v1.0.0 through v1.0.9
 configuration and durable runtime state remain upgrade-compatible.
+
+The current unreleased patch also restores Twitter/X HLS planning for the upstream audio-only MP4
+metadata shape that omits `acodec`. It preserves the exact inspected H.264/AAC format pair through
+SQLite/ARQ and downloads it with stream-copy remux; planning failures now retain the normalized
+source and use a distinct operator category without logging URLs or raw extractor dictionaries.
+
+The v1.1.0 work adds a pinned gallery-dl subprocess boundary for ordered original images and mixed
+posts on Instagram, TikTok, Twitter/X, and Pinterest. Image-bearing posts remain gallery-owned;
+video-only posts use yt-dlp. Durable selection stores stable asset identities but no CDN URL, and
+delivery supports photo, chunked media groups, documents, deterministic image ZIP, and the existing
+multipart path. YouTube thumbnails and SoundCloud artwork remain yt-dlp actions.
+
+All deterministic Python, architecture, security, fixture-contract, package, and Windows updater
+gates pass for T013. Docker/Compose runtime execution remains pending on this review host because
+the Docker CLI is not installed; CI contains equivalent version, config-ignore, UID/cookie,
+dependency, license, adapter-fixture, doctor, cleanup, and Compose smokes.
 
 ## Implemented production controls
 
@@ -80,6 +97,10 @@ The final exact command results and coverage are recorded in `docs/HANDOFF_REPOR
 gate run. External contracts remain opt-in and require operator-maintained public URLs.
 
 ## Recent fixes
+
+- 2026-08-01: Implemented T013 gallery-dl 1.32.8 media bundles, source-isolated cookies, bounded
+  subprocess cancellation, image validation, stable selection persistence, and typed album/ZIP
+  delivery with offline fixtures and package/Docker license smokes.
 
 - 2026-08-01: Separated the administrator reply keyboard from editable inspection status messages,
   added Telegram edit-to-send fallback for YouTube selections and Instagram auto-download, and

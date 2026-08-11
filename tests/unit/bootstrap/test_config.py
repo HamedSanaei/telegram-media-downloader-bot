@@ -86,6 +86,21 @@ def test_v1_0_3_configuration_remains_valid_without_manual_rewrite() -> None:
     assert not settings.media.transcode.explicit_mp4_enabled
 
 
+def test_v1_0_x_configuration_defaults_gallery_dl_without_manual_rewrite() -> None:
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw.pop("gallery_dl")
+
+    settings = Settings.model_validate(raw)
+
+    assert settings.gallery_dl.enabled
+    assert settings.gallery_dl.max_assets_per_job == 30
+    assert (
+        settings.gallery_dl.cookie_for("instagram", settings.yt_dlp.cookies_file)
+        == settings.yt_dlp.cookies_file
+    )
+    assert settings.gallery_dl.cookie_for("twitter", settings.yt_dlp.cookies_file) is None
+
+
 def test_unknown_configuration_key_is_rejected(tmp_path: Path) -> None:
     raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
     raw["app"]["unknown"] = True

@@ -22,9 +22,11 @@ from telegram_media_bot.domain.models import (
     JobKind,
     JobRecord,
     JobStatus,
+    MediaAsset,
     MediaFormatOption,
     MediaInfo,
     MediaKind,
+    MediaProcessingKind,
     NativeVideoCodec,
     OutputContainer,
     SelectionRecord,
@@ -70,6 +72,52 @@ def test_selection_enforces_owner_and_expiration(repository: SqliteJobRepository
     repository.save_selection(expired)
     with pytest.raises(SelectionExpiredError):
         repository.get_selection(expired.token, 1)
+
+
+def test_media_bundle_persists_stable_identity_without_cdn_url(tmp_path: Path) -> None:
+    database = tmp_path / "bundle.sqlite3"
+    repository = SqliteJobRepository(database)
+    repository.initialize()
+    now = datetime.now(UTC)
+    asset = MediaAsset(
+        index=1,
+        asset_id="stable-asset-id",
+        kind=MediaKind.IMAGE,
+        extension="jpg",
+        mime_type="image/jpeg",
+        source_post_id="post-1",
+        provider="twitter",
+    )
+    selection = SelectionRecord(
+        token=SelectionToken("bundle-selection"),
+        owner_user_id=1,
+        chat_id=2,
+        media=MediaInfo(
+            media_id="post-1",
+            title="Bundle",
+            source="twitter",
+            kind=MediaKind.IMAGE,
+            webpage_url="https://x.com/example/status/1",
+            format_options=(
+                MediaFormatOption(
+                    mode=DownloadMode.IMAGE_ORIGINAL,
+                    selected_format_ids=(asset.asset_id,),
+                ),
+            ),
+            assets=(asset,),
+        ),
+        allowed_modes=(DownloadMode.IMAGE_ORIGINAL,),
+        created_at=now,
+        expires_at=now + timedelta(minutes=5),
+    )
+
+    repository.save_selection(selection)
+    restored = repository.get_selection(selection.token, 1)
+    raw_database = database.read_bytes()
+
+    assert restored == selection
+    assert b"stable-asset-id" in raw_database
+    assert b"cdn" not in raw_database.lower()
 
 
 def test_initialize_non_destructively_migrates_legacy_jobs_table(tmp_path: Path) -> None:
@@ -316,12 +364,14 @@ def test_container_fields_and_format_options_survive_round_trip(
         container=OutputContainer.WEBM,
         container_policy=ContainerPolicy.GUARANTEED,
         native_video_codec=NativeVideoCodec.VP9,
+        selected_format_ids=("248", "251"),
     )
     loaded = repository.get_job(record.job_id)
     assert loaded is not None
     assert loaded.container is OutputContainer.WEBM
     assert loaded.container_policy is ContainerPolicy.GUARANTEED
     assert loaded.native_video_codec is NativeVideoCodec.VP9
+    assert loaded.selected_format_ids == ("248", "251")
 
 
 def test_user_usage_is_idempotent_and_persistent(
@@ -504,6 +554,7 @@ def _media() -> MediaInfo:
                 size_bytes=456,
                 size_confidence=SizeConfidence.ESTIMATED,
                 selected_format_ids=("137", "140"),
+                processing_kind=MediaProcessingKind.REMUX,
                 video_codec="avc1.640028",
                 audio_codec="mp4a.40.2",
                 dynamic_range="SDR",

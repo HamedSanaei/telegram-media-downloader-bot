@@ -25,6 +25,23 @@ def test_yt_dlp_import_is_confined_to_adapter() -> None:
     assert violations == []
 
 
+def test_gallery_dl_is_never_imported_into_application_code() -> None:
+    violations: list[Path] = []
+    for path in Path("src/telegram_media_bot").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                modules = [node.module or ""]
+            else:
+                continue
+            if any(name == "gallery_dl" or name.startswith("gallery_dl.") for name in modules):
+                violations.append(path)
+
+    assert violations == []
+
+
 def test_telethon_is_not_imported() -> None:
     source_root = Path("src/telegram_media_bot")
     violations: list[Path] = []

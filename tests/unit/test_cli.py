@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from telegram_media_bot import cli
 from telegram_media_bot.bootstrap.config import Settings
@@ -12,12 +13,18 @@ from telegram_media_bot.domain.errors import ConfigurationError
 
 
 def test_config_check_does_not_print_configuration_or_secrets(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw["yt_dlp"]["cookies_file"] = None
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump(raw), encoding="utf-8")
     monkeypatch.setattr(
         sys,
         "argv",
-        ["telegram-media-bot", "config-check", "--config", "config.example.yaml"],
+        ["telegram-media-bot", "config-check", "--config", str(config)],
     )
 
     cli.main()
@@ -26,6 +33,17 @@ def test_config_check_does_not_print_configuration_or_secrets(
     assert captured.out == "Configuration is valid.\n"
     assert "CHANGE_ME" not in captured.out
     assert captured.err == ""
+
+
+def test_config_check_rejects_unreadable_explicit_gallery_cookie(
+    settings: Settings, tmp_path: Path
+) -> None:
+    raw = settings.model_dump()
+    raw["yt_dlp"]["cookies_file"] = None
+    raw["gallery_dl"]["cookies"]["twitter"] = str(tmp_path / "missing.txt")
+
+    with pytest.raises(ConfigurationError, match="gallery_dl_cookie_twitter"):
+        cli._run_config_check(Settings.model_validate(raw))
 
 
 def test_local_api_status_parser_does_not_require_migration_confirmation_flag() -> None:

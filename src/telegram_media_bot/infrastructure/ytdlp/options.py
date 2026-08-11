@@ -17,6 +17,7 @@ from telegram_media_bot.domain.models import (
     DownloadMode,
     DownloadRequest,
     MediaFormatOption,
+    MediaProcessingKind,
     Mp4NativeFallback,
     NativeVideoCodec,
     OutputContainer,
@@ -85,6 +86,19 @@ class YtDlpOptionsFactory:
                 "postprocessors": self._postprocessors(request.mode),
             }
         )
+        if request.mode in {
+            DownloadMode.YOUTUBE_THUMBNAIL,
+            DownloadMode.SOUNDCLOUD_ARTWORK,
+        }:
+            options.update(
+                {
+                    "format": "b",
+                    "skip_download": True,
+                    "writethumbnail": True,
+                    "write_all_thumbnails": False,
+                    "postprocessors": [],
+                }
+            )
         if canonicalize_media_url(request.url).single_video_forced:
             options["noplaylist"] = True
         if request.container in {OutputContainer.MP4, OutputContainer.WEBM}:
@@ -105,6 +119,13 @@ class YtDlpOptionsFactory:
         return options
 
     def format_for_request(self, request: DownloadRequest) -> str:
+        if request.mode in {
+            DownloadMode.YOUTUBE_THUMBNAIL,
+            DownloadMode.SOUNDCLOUD_ARTWORK,
+        }:
+            return "b"
+        if request.selected_format_ids:
+            return "+".join(request.selected_format_ids)
         base = self._settings.media.formats.for_mode(request.mode)
         if request.container not in {OutputContainer.MP4, OutputContainer.WEBM}:
             return base
@@ -333,6 +354,35 @@ def _is_video(item: Mapping[str, Any]) -> bool:
     return item.get("vcodec") not in {None, "none"}
 
 
+def _is_audio(item: Mapping[str, Any]) -> bool:
+    if item.get("acodec") not in {None, "none"}:
+        return True
+    return (
+        item.get("vcodec") in {None, "none"}
+        and str(item.get("video_ext") or "").casefold() == "none"
+        and str(item.get("audio_ext") or "").casefold() not in {"", "none"}
+    ) or str(item.get("resolution") or "").casefold() == "audio only"
+
+
+def effective_audio_codec(item: Mapping[str, Any]) -> str | None:
+    codec = item.get("acodec")
+    if codec not in {None, "none"}:
+        return str(codec)
+    format_id = str(item.get("format_id") or "")
+    protocol = str(item.get("protocol") or "").casefold()
+    ext = str(item.get("ext") or item.get("audio_ext") or "").casefold()
+    if (
+        _is_audio(item)
+        and protocol.startswith("m3u8")
+        and ext in {"mp4", "m4a"}
+        and format_id.startswith("hls-audio-")
+        and format_id.endswith("-Audio")
+    ):
+        # Twitter's HLS audio renditions omit acodec even though they are AAC in MP4.
+        return "aac"
+    return None
+
+
 def _selected_components(candidate: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
     requested = candidate.get("requested_formats")
     if isinstance(requested, list):
@@ -347,7 +397,7 @@ def _is_complete_selection(
     mode: DownloadMode,
 ) -> bool:
     has_video = any(_is_video(item) for item in components)
-    has_audio = any(item.get("acodec") not in {None, "none"} for item in components)
+    has_audio = any(_is_audio(item) for item in components)
     if mode in {DownloadMode.AUDIO_BEST, DownloadMode.AUDIO_MP3}:
         return has_audio
     if mode is DownloadMode.BEST and not has_video:
@@ -367,7 +417,7 @@ def _describe_candidate(
 ) -> MediaFormatOption:
     components = _selected_components(candidate)
     videos = tuple(item for item in components if _is_video(item))
-    audios = tuple(item for item in components if item.get("acodec") not in {None, "none"})
+    audios = tuple(item for item in components if _is_audio(item))
     video = max(
         videos,
         key=lambda item: (
@@ -388,16 +438,23 @@ def _describe_candidate(
         confidence = SizeConfidence.ESTIMATED
     else:
         size_bytes, confidence = _estimated_total_size(components, duration_seconds)
+    transcode_required = requires_transcode or (
+        container is not None
+        and container in {OutputContainer.MP4, OutputContainer.WEBM}
+        and container_policy in {ContainerPolicy.GUARANTEED, ContainerPolicy.EXPLICIT_TRANSCODE}
+        and not _components_match_container(components, container)
+    )
     return MediaFormatOption(
         mode=mode,
         container=container,
         container_policy=container_policy,
-        requires_transcode=requires_transcode
-        or (
-            container is not None
-            and container in {OutputContainer.MP4, OutputContainer.WEBM}
-            and container_policy in {ContainerPolicy.GUARANTEED, ContainerPolicy.EXPLICIT_TRANSCODE}
-            and not _components_match_container(components, container)
+        requires_transcode=transcode_required,
+        processing_kind=(
+            MediaProcessingKind.TRANSCODE
+            if transcode_required
+            else MediaProcessingKind.REMUX
+            if len(components) > 1
+            else MediaProcessingKind.DIRECT
         ),
         width=_positive_int(video.get("width")) if video is not None else None,
         height=_positive_int(video.get("height")) if video is not None else None,
@@ -425,9 +482,7 @@ def _describe_candidate(
         video_codec=(
             str(video["vcodec"]) if video is not None and video.get("vcodec") is not None else None
         ),
-        audio_codec=(
-            str(audio["acodec"]) if audio is not None and audio.get("acodec") is not None else None
-        ),
+        audio_codec=(effective_audio_codec(audio) if audio is not None else None),
         dynamic_range=_dynamic_range(video),
         video_size_bytes=_component_size(video)[0] if video is not None else None,
         audio_size_bytes=_component_size(audio)[0] if audio is not None else None,
@@ -532,7 +587,7 @@ def _selection_score(
         (
             quality_index.get(str(item.get("format_id")), -1)
             for item in components
-            if item.get("acodec") not in {None, "none"}
+            if _is_audio(item)
         ),
         default=-1,
     )
@@ -551,7 +606,7 @@ def _is_hdr(item: Mapping[str, Any]) -> bool:
 
 def native_container_selector(container: OutputContainer) -> str:
     if container is OutputContainer.MP4:
-        return "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+        return "bv*[ext=mp4]+ba[ext=m4a]/bv*[ext=mp4]+ba[ext=mp4]/b[ext=mp4]"
     if container is OutputContainer.WEBM:
         return "bv*[ext=webm]+ba[ext=webm]/b[ext=webm]"
     return "ba/b"
@@ -573,9 +628,7 @@ def _components_match_container(
         str(item.get("vcodec") or "").casefold() for item in components if _is_video(item)
     }
     audio_codecs = {
-        str(item.get("acodec") or "").casefold()
-        for item in components
-        if item.get("acodec") not in {None, "none"}
+        str(effective_audio_codec(item) or "").casefold() for item in components if _is_audio(item)
     }
     if container is OutputContainer.MP4:
         return all(
@@ -600,9 +653,9 @@ def _component_matches_container(
 ) -> bool:
     ext = str(item.get("ext") or item.get("container") or "").casefold()
     video_codec = str(item.get("vcodec") or "").casefold()
-    audio_codec = str(item.get("acodec") or "").casefold()
+    audio_codec = str(effective_audio_codec(item) or "").casefold()
     has_video = video_codec not in {"", "none"}
-    has_audio = audio_codec not in {"", "none"}
+    has_audio = _is_audio(item)
     if not has_video and not has_audio:
         return False
     if container is OutputContainer.MP4:

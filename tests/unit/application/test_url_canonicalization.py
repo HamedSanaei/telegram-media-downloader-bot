@@ -103,3 +103,13 @@ def test_log_original_drops_unknown_credential_like_query_names() -> None:
     assert intent.log_fields["original_url"] == (
         f"https://www.youtube.com/watch?v={VIDEO_ID}&list=PL123"
     )
+
+
+def test_twitter_status_tracking_query_has_stable_identity() -> None:
+    plain = canonicalize_media_url("https://x.com/example/status/1951000000000000000")
+    shared = canonicalize_media_url(
+        "https://twitter.com/example/status/1951000000000000000?s=20&t=tracking"
+    )
+
+    assert plain.canonical_url == shared.canonical_url
+    assert plain.canonical_url == "https://x.com/example/status/1951000000000000000"

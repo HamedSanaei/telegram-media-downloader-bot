@@ -1,6 +1,6 @@
 # T005 - Inspection and format selection
 
-**Status:** complete (zero-transcode AV1/H.264 MP4 UI and Back navigation 2026-07-29)
+**Status:** complete (durable exact-stream Twitter HLS selection added 2026-08-01)
 
 Inspection runs as an ARQ worker job. Normalized metadata is stored in SQLite behind an opaque,
 owner-bound, expiring selection token. Versioned callback data contains only the token and a short
@@ -26,6 +26,10 @@ entry point; no role-specific format, callback, or job flow exists. Its persiste
 is sent separately from the editable inspection-status message. Worker publication falls back to a
 new tracked message if Telegram rejects editing an older status, and a deduplicated active job is
 reconciled with ARQ without creating another pending status message.
+Twitter/X HLS inspection recognizes only the extractor's explicit audio-only MP4 rendition shape
+when `acodec` is omitted, persists the exact video/audio IDs through job creation and ARQ recovery,
+and downloads that immutable pair with stream-copy remux. Planning failure is distinct from
+deleted/private media and retains the normalized source for diagnostics.
 
 ## Deliverables
 

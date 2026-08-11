@@ -1,13 +1,21 @@
 from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
+    CollectionTooLargeError,
     DeliveryError,
     DeliveryTooLargeError,
     DeliveryUncertainError,
+    GalleryDlCookiesExpiredError,
+    GalleryDlExtractionError,
+    GalleryDlOutputChangedError,
+    GalleryDlUnavailableError,
+    GalleryDlUnsupportedUrlError,
     GeoRestrictedError,
+    ImageValidationError,
     InvalidUrlError,
     JobCancelledError,
     MediaTooLargeError,
     MediaUnavailableError,
+    NativeFormatUnavailableError,
     PlaylistNotAllowedError,
     PostProcessingError,
     RateLimitedError,
@@ -17,6 +25,20 @@ from telegram_media_bot.domain.models import ErrorCategory
 
 
 def error_category(exc: BaseException) -> ErrorCategory:
+    if isinstance(exc, GalleryDlCookiesExpiredError):
+        return ErrorCategory.GALLERY_COOKIES_EXPIRED
+    if isinstance(exc, GalleryDlExtractionError):
+        return ErrorCategory.GALLERY_EXTRACTION
+    if isinstance(exc, CollectionTooLargeError):
+        return ErrorCategory.COLLECTION_TOO_LARGE
+    if isinstance(exc, ImageValidationError):
+        return ErrorCategory.INVALID_IMAGE
+    if isinstance(exc, GalleryDlOutputChangedError):
+        return ErrorCategory.GALLERY_OUTPUT_CHANGED
+    if isinstance(exc, GalleryDlUnavailableError):
+        return ErrorCategory.GALLERY_UNAVAILABLE
+    if isinstance(exc, GalleryDlUnsupportedUrlError):
+        return ErrorCategory.UNSUPPORTED_GALLERY_URL
     if isinstance(exc, AuthenticationRequiredError):
         return ErrorCategory.AUTHENTICATION
     if isinstance(exc, JobCancelledError):
@@ -29,6 +51,8 @@ def error_category(exc: BaseException) -> ErrorCategory:
         return ErrorCategory.GEO_RESTRICTED
     if isinstance(exc, InvalidUrlError):
         return ErrorCategory.INVALID_URL
+    if isinstance(exc, NativeFormatUnavailableError):
+        return ErrorCategory.FORMAT_UNAVAILABLE
     if isinstance(exc, MediaUnavailableError):
         return ErrorCategory.MEDIA_UNAVAILABLE
     if isinstance(exc, PlaylistNotAllowedError):

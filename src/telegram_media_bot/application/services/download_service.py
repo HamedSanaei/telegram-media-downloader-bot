@@ -74,6 +74,7 @@ class DownloadService:
         container: OutputContainer | None = None,
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
         native_video_codec: NativeVideoCodec | None = None,
+        selected_format_ids: tuple[str, ...] = (),
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
     ) -> DownloadResult:
@@ -87,6 +88,7 @@ class DownloadService:
             container=container,
             container_policy=normalize_container_policy(mode, container_policy),
             native_video_codec=native_video_codec,
+            selected_format_ids=selected_format_ids,
             allow_collection=info.source.casefold() == "instagram",
         )
         result = self._engine.download(
@@ -117,6 +119,8 @@ class DownloadService:
             raise UnsupportedSourceError(f"Source is disabled: {source}")
 
     def _validate_limits(self, info: MediaInfo) -> None:
+        if info.assets:
+            return
         if info.kind is MediaKind.PLAYLIST:
             if info.source.casefold() == "instagram":
                 if info.item_count is None or info.item_count > self._instagram_max_videos:

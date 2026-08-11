@@ -170,6 +170,17 @@ class FakeYoutubeInspectionService:
         )
 
 
+class FakeTwitterInspectionWithoutNativeFormats:
+    def inspect(self, url: str) -> MediaInfo:
+        return MediaInfo(
+            media_id="1951000000000000000",
+            title="Twitter video",
+            source="twitter",
+            kind=MediaKind.VIDEO,
+            webpage_url=url,
+        )
+
+
 class FakeInspectionBot:
     def __init__(self, *, fail_edit: bool) -> None:
         self.fail_edit = fail_edit
@@ -369,6 +380,12 @@ async def test_youtube_inspection_publishes_selection_for_admin_and_regular_user
         user_id=user_id,
         url=inspection.url,
     )
+    await process_inspection_job(
+        context,
+        chat_id=10,
+        user_id=user_id,
+        url=inspection.url,
+    )
 
     persisted = repository.get_job(inspection.job_id)
     assert persisted is not None and persisted.status is JobStatus.SUCCEEDED
@@ -430,6 +447,49 @@ async def test_existing_instagram_download_is_reenqueued_for_redis_recovery(
 
     assert queue.download is not None
     assert queue.download["job_id"] == existing.job_id
+
+
+async def test_twitter_native_planning_failure_has_distinct_category_and_source(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    configured = Settings.model_validate(raw)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    inspection, _ = JobService(repository).create_inspection(
+        chat_id=10,
+        user_id=99,
+        url="https://x.com/example/status/1951000000000000000?s=20",
+    )
+    repository.set_status_message(inspection.job_id, 30)
+    delivery = FakeDelivery()
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "download_service": FakeTwitterInspectionWithoutNativeFormats(),
+        "bot": FakeInspectionBot(fail_edit=False),
+        "delivery": delivery,
+        "metrics": MetricsRegistry(),
+        "job_id": str(inspection.job_id),
+        "job_try": 1,
+    }
+
+    await process_inspection_job(
+        context,
+        chat_id=10,
+        user_id=99,
+        url=inspection.url,
+    )
+
+    persisted = repository.get_job(inspection.job_id)
+    assert persisted is not None
+    assert persisted.status is JobStatus.FAILED
+    assert persisted.source == "twitter"
+    assert persisted.error_category is ErrorCategory.FORMAT_UNAVAILABLE
+    assert delivery.edits
 
 
 async def test_worker_honors_pre_start_cancellation(

@@ -21,13 +21,13 @@ worker process
 DownloadService (application)
     |
     v
-DownloadEngine port
-    |
-    v
-YtDlpEngine adapter
-    |
-    v
-yt-dlp + ffmpeg
+DownloadEngine port -> RoutedMediaEngine
+                       |              |
+                       v              v
+               GalleryDlEngine    YtDlpEngine
+                       |              |
+                       v              v
+              gallery-dl process  yt-dlp + ffmpeg
 ```
 
 SQLite/WAL under `/data/state` is the durable control plane shared by the bot and worker. Redis is
@@ -64,6 +64,17 @@ Raw yt-dlp info dictionaries, extractor objects, hooks, and exceptions remain in
 package. Selected format IDs are normalized into an immutable project tuple for deduplication,
 integrity validation, and structured logging; they never become callback data or user-facing raw
 choices. Telegram callbacks contain only a short opaque option digest.
+
+`MediaAsset` extends this contract with an ordered stable identity and safe normalized metadata.
+It deliberately has no download URL. Gallery inspection is an unstable vendor event protocol
+parsed entirely in `infrastructure/gallerydl/`; SQLite/Redis retain only the canonical post URL,
+semantic mode, stable asset IDs, and normalized metadata. The worker re-inspects the post before
+download so signed/expiring asset URLs are never durable.
+
+The router tries gallery-dl only for its supported social sources. An image-containing result makes
+it owner of the complete post; a typed no-images result selects yt-dlp. A malformed/bulk URL,
+authentication error, missing executable, rate limit, schema change, or unsafe output fails closed
+and is never disguised as video fallback.
 
 ## Processes
 

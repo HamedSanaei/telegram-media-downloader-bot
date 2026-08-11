@@ -31,13 +31,21 @@ from telegram_media_bot.application.services.url_canonicalization import canonic
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
+    CollectionTooLargeError,
     DeliveryError,
+    GalleryDlCookiesExpiredError,
+    GalleryDlExtractionError,
+    GalleryDlOutputChangedError,
+    GalleryDlUnavailableError,
+    GalleryDlUnsupportedUrlError,
+    ImageValidationError,
     JobCancelledError,
     MediaBotError,
     MediaTooLargeError,
     MediaUnavailableError,
     NativeFormatUnavailableError,
     PlaylistNotAllowedError,
+    RateLimitedError,
     TranscodeRejectedError,
 )
 from telegram_media_bot.domain.models import (
@@ -68,15 +76,24 @@ from telegram_media_bot.telegram.texts import (
     AUTH_REQUIRED_TEXT,
     CANCELLED_TEXT,
     COLLECTION_LIMIT_TEXT,
+    COLLECTION_TOO_LARGE_TEXT,
     DELIVERY_UNCERTAIN_TEXT,
     FAILED_TEXT,
+    GALLERY_COOKIES_EXPIRED_TEXT,
+    GALLERY_EXTRACTION_TEXT,
+    GALLERY_OUTPUT_CHANGED_TEXT,
+    GALLERY_UNAVAILABLE_TEXT,
+    INVALID_IMAGE_TEXT,
     MEDIA_TOO_LARGE_TEXT,
     MEDIA_UNAVAILABLE_TEXT,
     NATIVE_FORMAT_UNAVAILABLE_TEXT,
+    PROVIDER_RATE_LIMIT_TEXT,
     TRANSCODE_REJECTED_TEXT,
+    UNSUPPORTED_GALLERY_URL_TEXT,
 )
 from telegram_media_bot.telegram.ui import (
     container_keyboard,
+    media_bundle_keyboard,
     render_delivery_progress,
     render_media_info,
     render_progress,
@@ -117,8 +134,15 @@ async def process_inspection_job(
             raise JobCancelledError("Inspection was cancelled")
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
         info = await asyncio.to_thread(service.inspect, url)
+        await asyncio.to_thread(
+            repository.transition, job_id, JobStatus.RUNNING, source=info.source, attempt=attempt
+        )
         now = datetime.now(UTC)
-        if info.source.casefold() == "instagram" and settings.media.instagram.auto_download:
+        if (
+            info.source.casefold() == "instagram"
+            and not info.assets
+            and settings.media.instagram.auto_download
+        ):
             instagram_container, instagram_policy = _instagram_download_contract(settings)
             download, created = await asyncio.to_thread(
                 JobService(repository).create_download,
@@ -164,10 +188,56 @@ async def process_inspection_job(
                 download_created=created,
             )
             return str(job_id)
+        if info.assets:
+            allowed_modes = tuple(dict.fromkeys(option.mode for option in info.format_options))
+            if not allowed_modes:
+                raise NativeFormatUnavailableError(
+                    "No media-bundle delivery plan is available for this post"
+                )
+            selection = SelectionRecord(
+                token=SelectionToken(secrets.token_urlsafe(15)),
+                owner_user_id=user_id,
+                chat_id=chat_id,
+                media=info,
+                allowed_modes=allowed_modes,
+                created_at=now,
+                expires_at=now + timedelta(seconds=settings.persistence.selection_ttl_seconds),
+            )
+            await asyncio.to_thread(repository.save_selection, selection)
+            status_message_id = await _edit_or_send_inspection_message(
+                bot=bot,
+                chat_id=chat_id,
+                message_id=record.status_message_id,
+                text=render_media_info(info),
+                reply_markup=media_bundle_keyboard(selection),
+            )
+            await asyncio.to_thread(repository.set_status_message, job_id, status_message_id)
+            await asyncio.to_thread(
+                repository.transition, job_id, JobStatus.SUCCEEDED, source=info.source
+            )
+            metrics.record_job(outcome="inspection_succeeded", source=info.source)
+            await logger.ainfo(
+                "media_bundle_inspection_completed",
+                job_id=job_id,
+                source=info.source,
+                asset_count=len(info.assets),
+            )
+            return str(job_id)
         catalog = build_native_option_catalog(info)
-        allowed_modes = tuple(dict.fromkeys(option.mode for option in catalog.options))
+        artwork_modes = {
+            DownloadMode.YOUTUBE_THUMBNAIL,
+            DownloadMode.SOUNDCLOUD_ARTWORK,
+        }
+        allowed_modes = tuple(
+            dict.fromkeys(
+                [option.mode for option in catalog.options]
+                + [option.mode for option in info.format_options if option.mode in artwork_modes]
+            )
+        )
         if not allowed_modes:
-            raise MediaUnavailableError("No configured downloadable format is available")
+            raise NativeFormatUnavailableError(
+                "No native codec/container plan is available for the configured modes"
+            )
         for container in (OutputContainer.MP4, OutputContainer.WEBM, OutputContainer.MP3):
             visible = catalog.for_container(container)
             if not visible:
@@ -351,6 +421,7 @@ async def process_download_job(
     container: str | None = None,
     container_policy: str = ContainerPolicy.NATIVE_ONLY.value,
     native_video_codec: str | None = None,
+    selected_format_ids: list[str] | tuple[str, ...] | None = None,
 ) -> str:
     url = canonicalize_media_url(url).canonical_url
     settings = cast(Settings, ctx["settings"])
@@ -430,6 +501,7 @@ async def process_download_job(
         selected_native_video_codec = (
             NativeVideoCodec(native_video_codec) if native_video_codec else None
         )
+        selected_ids = tuple(selected_format_ids or record.selected_format_ids)
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
         reporter = asyncio.create_task(
             _report_progress(
@@ -445,6 +517,8 @@ async def process_download_job(
             "progress": progress_sink if record.status_message_id is not None else None,
             "is_cancelled": cancellation,
         }
+        if selected_ids:
+            common_download_arguments["selected_format_ids"] = selected_ids
         if selected_container is not None:
             common_download_arguments.update(
                 container=selected_container,
@@ -771,8 +845,20 @@ async def _handle_controlled_failure(
         _controlled_failure_text(exc),
     )
     await logger.awarning(
-        "job_controlled_failure", job_id=job_id, error_category=category.value, attempt=attempt
+        "job_controlled_failure",
+        job_id=job_id,
+        error_category=category.value,
+        error_type=type(exc).__name__,
+        error_reason=_controlled_failure_reason(exc),
+        source=record.source if record is not None else None,
+        attempt=attempt,
     )
+
+
+def _controlled_failure_reason(exc: MediaBotError) -> str:
+    if isinstance(exc, NativeFormatUnavailableError):
+        return "native_codec_container_unavailable"
+    return error_category(exc).value
 
 
 async def _report_progress(
@@ -844,6 +930,22 @@ async def _record_failed_usage(
 
 
 def _controlled_failure_text(exc: MediaBotError) -> str:
+    if isinstance(exc, GalleryDlCookiesExpiredError):
+        return GALLERY_COOKIES_EXPIRED_TEXT
+    if isinstance(exc, GalleryDlExtractionError):
+        return GALLERY_EXTRACTION_TEXT
+    if isinstance(exc, RateLimitedError):
+        return PROVIDER_RATE_LIMIT_TEXT
+    if isinstance(exc, CollectionTooLargeError):
+        return COLLECTION_TOO_LARGE_TEXT
+    if isinstance(exc, ImageValidationError):
+        return INVALID_IMAGE_TEXT
+    if isinstance(exc, GalleryDlOutputChangedError):
+        return GALLERY_OUTPUT_CHANGED_TEXT
+    if isinstance(exc, GalleryDlUnavailableError):
+        return GALLERY_UNAVAILABLE_TEXT
+    if isinstance(exc, GalleryDlUnsupportedUrlError):
+        return UNSUPPORTED_GALLERY_URL_TEXT
     if isinstance(exc, AuthenticationRequiredError):
         return AUTH_REQUIRED_TEXT
     if isinstance(exc, MediaTooLargeError):

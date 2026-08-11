@@ -8,11 +8,18 @@ from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 from time import monotonic
+from typing import Any
 
 import structlog
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
-from aiogram.types import FSInputFile, InputFile, Message
+from aiogram.types import (
+    FSInputFile,
+    InputFile,
+    InputMediaPhoto,
+    InputMediaVideo,
+    Message,
+)
 
 from telegram_media_bot.application.ports.delivery import (
     DeliveryGateway,
@@ -39,6 +46,10 @@ from telegram_media_bot.infrastructure.archive.multipart_zip import MultipartZip
 logger = structlog.get_logger(__name__)
 _UNSAFE_FILENAME = re.compile(r"[^\w.()\- ]+", flags=re.UNICODE)
 _WHITESPACE = re.compile(r"\s+")
+
+
+class _AlbumRejectedError(DeliveryError):
+    """Telegram rejected the album shape before accepting delivery."""
 
 
 class TelegramDeliveryGateway(DeliveryGateway):
@@ -129,6 +140,59 @@ class TelegramDeliveryGateway(DeliveryGateway):
         except TelegramAPIError as exc:
             raise DeliveryError("Telegram progress edit failed") from exc
 
+    async def deliver_album(
+        self,
+        *,
+        chat_id: int,
+        result: DownloadResult,
+        caption: str,
+        item_delivered: DeliveryItemSink | None = None,
+    ) -> DeliveryReceipt:
+        """Send one Telegram-compatible collection atomically as a media group."""
+        media: list[Any] = []
+        methods: list[DeliveryMethod] = []
+        for index, artifact in enumerate(result.artifacts):
+            filename = sanitize_filename(
+                artifact.title or result.title,
+                suffix=artifact.file_path.suffix,
+                max_length=self._settings.telegram.filename_max_length,
+            )
+            upload = FSInputFile(artifact.file_path, filename=filename)
+            item_caption = caption if index == 0 and caption else None
+            if artifact.kind is MediaKind.IMAGE and artifact.mime_type in {
+                "image/jpeg",
+                "image/png",
+                "image/webp",
+            }:
+                media.append(InputMediaPhoto(media=upload, caption=item_caption))
+                methods.append(DeliveryMethod.PHOTO)
+            elif artifact.kind is MediaKind.VIDEO and artifact.inline_video_streamable:
+                media.append(
+                    InputMediaVideo(media=upload, caption=item_caption, supports_streaming=True)
+                )
+                methods.append(DeliveryMethod.VIDEO)
+            else:
+                raise DeliveryError("Collection is not Telegram album compatible")
+        try:
+            messages = await self._bot.send_media_group(
+                chat_id=chat_id,
+                media=media,
+                request_timeout=self._settings.telegram.upload_timeout_seconds,
+            )
+        except TelegramBadRequest as exc:
+            raise _AlbumRejectedError("Telegram rejected album delivery") from exc
+        except TelegramAPIError as exc:
+            raise DeliveryError("Telegram album delivery failed") from exc
+        if len(messages) != len(methods):
+            raise DeliveryError("Telegram album response item count changed")
+        items: list[DeliveryItemReceipt] = []
+        for ordinal, (message, method) in enumerate(zip(messages, methods, strict=True), start=1):
+            item = replace(_receipt(message, method).primary, ordinal=ordinal)
+            items.append(item)
+            if item_delivered is not None:
+                await item_delivered(item)
+        return DeliveryReceipt(items=tuple(items))
+
     async def _send_tracked(
         self,
         method: DeliveryMethod,
@@ -205,6 +269,13 @@ class TelegramDeliveryGateway(DeliveryGateway):
                 supports_streaming=True,
                 request_timeout=request_timeout,
             )
+        if method is DeliveryMethod.PHOTO:
+            return await self._bot.send_photo(
+                chat_id=chat_id,
+                photo=upload,
+                caption=caption,
+                request_timeout=request_timeout,
+            )
         return await self._bot.send_document(
             chat_id=chat_id,
             document=upload,
@@ -214,13 +285,23 @@ class TelegramDeliveryGateway(DeliveryGateway):
 
     def _preferred_method(self, result: DownloadResult) -> DeliveryMethod:
         if (
-            (self._settings.telegram.upload_as_document and is_document_delivery_compatible(result))
+            (
+                self._settings.telegram.upload_as_document
+                and result.kind is MediaKind.VIDEO
+                and is_document_delivery_compatible(result)
+            )
             or result.kind is MediaKind.PLAYLIST
             or result.file_path.suffix.casefold() == ".webm"
         ):
             return DeliveryMethod.DOCUMENT
         if result.kind is MediaKind.AUDIO:
             return DeliveryMethod.AUDIO
+        if result.kind is MediaKind.IMAGE and result.mime_type in {
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+        }:
+            return DeliveryMethod.PHOTO
         if result.kind is MediaKind.VIDEO and result.inline_video_streamable:
             return DeliveryMethod.VIDEO
         return DeliveryMethod.DOCUMENT
@@ -301,6 +382,75 @@ class RoutedDeliveryGateway(DeliveryGateway):
         progress: DeliveryProgressSink | None,
         item_delivered: DeliveryItemSink | None,
     ) -> DeliveryReceipt:
+        direct_limit = self._settings.telegram.max_upload_size_mb * 1024 * 1024
+        album_limit = self._settings.gallery_dl.album_max_items
+        if (
+            len(result.artifacts) >= 2
+            and all(artifact.file_size_bytes <= direct_limit for artifact in result.artifacts)
+            and all(
+                (
+                    artifact.kind is MediaKind.IMAGE
+                    and artifact.mime_type
+                    in {
+                        "image/jpeg",
+                        "image/png",
+                        "image/webp",
+                    }
+                )
+                or (artifact.kind is MediaKind.VIDEO and artifact.inline_video_streamable)
+                for artifact in result.artifacts
+            )
+        ):
+            album_receipts: list[DeliveryItemReceipt] = []
+            start = 0
+            while start < len(result.artifacts):
+                end = min(start + album_limit, len(result.artifacts))
+                if len(result.artifacts) - end == 1:
+                    end -= 1
+                chunk = result.artifacts[start:end]
+                chunk_result = replace(
+                    result,
+                    artifacts=chunk,
+                    file_path=chunk[0].file_path,
+                    file_size_bytes=sum(item.file_size_bytes for item in chunk),
+                )
+
+                async def persist_album_item(
+                    item: DeliveryItemReceipt,
+                    *,
+                    offset: int = start,
+                ) -> None:
+                    if item_delivered is not None:
+                        await item_delivered(replace(item, ordinal=offset + item.ordinal))
+
+                try:
+                    chunk_receipt = await self._direct.deliver_album(
+                        chat_id=chat_id,
+                        result=chunk_result,
+                        caption=caption if start == 0 else "",
+                        item_delivered=persist_album_item,
+                    )
+                except _AlbumRejectedError:
+                    if start:
+                        raise
+                    await logger.awarning(
+                        "telegram_album_delivery_fallback",
+                        job_id=result.job_id,
+                        asset_count=len(result.artifacts),
+                    )
+                    break
+                album_receipts.extend(
+                    replace(item, ordinal=start + item.ordinal) for item in chunk_receipt.items
+                )
+                for artifact in chunk:
+                    await _delete_confirmed_delivery_file(
+                        artifact.file_path,
+                        job_id=result.job_id,
+                        cleanup_reason="album_delivered",
+                    )
+                start = end
+            if start == len(result.artifacts):
+                return DeliveryReceipt(items=tuple(album_receipts))
         receipts: list[DeliveryItemReceipt] = []
         completed_bytes = 0
         total_bytes = result.total_file_size_bytes
@@ -352,7 +502,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
             child_receipt = await self._deliver_one(
                 chat_id=chat_id,
                 result=child,
-                caption=f"{caption}\nویدئو {artifact_index} از {len(result.artifacts)}",
+                caption=f"{caption}\nرسانه {artifact_index} از {len(result.artifacts)}",  # noqa: RUF001
                 progress=map_progress,
                 item_delivered=persist_item,
             )
@@ -545,7 +695,9 @@ def sanitize_filename(title: str, *, suffix: str, max_length: int) -> str:
 
 
 def _receipt(message: Message, method: DeliveryMethod) -> DeliveryReceipt:
-    media = message.audio or message.video or message.document
+    media: Any = message.audio or message.video or message.document
+    if media is None and message.photo:
+        media = message.photo[-1]
     if media is None:
         raise DeliveryError("Telegram response did not contain an uploaded file")
     return DeliveryReceipt(

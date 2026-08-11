@@ -165,7 +165,17 @@ def _run_doctor(settings: Settings) -> None:
 
     engine_health = YtDlpEngine(settings).health()
     print(f"OK   {engine_health.name}: {engine_health.detail}")
-    failed = False
+    from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
+
+    gallery_health = GalleryDlEngine(settings).health()
+    state = "OK  " if gallery_health.healthy or not settings.gallery_dl.enabled else "FAIL"
+    print(f"{state} {gallery_health.name}: {gallery_health.detail}")
+    failed = settings.gallery_dl.enabled and not gallery_health.healthy
+    for source in sorted(settings.gallery_dl.enabled_platforms):
+        cookie = settings.gallery_dl.cookie_for(source, settings.yt_dlp.cookies_file)
+        readable = cookie is None or (cookie.is_file() and os.access(cookie, os.R_OK))
+        print(f"{'OK  ' if readable else 'FAIL'} gallery_dl_cookie_{source}")
+        failed = failed or not readable
     from telegram_media_bot.infrastructure.analytics.usage_chart_doctor import (
         check_usage_chart_runtime,
     )
@@ -222,6 +232,20 @@ async def _required_channels_ready(settings: Settings) -> bool:
 
 
 def _run_config_check(settings: Settings) -> None:
+    gallery_failures: list[str] = []
+    if settings.gallery_dl.enabled:
+        from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
+
+        if not GalleryDlEngine(settings).health().healthy:
+            gallery_failures.append("gallery_dl_runtime")
+        for source in sorted(settings.gallery_dl.enabled_platforms):
+            cookie = settings.gallery_dl.cookie_for(source, settings.yt_dlp.cookies_file)
+            if cookie is not None and not (cookie.is_file() and os.access(cookie, os.R_OK)):
+                gallery_failures.append(f"gallery_dl_cookie_{source}")
+    if gallery_failures:
+        raise ConfigurationError(
+            "Gallery-dl configuration checks failed: " + ", ".join(gallery_failures)
+        )
     local_api = settings.telegram.local_bot_api
     if not local_api.enabled:
         return

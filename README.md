@@ -1,8 +1,8 @@
 # Telegram Media Downloader Bot
 
-A production-oriented Telegram bot that inspects public media URLs through an isolated yt-dlp
-adapter, offers operator-configured semantic formats, downloads in an ARQ worker, delivers through a
-typed Telegram adapter, persists state, and cleans every job directory.
+A production-oriented Telegram bot that inspects public media URLs through isolated yt-dlp and
+gallery-dl adapters, offers semantic video/image/bundle formats, downloads in an ARQ worker,
+delivers through a typed Telegram adapter, persists state, and cleans every job directory.
 
 ## Architectural promise
 
@@ -11,12 +11,16 @@ upstream dictionaries, exceptions, format IDs, and hooks never cross that adapte
 do no media extraction or download work. The external plugin SDK is a separate distribution below
 `plugins/`, as required by yt-dlp's plugin namespace.
 
+Gallery-dl is pinned and invoked only as `python -m gallery_dl`; vendor JSON, stderr, CLI options,
+temporary CDN URLs, and subprocess objects remain inside `infrastructure/gallerydl/`.
+
 ## Runtime
 
 - Python 3.14.5 or a newer stable compatible release;
 - aiogram polling bot and separate ARQ worker;
 - Redis for queue/rate limiting and SQLite/WAL for durable job state;
 - ffmpeg/ffprobe and pinned Deno 2.9.3 for yt-dlp EJS;
+- gallery-dl 1.32.8 for bounded single-post images and mixed-media bundles;
 - Pillow with a package-bundled Noto Sans font for deterministic in-memory administrator charts;
 - Docker Compose startup after one ignored local YAML configuration is created.
 
@@ -56,6 +60,12 @@ The ordinary-video flow is: URL -> queued inspection -> MP4/WebM -> semantic qua
 download -> throttled progress/cancel -> audio/video/document delivery -> cleanup. Instagram video
 posts, Reels, Stories, Highlights, and multi-video collections automatically use best MP4 and
 deliver videos separately.
+
+Instagram, TikTok, Twitter/X, and Pinterest single-post URLs are first inspected by gallery-dl. If
+the normalized post contains an image, gallery-dl owns the complete ordered post, including any
+companion video. Video-only posts fall back to yt-dlp. Profiles, boards, timelines, searches,
+hashtags, likes, bookmarks, and other bulk endpoints are rejected. YouTube thumbnails and
+SoundCloud artwork stay on the yt-dlp path.
 
 ## Development and release gates
 

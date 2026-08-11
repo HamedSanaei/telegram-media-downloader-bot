@@ -85,6 +85,10 @@ jobs:
           image="${IMAGE_NAME}:${GITHUB_REF_NAME}"
           docker pull "$image"
           docker run --rm "$image" telegram-media-bot --help
+          docker run --rm "$image" sh -c \
+            'test "$(python -m gallery_dl --config-ignore --version)" = "1.32.8"'
+          docker run --rm "$image" \
+            python -m telegram_media_bot.infrastructure.gallerydl.smoke
           docker run --rm "$image" \
             python -m telegram_media_bot.infrastructure.ytdlp.native_selection_smoke
           docker run --rm "$image" \
@@ -93,6 +97,9 @@ jobs:
             set -eu
             command -v ffmpeg
             command -v ffprobe
+            test "$(id -u)" = 10001
+            test -w /data/downloads
+            python -c "from importlib.resources import files; root=files(\"telegram_media_bot.assets.licenses\"); notice=root.joinpath(\"THIRD_PARTY_NOTICES.md\").read_text(); assert all(x in notice for x in (\"gallery-dl\", \"1.32.8\", \"GPL-2.0\")); assert \"GNU GENERAL PUBLIC LICENSE\" in root.joinpath(\"gallery-dl-GPL-2.0.txt\").read_text()"
             seven_zip="$(command -v 7zz || command -v 7z)"
             dd if=/dev/zero of=/tmp/source.bin bs=1M count=3
             "$seven_zip" a -tzip -mx=0 -v1m /tmp/smoke.zip /tmp/source.bin
@@ -100,8 +107,12 @@ jobs:
             test -s /tmp/smoke.zip.002
             "$seven_zip" t /tmp/smoke.zip.001
           '
+          mkdir -p runtime-smoke
+          touch runtime-smoke/cookies.txt
+          chmod 0644 runtime-smoke/cookies.txt
           docker run --rm \
             -v "${PWD}/config.example.yaml:/app/config.example.yaml:ro" \
+            -v "${PWD}/runtime-smoke/cookies.txt:/data/cookies/cookies.txt:ro" \
             "$image" telegram-media-bot doctor --config /app/config.example.yaml
           docker run --rm --network none --read-only \
             --tmpfs /tmp:rw,noexec,nosuid,size=64m \

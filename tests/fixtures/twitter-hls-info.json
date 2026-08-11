@@ -1,0 +1,47 @@
+{
+  "id": "1951000000000000000",
+  "title": "Twitter HLS fixture",
+  "extractor_key": "Twitter",
+  "webpage_url": "https://x.com/example/status/1951000000000000000",
+  "duration": 20,
+  "formats": [
+    {
+      "format_id": "hls-audio-128000-Audio",
+      "ext": "mp4",
+      "protocol": "m3u8_native",
+      "vcodec": "none",
+      "acodec": null,
+      "video_ext": "none",
+      "audio_ext": "mp4",
+      "resolution": "audio only",
+      "abr": 128,
+      "filesize_approx": 320000
+    },
+    {
+      "format_id": "hls-774",
+      "ext": "mp4",
+      "protocol": "m3u8_native",
+      "vcodec": "avc1.4d401f",
+      "acodec": "none",
+      "video_ext": "mp4",
+      "audio_ext": "none",
+      "width": 480,
+      "height": 852,
+      "tbr": 774,
+      "filesize_approx": 1935000
+    },
+    {
+      "format_id": "hls-1672",
+      "ext": "mp4",
+      "protocol": "m3u8_native",
+      "vcodec": "avc1.640028",
+      "acodec": "none",
+      "video_ext": "mp4",
+      "audio_ext": "none",
+      "width": 720,
+      "height": 1280,
+      "tbr": 1672,
+      "filesize_approx": 4180000
+    }
+  ]
+}

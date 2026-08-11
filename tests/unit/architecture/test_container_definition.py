@@ -173,6 +173,9 @@ def test_ci_builds_and_smoke_tests_runtime_with_shared_buildkit_cache() -> None:
     )
     assert any("native_selection_smoke" in run for run in runs)
     assert any("native_ui_smoke" in run for run in runs)
+    assert any("gallery_dl --config-ignore --version" in run for run in runs)
+    assert any("infrastructure.gallerydl.smoke" in run for run in runs)
+    assert any("gallery-dl-GPL-2.0.txt" in run for run in runs)
     assert any("command -v ffmpeg" in run for run in runs)
     assert any("command -v ffprobe" in run for run in runs)
     assert any("command -v 7zz || command -v 7z" in run for run in runs)
@@ -220,10 +223,10 @@ def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
             tags.append(f"{image}:latest")
         return tags
 
-    assert expected_tags("v1.0.11") == [
-        f"{image}:v1.0.11",
-        f"{image}:1.0.11",
-        f"{image}:1.0",
+    assert expected_tags("v1.1.0") == [
+        f"{image}:v1.1.0",
+        f"{image}:1.1.0",
+        f"{image}:1.1",
         f"{image}:latest",
     ]
     assert f"{image}:latest" not in expected_tags("v1.1.0-beta.1")
@@ -241,9 +244,9 @@ def test_release_tag_exactly_matches_project_version() -> None:
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.0.11"
+    assert version == "1.1.0"
     assert __version__ == version
-    assert tag == "v1.0.11"
+    assert tag == "v1.1.0"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
     assert 'if tag != f"v{version}":' in workflow
 
@@ -256,6 +259,9 @@ def test_release_waits_for_published_image_smoke_test_and_attaches_verified_asse
     assert 'docker run --rm "$image" telegram-media-bot --help' in workflow
     assert "native_selection_smoke" in workflow
     assert "native_ui_smoke" in workflow
+    assert "gallery_dl --config-ignore --version" in workflow
+    assert "infrastructure.gallerydl.smoke" in workflow
+    assert "gallery-dl-GPL-2.0.txt" in workflow
     assert "command -v ffmpeg" in workflow
     assert "command -v ffprobe" in workflow
     assert "command -v 7zz || command -v 7z" in workflow

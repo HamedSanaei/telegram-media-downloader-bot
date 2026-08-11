@@ -77,6 +77,18 @@ def test_audio_mp3_adds_audio_postprocessor(settings: Settings, tmp_path: Path) 
     assert options["postprocessors"][0]["key"] == "FFmpegExtractAudio"
 
 
+@pytest.mark.parametrize("mode", [DownloadMode.YOUTUBE_THUMBNAIL, DownloadMode.SOUNDCLOUD_ARTWORK])
+def test_artwork_mode_writes_only_highest_thumbnail(
+    settings: Settings, tmp_path: Path, mode: DownloadMode
+) -> None:
+    options = YtDlpOptionsFactory(settings).download_options(make_request(tmp_path, mode))
+
+    assert options["skip_download"] is True
+    assert options["writethumbnail"] is True
+    assert options["write_all_thumbnails"] is False
+    assert options["postprocessors"] == []
+
+
 def test_optional_proxy_cookie_and_user_agent_are_applied(
     settings: Settings, tmp_path: Path
 ) -> None:
@@ -124,7 +136,7 @@ def test_guaranteed_container_uses_only_native_compatible_selector(
     options = YtDlpOptionsFactory(settings).download_options(request)
 
     assert options["format"] == (
-        "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+        "bv*[ext=mp4]+ba[ext=m4a]/bv*[ext=mp4]+ba[ext=mp4]/b[ext=mp4]"
         if container is OutputContainer.MP4
         else "bv*[ext=webm]+ba[ext=webm]/b[ext=webm]"
     )
@@ -153,7 +165,7 @@ def test_best_original_normalizes_guaranteed_policy_to_native_only(
     options = YtDlpOptionsFactory(settings).download_options(request)
 
     assert request.container_policy is ContainerPolicy.NATIVE_ONLY
-    assert options["format"] == "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+    assert options["format"] == ("bv*[ext=mp4]+ba[ext=m4a]/bv*[ext=mp4]+ba[ext=mp4]/b[ext=mp4]")
     assert settings.media.formats.best_original not in options["format"]
 
 

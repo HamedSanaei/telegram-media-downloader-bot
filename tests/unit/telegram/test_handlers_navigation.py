@@ -256,6 +256,7 @@ async def test_native_option_is_revalidated_before_enqueue(
                     container=kwargs["container"],  # type: ignore[arg-type]
                     container_policy=kwargs["container_policy"],  # type: ignore[arg-type]
                     native_video_codec=kwargs["native_video_codec"],  # type: ignore[arg-type]
+                    selected_format_ids=kwargs["selected_format_ids"],  # type: ignore[arg-type]
                     idempotency_key="key",
                     created_at=now,
                     updated_at=now,
@@ -282,6 +283,7 @@ async def test_native_option_is_revalidated_before_enqueue(
     assert queue.kwargs["container"] is OutputContainer.MP4
     assert queue.kwargs["container_policy"] is ContainerPolicy.GUARANTEED
     assert queue.kwargs["native_video_codec"] is NativeVideoCodec.AV1
+    assert queue.kwargs["selected_format_ids"] == option.selected_format_ids
 
 
 def _callback_handler(router: object, name: str) -> Any:

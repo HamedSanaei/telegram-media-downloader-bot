@@ -1,5 +1,11 @@
 # Docker installation and `tmb` management
 
+The v1.1 runtime image installs the exact locked `gallery-dl==1.32.8` package and preserves its
+GPL-2.0 notice. Upgrading from v1.0.x does not rewrite `config.yaml`, `.env`, SQLite/WAL, Redis,
+cookies, downloads, backups, or Telegram Local Bot API state. A null `gallery_dl.cookies.instagram`
+automatically reuses the deployed `yt_dlp.cookies_file`; other sources use their own optional
+read-only cookie paths.
+
 ## Linux
 
 Supported installer targets are Ubuntu 22.04+ and Debian 12+. Other distributions work when Docker

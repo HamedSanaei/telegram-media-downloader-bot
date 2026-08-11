@@ -157,6 +157,31 @@ yt_dlp:
   user_agent: null
   javascript_runtime: deno
 
+gallery_dl:
+  enabled: true
+  timeout_seconds: 600
+  max_assets_per_job: 30
+  max_total_size_mb: 1024
+  max_concurrent_processes: 2
+  sleep_request_seconds: 1
+  enabled_platforms:
+    - instagram
+    - tiktok
+    - twitter
+    - pinterest
+  cookies:
+    # null preserves backward compatibility by reusing yt_dlp.cookies_file for Instagram only.
+    instagram: null
+    tiktok: null
+    twitter: null
+    pinterest: null
+  images:
+    max_width: 20000
+    max_height: 20000
+    max_pixels: 100000000
+  album_max_items: 10
+  zip_threshold: 11
+
 security:
   allowed_user_ids: []
   blocked_user_ids: []

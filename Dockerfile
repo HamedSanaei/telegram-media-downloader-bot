@@ -54,6 +54,8 @@ COPY --from=telegram-bot-api-build \
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
+COPY docs/THIRD_PARTY_NOTICES.md ./docs/THIRD_PARTY_NOTICES.md
+COPY docs/licenses ./docs/licenses
 COPY plugins ./plugins
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable

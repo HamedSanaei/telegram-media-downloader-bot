@@ -32,11 +32,13 @@ from telegram_media_bot.domain.models import (
     MediaFormatOption,
     MediaInfo,
     MediaKind,
+    MediaProcessingKind,
     NativeVideoCodec,
     OutputContainer,
     ProgressEvent,
     SizeConfidence,
 )
+from telegram_media_bot.infrastructure.image_validation import validate_image
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
 from telegram_media_bot.infrastructure.ytdlp.error_mapper import map_ytdlp_error
 from telegram_media_bot.infrastructure.ytdlp.mapper import (
@@ -47,6 +49,7 @@ from telegram_media_bot.infrastructure.ytdlp.mapper import (
 from telegram_media_bot.infrastructure.ytdlp.options import (
     YtDlpOptionsFactory,
     bounded_format_selector,
+    effective_audio_codec,
     final_media_files,
     inspect_format_option,
     native_container_selector,
@@ -98,10 +101,28 @@ class YtDlpEngine:
         except Exception as exc:
             raise map_ytdlp_error(exc) from exc
         mapped = map_media_info(info, original_url=intent.canonical_url)
+        artwork_options = list(format_options)
+        if mapped.thumbnail_url is not None and mapped.source == "youtube":
+            artwork_options.append(
+                MediaFormatOption(
+                    mode=DownloadMode.YOUTUBE_THUMBNAIL,
+                    selected_format_ids=("highest-quality-thumbnail",),
+                )
+            )
+        if mapped.thumbnail_url is not None and mapped.source == "soundcloud":
+            artwork_options.append(
+                MediaFormatOption(
+                    mode=DownloadMode.SOUNDCLOUD_ARTWORK,
+                    selected_format_ids=("highest-quality-artwork",),
+                )
+            )
         return replace(
             mapped,
             webpage_url=intent.canonical_url if intent.single_video_forced else mapped.webpage_url,
-            format_options=format_options,
+            format_options=tuple(artwork_options),
+            thumbnail_url=(
+                None if mapped.source in {"youtube", "soundcloud"} else mapped.thumbnail_url
+            ),
         )
 
     def download(
@@ -189,7 +210,14 @@ class YtDlpEngine:
             files = final_media_files(job_dir)
             if not files:
                 raise DownloadFailedError("yt-dlp completed without a final output file")
-            detected_kind = detect_kind(info)
+            artwork_mode = request.mode in {
+                DownloadMode.YOUTUBE_THUMBNAIL,
+                DownloadMode.SOUNDCLOUD_ARTWORK,
+            }
+            detected_kind = MediaKind.IMAGE if artwork_mode else detect_kind(info)
+            if artwork_mode:
+                for path in files:
+                    validate_image(path, self._settings.gallery_dl.images)
             if request.allow_collection or detected_kind is not MediaKind.IMAGE:
                 non_images = [
                     path
@@ -364,7 +392,13 @@ class YtDlpEngine:
                 media_id=str(info.get("id") or final_file.stem),
                 title=str(info.get("title") or "Untitled"),
                 source=source,
-                kind=MediaKind.PLAYLIST if len(files) > 1 else detect_kind(info),
+                kind=(
+                    MediaKind.IMAGE
+                    if artwork_mode
+                    else MediaKind.PLAYLIST
+                    if len(files) > 1
+                    else detect_kind(info)
+                ),
                 file_path=final_file,
                 file_size_bytes=size,
                 duration_seconds=map_media_info(info, original_url=request.url).duration_seconds,
@@ -413,6 +447,17 @@ class YtDlpEngine:
             mp3_bitrate = 192
         options: list[MediaFormatOption] = []
         for mode in self._settings.media.enabled_modes:
+            if mode in {
+                DownloadMode.IMAGE_ORIGINAL,
+                DownloadMode.IMAGES_ORIGINAL,
+                DownloadMode.ALL_ORIGINAL_MEDIA,
+                DownloadMode.IMAGES_ONLY,
+                DownloadMode.VIDEOS_ONLY,
+                DownloadMode.IMAGES_ZIP,
+                DownloadMode.YOUTUBE_THUMBNAIL,
+                DownloadMode.SOUNDCLOUD_ARTWORK,
+            }:
+                continue
             if mode is DownloadMode.AUDIO_BEST:
                 continue
             if mode is DownloadMode.AUDIO_MP3:
@@ -480,7 +525,57 @@ class YtDlpEngine:
                     )
                     if explicit is not None:
                         options.append(explicit)
-        return tuple(options)
+        planned = tuple(options)
+        raw_formats = [
+            item
+            for context in contexts
+            for item in context.get("formats", [])
+            if isinstance(item, dict)
+        ]
+        logger.info(
+            "inspection_format_planning",
+            source=normalize_source(raw),
+            media_kind=detect_kind(raw).value,
+            extractor=str(raw.get("extractor_key") or raw.get("extractor") or "unknown")[:80],
+            raw_format_count=len(raw_formats),
+            format_option_count=len(planned),
+            configured_modes=[mode.value for mode in self._settings.media.enabled_modes],
+            planned_modes=list(dict.fromkeys(option.mode.value for option in planned)),
+            selected_format_ids=list(
+                dict.fromkeys(
+                    format_id for option in planned for format_id in option.selected_format_ids
+                )
+            ),
+            protocols=sorted(
+                {
+                    str(item.get("protocol"))
+                    for item in raw_formats
+                    if item.get("protocol") is not None
+                }
+            ),
+            extensions=sorted(
+                {str(item.get("ext")) for item in raw_formats if item.get("ext") is not None}
+            ),
+            video_codecs=sorted(
+                {
+                    str(item.get("vcodec"))
+                    for item in raw_formats
+                    if item.get("vcodec") not in {None, "none"}
+                }
+            ),
+            audio_codecs=sorted(
+                {
+                    str(effective_audio_codec(item))
+                    for item in raw_formats
+                    if effective_audio_codec(item) is not None
+                }
+            ),
+            container_policies=list(
+                dict.fromkeys(option.container_policy.value for option in planned)
+            ),
+            rejection_reasons=(["native_codec_container_unavailable"] if not planned else []),
+        )
+        return planned
 
     def _inspect_mode(
         self,
@@ -545,6 +640,13 @@ class YtDlpEngine:
             container=options[0].container,
             container_policy=options[0].container_policy,
             requires_transcode=any(item.requires_transcode for item in options),
+            processing_kind=(
+                MediaProcessingKind.TRANSCODE
+                if any(item.processing_kind is MediaProcessingKind.TRANSCODE for item in options)
+                else MediaProcessingKind.REMUX
+                if any(item.processing_kind is MediaProcessingKind.REMUX for item in options)
+                else MediaProcessingKind.DIRECT
+            ),
             width=min(widths) if len(widths) == len(options) else None,
             height=min(heights) if len(heights) == len(options) else None,
             fps=min(frame_rates) if len(frame_rates) == len(options) else None,

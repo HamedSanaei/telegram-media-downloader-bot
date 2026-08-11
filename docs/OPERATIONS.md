@@ -109,6 +109,48 @@ failing means the package/image is incomplete or corrupt. Verify that the deploy
 
 ## Controlled yt-dlp update
 
+## Controlled gallery-dl update
+
+Gallery-dl never self-updates in a running bot or image. For each reviewed upgrade:
+
+```bash
+# 1. change only the exact gallery-dl version in pyproject.toml
+uv lock
+uv run pytest tests/unit/infrastructure/gallerydl
+uv run python scripts/check_gallerydl_fixtures.py --check-installed-version
+docker build -t telegram-media-downloader-bot:gallery-dl-canary .
+```
+
+Review the upstream changelog for extractor/event/output changes, inspect the lock diff for only
+the intended package graph change, run all application gates and Docker smokes, then publish only
+through the normal application release. The deterministic suite uses sanitized 1.32.8 fixtures;
+live social contract URLs are opt-in and must contain no private account or committed secret.
+
+The gallery-dl live contracts are independently opt-in. Point them at a local, untracked
+configuration file and operator-maintained public single-item URLs:
+
+```powershell
+$env:RUN_GALLERYDL_CONTRACT_TESTS = "1"
+$env:GALLERYDL_CONTRACT_CONFIG = "C:\secure\telegram-media-bot\config.yaml"
+$env:CONTRACT_GALLERYDL_INSTAGRAM_URL = "https://www.instagram.com/p/<public-id>/"
+$env:CONTRACT_GALLERYDL_TIKTOK_URL = "https://www.tiktok.com/@user/video/<public-id>"
+$env:CONTRACT_GALLERYDL_TWITTER_URL = "https://x.com/user/status/<public-id>"
+$env:CONTRACT_GALLERYDL_PINTEREST_URL = "https://www.pinterest.com/pin/<public-id>/"
+uv run pytest tests/contracts/test_gallerydl_contract.py -m contract
+```
+
+Unset variables are skipped deliberately; deterministic CI uses the sanitized 1.32.8 fixtures and
+never contacts social websites. Do not commit contract URLs, cookies, or the contract config.
+
+For diagnosis, run `tmb config-check`, `tmb doctor`, and the fixture command above. Authentication,
+expired cookies, rate limits, provider unavailability, vendor schema changes, invalid images, and
+collection limits are separate stable categories. Logs never include cookies, signed URLs, raw
+JSON, or full commands. Rollback means restoring both the previous exact dependency and `uv.lock`,
+then rebuilding the previous application image; persistent config, SQLite/WAL, Redis, cookies,
+downloads, and Local API state remain mounted and untouched.
+
+## Controlled yt-dlp update
+
 ```bash
 git switch -c chore/update-ytdlp
 ./manage.sh upgrade-ytdlp

@@ -31,9 +31,11 @@ from telegram_media_bot.domain.models import (
     JobRecord,
     JobRecoveryRecord,
     JobStatus,
+    MediaAsset,
     MediaFormatOption,
     MediaInfo,
     MediaKind,
+    MediaProcessingKind,
     NativeVideoCodec,
     OutputContainer,
     RecoveryDecision,
@@ -103,6 +105,7 @@ class SqliteJobRepository(JobRepository):
                     container TEXT,
                     container_policy TEXT NOT NULL DEFAULT 'native_only',
                     native_video_codec TEXT,
+                    selected_format_ids_json TEXT NOT NULL DEFAULT '[]',
                     idempotency_key TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -192,6 +195,12 @@ class SqliteJobRepository(JobRepository):
                 "TEXT NOT NULL DEFAULT 'native_only'",
             )
             _ensure_column(connection, "jobs", "native_video_codec", "TEXT")
+            _ensure_column(
+                connection,
+                "jobs",
+                "selected_format_ids_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
 
     def healthy(self) -> bool:
         try:
@@ -219,6 +228,7 @@ class SqliteJobRepository(JobRepository):
                     "container": option.container.value if option.container else None,
                     "container_policy": option.container_policy.value,
                     "requires_transcode": option.requires_transcode,
+                    "processing_kind": option.processing_kind.value,
                     "width": option.width,
                     "height": option.height,
                     "fps": option.fps,
@@ -236,6 +246,23 @@ class SqliteJobRepository(JobRepository):
                     "quality_score": option.quality_score,
                 }
                 for option in selection.media.format_options
+            ],
+            "assets": [
+                {
+                    "index": asset.index,
+                    "asset_id": asset.asset_id,
+                    "kind": asset.kind.value,
+                    "extension": asset.extension,
+                    "mime_type": asset.mime_type,
+                    "source_post_id": asset.source_post_id,
+                    "provider": asset.provider,
+                    "width": asset.width,
+                    "height": asset.height,
+                    "duration_seconds": asset.duration_seconds,
+                    "size_bytes": asset.size_bytes,
+                    "title": asset.title,
+                }
+                for asset in selection.media.assets
             ],
         }
         with self._connect() as connection:
@@ -290,11 +317,11 @@ class SqliteJobRepository(JobRepository):
                 """
                 INSERT INTO jobs (
                     job_id, kind, status, chat_id, user_id, url, mode, container,
-                    container_policy, native_video_codec, idempotency_key,
+                    container_policy, native_video_codec, selected_format_ids_json, idempotency_key,
                     created_at, updated_at, status_message_id, source, error_category,
                     error_summary, cancel_requested, delivery_file_id,
                     delivery_file_unique_id, attempt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _job_values(record),
             )
@@ -898,6 +925,9 @@ def _selection_from_row(row: sqlite3.Row) -> SelectionRecord:
                     str(item.get("container_policy", ContainerPolicy.NATIVE_ONLY.value))
                 ),
                 requires_transcode=bool(item.get("requires_transcode", False)),
+                processing_kind=MediaProcessingKind(
+                    str(item.get("processing_kind", MediaProcessingKind.DIRECT.value))
+                ),
                 width=int(item["width"]) if item.get("width") is not None else None,
                 height=int(item["height"]) if item.get("height") is not None else None,
                 fps=float(item["fps"]) if item.get("fps") is not None else None,
@@ -947,6 +977,30 @@ def _selection_from_row(row: sqlite3.Row) -> SelectionRecord:
             for item in raw.get("format_options", [])
             if isinstance(item, dict) and item.get("mode") is not None
         ),
+        assets=tuple(
+            MediaAsset(
+                index=int(item["index"]),
+                asset_id=str(item["asset_id"]),
+                kind=MediaKind(str(item["kind"])),
+                extension=str(item["extension"]),
+                mime_type=str(item["mime_type"]) if item.get("mime_type") else None,
+                source_post_id=str(item["source_post_id"]),
+                provider=str(item["provider"]),
+                width=int(item["width"]) if item.get("width") is not None else None,
+                height=int(item["height"]) if item.get("height") is not None else None,
+                duration_seconds=(
+                    int(item["duration_seconds"])
+                    if item.get("duration_seconds") is not None
+                    else None
+                ),
+                size_bytes=(
+                    int(item["size_bytes"]) if item.get("size_bytes") is not None else None
+                ),
+                title=str(item["title"]) if item.get("title") else None,
+            )
+            for item in raw.get("assets", [])
+            if isinstance(item, dict)
+        ),
     )
     return SelectionRecord(
         token=SelectionToken(str(row["token"])),
@@ -982,6 +1036,9 @@ def _job_from_row(row: sqlite3.Row) -> JobRecord:
         native_video_codec=(
             NativeVideoCodec(str(row["native_video_codec"])) if row["native_video_codec"] else None
         ),
+        selected_format_ids=tuple(
+            str(value) for value in json.loads(str(row["selected_format_ids_json"] or "[]"))
+        ),
         status_message_id=(int(row["status_message_id"]) if row["status_message_id"] else None),
         source=str(row["source"]) if row["source"] else None,
         error_category=(
@@ -1009,6 +1066,7 @@ def _job_values(record: JobRecord) -> tuple[Any, ...]:
         record.container.value if record.container else None,
         record.container_policy.value,
         record.native_video_codec.value if record.native_video_codec else None,
+        json.dumps(record.selected_format_ids),
         record.idempotency_key,
         _dump_datetime(record.created_at),
         _dump_datetime(record.updated_at),

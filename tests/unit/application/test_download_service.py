@@ -80,6 +80,22 @@ def test_rejects_non_http_url() -> None:
         service.inspect("file:///etc/passwd")
 
 
+def test_exact_inspection_format_pair_reaches_download_engine(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    service = DownloadService(engine, frozenset({"example"}))
+    selected = ("hls-1672", "hls-audio-128000-Audio")
+
+    service.download(
+        job_id=JobId("twitter-pair"),
+        url="https://example.com/media",
+        mode=DownloadMode.BEST,
+        output_directory=tmp_path / "twitter-pair",
+        selected_format_ids=selected,
+    )
+
+    assert engine.download_requests[0].selected_format_ids == selected
+
+
 def test_rejects_url_credentials() -> None:
     with pytest.raises(InvalidUrlError):
         DownloadService.validate_url(

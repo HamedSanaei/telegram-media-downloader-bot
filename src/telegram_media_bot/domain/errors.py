@@ -119,3 +119,47 @@ class PersistenceError(MediaBotError):
 
 class UsageChartFontError(MediaBotError):
     """The bundled usage-chart font is missing, invalid, or incomplete."""
+
+
+class GalleryDlUnavailableError(MediaBotError):
+    """The isolated gallery-dl executable is missing or unusable."""
+
+
+class GalleryDlUnsupportedUrlError(MediaBotError):
+    pass
+
+
+class GalleryDlAuthenticationRequiredError(AuthenticationRequiredError):
+    pass
+
+
+class GalleryDlCookiesExpiredError(AuthenticationRequiredError):
+    """Configured source cookies were rejected or have expired."""
+
+
+class GalleryDlRateLimitedError(RateLimitedError):
+    pass
+
+
+class GalleryDlExtractionError(DownloadFailedError):
+    pass
+
+
+class GalleryDlOutputChangedError(MediaBotError):
+    pass
+
+
+class GalleryDlNoImagesError(GalleryDlUnsupportedUrlError):
+    """Inspection succeeded but the single post has no image assets."""
+
+
+class ImageValidationError(MediaBotError):
+    pass
+
+
+class CollectionTooLargeError(MediaTooLargeError):
+    pass
+
+
+class ImageFormatUnsupportedError(ImageValidationError):
+    pass

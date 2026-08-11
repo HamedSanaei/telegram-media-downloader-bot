@@ -58,7 +58,15 @@
         "video_720",
         "video_480",
         "audio_best",
-        "audio_mp3"
+        "audio_mp3",
+        "image_original",
+        "images_original",
+        "all_original_media",
+        "images_only",
+        "videos_only",
+        "images_zip",
+        "youtube_thumbnail",
+        "soundcloud_artwork"
       ],
       "title": "DownloadMode",
       "type": "string"
@@ -115,6 +123,174 @@
         "audio_mp3"
       ],
       "title": "FormatSection",
+      "type": "object"
+    },
+    "GalleryDlCookiesSection": {
+      "additionalProperties": false,
+      "properties": {
+        "instagram": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instagram"
+        },
+        "tiktok": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tiktok"
+        },
+        "twitter": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Twitter"
+        },
+        "pinterest": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pinterest"
+        }
+      },
+      "title": "GalleryDlCookiesSection",
+      "type": "object"
+    },
+    "GalleryDlSection": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "timeout_seconds": {
+          "default": 600,
+          "maximum": 86400,
+          "minimum": 10,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "max_assets_per_job": {
+          "default": 30,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Assets Per Job",
+          "type": "integer"
+        },
+        "max_total_size_mb": {
+          "default": 1024,
+          "maximum": 8192,
+          "minimum": 1,
+          "title": "Max Total Size Mb",
+          "type": "integer"
+        },
+        "max_concurrent_processes": {
+          "default": 2,
+          "maximum": 16,
+          "minimum": 1,
+          "title": "Max Concurrent Processes",
+          "type": "integer"
+        },
+        "sleep_request_seconds": {
+          "default": 1.0,
+          "maximum": 60,
+          "minimum": 0,
+          "title": "Sleep Request Seconds",
+          "type": "number"
+        },
+        "enabled_platforms": {
+          "default": [
+            "instagram",
+            "pinterest",
+            "tiktok",
+            "twitter"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "title": "Enabled Platforms",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "cookies": {
+          "$ref": "#/$defs/GalleryDlCookiesSection"
+        },
+        "images": {
+          "$ref": "#/$defs/ImageValidationSection"
+        },
+        "album_max_items": {
+          "default": 10,
+          "maximum": 10,
+          "minimum": 2,
+          "title": "Album Max Items",
+          "type": "integer"
+        },
+        "zip_threshold": {
+          "default": 11,
+          "maximum": 100,
+          "minimum": 2,
+          "title": "Zip Threshold",
+          "type": "integer"
+        }
+      },
+      "title": "GalleryDlSection",
+      "type": "object"
+    },
+    "ImageValidationSection": {
+      "additionalProperties": false,
+      "properties": {
+        "max_width": {
+          "default": 20000,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Max Width",
+          "type": "integer"
+        },
+        "max_height": {
+          "default": 20000,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Max Height",
+          "type": "integer"
+        },
+        "max_pixels": {
+          "default": 100000000,
+          "maximum": 500000000,
+          "minimum": 1000000,
+          "title": "Max Pixels",
+          "type": "integer"
+        }
+      },
+      "title": "ImageValidationSection",
       "type": "object"
     },
     "InstagramSection": {
@@ -323,7 +499,15 @@
             "video_720",
             "video_480",
             "audio_best",
-            "audio_mp3"
+            "audio_mp3",
+            "image_original",
+            "images_original",
+            "all_original_media",
+            "images_only",
+            "videos_only",
+            "images_zip",
+            "youtube_thumbnail",
+            "soundcloud_artwork"
           ],
           "items": {
             "$ref": "#/$defs/DownloadMode"
@@ -1068,6 +1252,9 @@
     },
     "yt_dlp": {
       "$ref": "#/$defs/YtDlpSection"
+    },
+    "gallery_dl": {
+      "$ref": "#/$defs/GalleryDlSection"
     },
     "security": {
       "$ref": "#/$defs/SecuritySection"

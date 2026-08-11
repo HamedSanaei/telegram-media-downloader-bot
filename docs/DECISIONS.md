@@ -305,3 +305,32 @@ falling back to Pillow's bitmap font is forbidden. English ASCII chart text deli
 implicit Arabic shaping/BiDi dependency, while Telegram captions remain Persian. Rendering stays
 in memory and preserves zero-retention. CI validates meaningful text regions and publishes weekly
 and monthly fixture charts produced as UID 10001 without network, DISPLAY, or a writable image.
+## ADR-026: Infer only Twitter's explicit HLS audio rendition contract
+
+- **Status:** accepted
+- **Date:** 2026-08-01
+
+Twitter/X currently reports its AAC HLS audio rendition with `acodec=null`, while retaining an
+audio-only resolution, `video_ext=none`, MP4 audio extension, `m3u8` protocol, and a stable
+`hls-audio-*-Audio` identifier. The adapter may infer AAC only when all of those signals agree.
+This keeps H.264/AAC MP4 eligible for stream-copy remux without broadly treating unknown MP4 audio
+as compatible. The exact inspected stream IDs are persisted and reused instead of replanning at
+download time. Empty native plans use a distinct safe error category from unavailable source media.
+
+## ADR-027: Isolate gallery-dl behind an expiring-URL-free subprocess contract
+
+**Status:** accepted
+
+Gallery-dl 1.32.8 runs as a separately installed external program through an argv-only asyncio
+subprocess with ignored user configuration, bounded stdout/stderr/runtime/concurrency, and
+process-group cancellation. No application code imports `gallery_dl`, and no vendor dictionary,
+stderr, exit code, command, extractor label, or signed CDN URL crosses the adapter boundary. This
+keeps the GPL-2.0 runtime dependency replaceable and preserves the application's layering without
+making a legal conclusion about combinations.
+
+Routing depends on normalized inspection: one or more images makes gallery-dl own the complete
+ordered social post; an explicit no-image result falls back to yt-dlp. Unsupported bulk social URLs
+fail closed. Stable asset IDs derive from provider, post identity, order, kind, and extension—not a
+temporary URL—and downloads re-inspect from the canonical post URL. Original images are signature
+validated and delivered as photo/media group when compatible, otherwise as documents; ZIP and
+oversize delivery reuse the existing archive/multipart boundaries.

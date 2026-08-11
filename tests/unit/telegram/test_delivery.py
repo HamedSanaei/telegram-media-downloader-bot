@@ -8,8 +8,19 @@ from typing import Any, cast
 import pytest
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
-from aiogram.methods import SendDocument, SendVideo
-from aiogram.types import Audio, Chat, Document, FSInputFile, InputFile, Message, MessageId, Video
+from aiogram.methods import SendDocument, SendMediaGroup, SendVideo
+from aiogram.types import (
+    Audio,
+    Chat,
+    Document,
+    FSInputFile,
+    InputFile,
+    InputMediaPhoto,
+    Message,
+    MessageId,
+    PhotoSize,
+    Video,
+)
 
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import DeliveryError, DeliveryTooLargeError
@@ -36,6 +47,8 @@ from telegram_media_bot.telegram.delivery import (
 class FakeBot:
     fail_video = False
     fail_video_network = False
+    fail_album = False
+    fail_album_network = False
 
     def __init__(self) -> None:
         self.last_upload: dict[str, object] = {}
@@ -67,6 +80,31 @@ class FakeBot:
         self.uploads.append(kwargs)
         await self._consume(kwargs.get("document"))
         return _message("document")
+
+    async def send_photo(self, **kwargs: object) -> Message:
+        self.last_upload = kwargs
+        self.uploads.append(kwargs)
+        await self._consume(kwargs.get("photo"))
+        return _message("photo")
+
+    async def send_media_group(self, **kwargs: object) -> list[Message]:
+        self.last_upload = kwargs
+        self.uploads.append(kwargs)
+        media = cast(list[object], kwargs["media"])
+        if self.fail_album:
+            raise TelegramBadRequest(
+                method=SendMediaGroup(chat_id=1, media=cast(Any, media)),
+                message="unsupported",
+            )
+        if self.fail_album_network:
+            raise TelegramNetworkError(
+                method=SendMediaGroup(chat_id=1, media=cast(Any, media)),
+                message="connection lost",
+            )
+        return [
+            _message("photo" if isinstance(item, InputMediaPhoto) else "video", index + 1)
+            for index, item in enumerate(media)
+        ]
 
     async def send_message(self, **_kwargs: object) -> Message:
         return _message("none")
@@ -178,6 +216,94 @@ async def test_multiple_video_artifacts_are_delivered_separately(
     assert len(receipt.items) == 2
     assert [item.ordinal for item in receipt.items] == [1, 2]
     assert len(bot.uploads) == 2
+
+
+async def test_inline_images_are_sent_as_photo(settings: Settings, tmp_path: Path) -> None:
+    path = tmp_path / "image.jpg"
+    path.write_bytes(b"image")
+    result = replace(
+        _result(tmp_path, MediaKind.IMAGE),
+        file_path=path,
+        mime_type="image/jpeg",
+    )
+    bot = FakeBot()
+
+    receipt = await TelegramDeliveryGateway(cast(Bot, cast(Any, bot)), settings).deliver(
+        chat_id=1, result=result, caption="caption"
+    )
+
+    assert receipt.method is DeliveryMethod.PHOTO
+    assert "photo" in bot.last_upload
+
+
+async def test_album_chunks_preserve_order_and_avoid_singleton_group(
+    settings: Settings, tmp_path: Path
+) -> None:
+    artifacts: list[DownloadArtifact] = []
+    for index in range(11):
+        path = tmp_path / f"{index + 1:04}.jpg"
+        path.write_bytes(b"image")
+        artifacts.append(
+            DownloadArtifact(path, 5, MediaKind.IMAGE, "image/jpeg", f"Image {index + 1}")
+        )
+    result = DownloadResult(
+        job_id=JobId("album"),
+        media_id="album",
+        title="Album",
+        source="instagram",
+        kind=MediaKind.PLAYLIST,
+        file_path=artifacts[0].file_path,
+        file_size_bytes=55,
+        artifacts=tuple(artifacts),
+    )
+    bot = FakeBot()
+
+    receipt = await RoutedDeliveryGateway(cast(Bot, cast(Any, bot)), settings).deliver(
+        chat_id=1, result=result, caption="caption"
+    )
+
+    assert [len(cast(list[object], call["media"])) for call in bot.uploads] == [9, 2]
+    assert [item.ordinal for item in receipt.items] == list(range(1, 12))
+    first_group = cast(list[Any], bot.uploads[0]["media"])
+    assert first_group[0].caption == "caption"
+    assert all(item.caption is None for item in first_group[1:])
+
+
+async def test_rejected_album_falls_back_but_ambiguous_album_does_not_retry(
+    settings: Settings, tmp_path: Path
+) -> None:
+    artifacts: list[DownloadArtifact] = []
+    for index in range(2):
+        path = tmp_path / f"fallback-{index}.jpg"
+        path.write_bytes(b"image")
+        artifacts.append(DownloadArtifact(path, 5, MediaKind.IMAGE, "image/jpeg"))
+    result = DownloadResult(
+        JobId("album-fallback"),
+        "album",
+        "Album",
+        "instagram",
+        MediaKind.PLAYLIST,
+        artifacts[0].file_path,
+        10,
+        artifacts=tuple(artifacts),
+    )
+    rejected = FakeBot()
+    rejected.fail_album = True
+    receipt = await RoutedDeliveryGateway(cast(Bot, cast(Any, rejected)), settings).deliver(
+        chat_id=1, result=result, caption="caption"
+    )
+    assert len(receipt.items) == 2
+    assert len(rejected.uploads) == 3
+
+    for artifact in artifacts:
+        artifact.file_path.write_bytes(b"image")
+    ambiguous = FakeBot()
+    ambiguous.fail_album_network = True
+    with pytest.raises(DeliveryError):
+        await RoutedDeliveryGateway(cast(Bot, cast(Any, ambiguous)), settings).deliver(
+            chat_id=1, result=result, caption="caption"
+        )
+    assert len(ambiguous.uploads) == 1
 
 
 def test_caption_contains_runtime_bot_username(settings: Settings, tmp_path: Path) -> None:
@@ -513,17 +639,17 @@ def _result(tmp_path: Path, kind: MediaKind) -> DownloadResult:
     )
 
 
-def _message(kind: str) -> Message:
+def _message(kind: str, message_id: int = 1) -> Message:
     if kind == "audio":
         return Message(
-            message_id=1,
+            message_id=message_id,
             date=datetime.now(UTC),
             chat=Chat(id=1, type="private"),
             audio=Audio(file_id="file-id", file_unique_id="unique-id", duration=1),
         )
     if kind == "video":
         return Message(
-            message_id=1,
+            message_id=message_id,
             date=datetime.now(UTC),
             chat=Chat(id=1, type="private"),
             video=Video(
@@ -536,9 +662,24 @@ def _message(kind: str) -> Message:
         )
     if kind == "document":
         return Message(
-            message_id=1,
+            message_id=message_id,
             date=datetime.now(UTC),
             chat=Chat(id=1, type="private"),
             document=Document(file_id="file-id", file_unique_id="unique-id"),
         )
-    return Message(message_id=1, date=datetime.now(UTC), chat=Chat(id=1, type="private"))
+    if kind == "photo":
+        return Message(
+            message_id=message_id,
+            date=datetime.now(UTC),
+            chat=Chat(id=1, type="private"),
+            photo=[
+                PhotoSize(
+                    file_id="file-id",
+                    file_unique_id="unique-id",
+                    width=1,
+                    height=1,
+                    file_size=1,
+                )
+            ],
+        )
+    return Message(message_id=message_id, date=datetime.now(UTC), chat=Chat(id=1, type="private"))

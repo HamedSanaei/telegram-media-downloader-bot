@@ -161,6 +161,7 @@ def _to_view(option: MediaFormatOption) -> NativeOptionView:
         quality_score=option.quality_score,
         selected_format_ids=option.selected_format_ids,
         transcode_required=option.requires_transcode,
+        processing_kind=option.processing_kind,
         display_label=_display_label(option, dynamic_range),
     )
 

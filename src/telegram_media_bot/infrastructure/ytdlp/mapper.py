@@ -31,6 +31,26 @@ def detect_kind(info: Mapping[str, Any]) -> MediaKind:
         return MediaKind.VIDEO
     if audio_codec and audio_codec != "none":
         return MediaKind.AUDIO
+    formats = info.get("formats")
+    if isinstance(formats, list):
+        if any(
+            isinstance(item, Mapping) and item.get("vcodec") not in {None, "none"}
+            for item in formats
+        ):
+            return MediaKind.VIDEO
+        if any(
+            isinstance(item, Mapping)
+            and (
+                str(item.get("resolution") or "").casefold() == "audio only"
+                or (
+                    item.get("vcodec") in {None, "none"}
+                    and str(item.get("video_ext") or "").casefold() == "none"
+                    and str(item.get("audio_ext") or "").casefold() not in {"", "none"}
+                )
+            )
+            for item in formats
+        ):
+            return MediaKind.AUDIO
     ext = str(info.get("ext") or "").casefold()
     if ext in {"jpg", "jpeg", "png", "webp", "gif"}:
         return MediaKind.IMAGE

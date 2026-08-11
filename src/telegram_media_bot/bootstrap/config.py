@@ -375,6 +375,48 @@ class YtDlpSection(StrictModel):
         return self.proxy.get_secret_value()
 
 
+class GalleryDlCookiesSection(StrictModel):
+    instagram: Path | None = None
+    tiktok: Path | None = None
+    twitter: Path | None = None
+    pinterest: Path | None = None
+
+
+class ImageValidationSection(StrictModel):
+    max_width: int = Field(default=20000, ge=1, le=100000)
+    max_height: int = Field(default=20000, ge=1, le=100000)
+    max_pixels: int = Field(default=100_000_000, ge=1_000_000, le=500_000_000)
+
+
+class GalleryDlSection(StrictModel):
+    enabled: bool = True
+    timeout_seconds: int = Field(default=600, ge=10, le=86400)
+    max_assets_per_job: int = Field(default=30, ge=1, le=100)
+    max_total_size_mb: int = Field(default=1024, ge=1, le=8192)
+    max_concurrent_processes: int = Field(default=2, ge=1, le=16)
+    sleep_request_seconds: float = Field(default=1.0, ge=0, le=60)
+    enabled_platforms: frozenset[str] = frozenset({"instagram", "tiktok", "twitter", "pinterest"})
+    cookies: GalleryDlCookiesSection = Field(default_factory=GalleryDlCookiesSection)
+    images: ImageValidationSection = Field(default_factory=ImageValidationSection)
+    album_max_items: int = Field(default=10, ge=2, le=10)
+    zip_threshold: int = Field(default=11, ge=2, le=100)
+
+    @field_validator("enabled_platforms")
+    @classmethod
+    def validate_platforms(cls, values: frozenset[str]) -> frozenset[str]:
+        allowed = {"instagram", "tiktok", "twitter", "pinterest"}
+        normalized = frozenset(item.strip().casefold() for item in values if item.strip())
+        if not normalized <= allowed:
+            raise ValueError("gallery_dl.enabled_platforms contains an unsupported platform")
+        return normalized
+
+    def cookie_for(self, source: str, legacy_instagram_cookie: Path | None) -> Path | None:
+        configured = cast(Path | None, getattr(self.cookies, source, None))
+        if source == "instagram" and configured is None:
+            return legacy_instagram_cookie
+        return configured
+
+
 class SecuritySection(StrictModel):
     allowed_user_ids: frozenset[int] = frozenset()
     blocked_user_ids: frozenset[int] = frozenset()
@@ -427,6 +469,7 @@ class Settings(StrictModel):
     media: MediaSection
     multipart: MultipartSection = Field(default_factory=MultipartSection)
     yt_dlp: YtDlpSection
+    gallery_dl: GalleryDlSection = Field(default_factory=GalleryDlSection)
     security: SecuritySection
     persistence: PersistenceSection
     observability: ObservabilitySection
@@ -461,6 +504,10 @@ class Settings(StrictModel):
                 raise ConfigurationError(
                     "multipart.part_size_mb cannot exceed telegram.max_upload_size_mb"
                 )
+        if self.gallery_dl.max_total_size_mb > self.multipart.max_total_size_mb:
+            raise ConfigurationError(
+                "gallery_dl.max_total_size_mb cannot exceed multipart.max_total_size_mb"
+            )
 
     def create_runtime_directories(self) -> None:
         for path in (
@@ -515,6 +562,14 @@ def _resolve_local_api_paths(raw: dict[str, object], config_directory: Path) -> 
         cookies = ytdlp.get("cookies_file")
         if isinstance(cookies, str) and cookies and not Path(cookies).expanduser().is_absolute():
             ytdlp["cookies_file"] = str((config_directory / cookies).resolve())
+    gallery = raw.get("gallery_dl")
+    if isinstance(gallery, dict):
+        cookies = gallery.get("cookies")
+        if isinstance(cookies, dict):
+            for key in ("instagram", "tiktok", "twitter", "pinterest"):
+                value = cookies.get(key)
+                if isinstance(value, str) and value and not Path(value).expanduser().is_absolute():
+                    cookies[key] = str((config_directory / value).resolve())
     multipart = raw.get("multipart")
     if isinstance(multipart, dict):
         value = multipart.get("seven_zip_executable")

@@ -51,6 +51,17 @@ uv run telegram-media-bot doctor --config .\config.yaml
 
 ## Files sent to the user
 
+For image/mixed bundles at or below direct limits, the Telegram adapter first chooses a
+deterministic inline plan. JPEG/PNG/WebP images use `send_photo`; streamable videos may share a
+mixed media group; compatible collections are split into 2–10 item groups without changing source
+order. A format, dimension, or Telegram rejection selects document delivery without converting or
+overwriting the original. Captions appear only on the first item allowed by each group.
+
+The semantic image-ZIP action creates one store-only archive in source order with numeric names.
+If that archive exceeds the direct ceiling, the existing 7-Zip multipart subsystem splits it and
+persists/deletes each confirmed part exactly like an oversized video. No separate retention,
+retry, or archive lifecycle exists for gallery media.
+
 For an oversized result, the bot sends:
 
 1. `.zip.001`, `.zip.002`, and any later volumes in ordinal order;

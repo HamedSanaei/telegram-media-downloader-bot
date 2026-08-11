@@ -113,6 +113,29 @@ uv run python scripts/export_config_schema.py
 The complete Local Bot API configuration, conditional credential rules, Windows/Linux paths, and
 migration state machine are documented in `docs/LOCAL_BOT_API.md`.
 
+## Gallery-dl images and mixed posts
+
+`gallery_dl.enabled` defaults to `true`. The remaining owned controls bound a single subprocess:
+`timeout_seconds: 600`, `max_assets_per_job: 30`, `max_total_size_mb: 1024`,
+`max_concurrent_processes: 2`, and `sleep_request_seconds: 1`. `enabled_platforms` accepts only
+`instagram`, `tiktok`, `twitter`, and `pinterest`. Arbitrary gallery-dl option dictionaries are not
+accepted.
+
+Cookie paths are source-specific under `gallery_dl.cookies`. A null Instagram value reuses the
+existing `yt_dlp.cookies_file` path, so `/data/cookies/cookies.txt` deployments require no manual
+rewrite. That fallback is never passed to TikTok, Twitter/X, or Pinterest. Files are read-only
+inputs: they are neither copied nor mutated, and `config-check`/`doctor` report only per-source
+readability—not contents or paths. Relative explicit paths resolve from the config directory.
+
+Image validation defaults to 20,000 pixels per dimension and 100,000,000 total pixels. Telegram
+albums are capped at 10 items per request and collections are chunked without reordering or a
+one-item media group. `zip_threshold` documents the point at which the ZIP action is preferred;
+the user may still choose an ordered original-image ZIP for a smaller gallery.
+
+Existing v1.0.x YAML files remain valid because the entire section has typed defaults. The new
+maximum must not exceed `multipart.max_total_size_mb`. Config/state/Redis/cookies/downloads are not
+rewritten during update.
+
 ## High-quality and multipart delivery
 
 `media.enabled_modes` may include `best_original`, `video_2160`, and `video_1440`; the compatible

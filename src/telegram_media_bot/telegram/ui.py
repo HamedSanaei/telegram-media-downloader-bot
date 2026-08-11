@@ -70,6 +70,20 @@ def container_keyboard(
         ]
         for choice in choices
     ]
+    artwork_labels = {
+        "youtube_thumbnail": "🖼 دانلود تصویر بندانگشتی",
+        "soundcloud_artwork": "🖼 دانلود تصویر کاور",
+    }
+    rows.extend(
+        [
+            InlineKeyboardButton(
+                text=artwork_labels[mode.value],
+                callback_data=f"m2:{selection.token}:{mode.value}",
+            )
+        ]
+        for mode in selection.allowed_modes
+        if mode.value in artwork_labels
+    )
     rows.append(
         [
             InlineKeyboardButton(
@@ -87,6 +101,31 @@ def cancellation_keyboard(job_id: JobId) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="لغو دانلود", callback_data=f"cancel:{job_id}")]
         ]
     )
+
+
+def media_bundle_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
+    labels = {
+        "image_original": "🖼 دانلود تصویر اصلی",
+        "images_original": "🖼 دانلود همه تصاویر",
+        "all_original_media": "📦 دانلود همه رسانه‌ها",  # noqa: RUF001
+        "images_only": "🖼 فقط تصاویر",
+        "videos_only": "🎬 فقط ویدیوها",
+        "images_zip": "🗜 تصاویر به‌صورت ZIP",
+        "youtube_thumbnail": "🖼 دانلود تصویر بندانگشتی",
+        "soundcloud_artwork": "🖼 دانلود تصویر کاور",
+    }
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=labels[mode.value],
+                callback_data=f"m2:{selection.token}:{mode.value}",
+            )
+        ]
+        for mode in selection.allowed_modes
+        if mode.value in labels
+    ]
+    rows.append([InlineKeyboardButton(text="❌ لغو", callback_data=f"n2:{selection.token}:s")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def required_channels_keyboard(

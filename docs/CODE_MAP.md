@@ -7,14 +7,17 @@
 | `src/telegram_media_bot/application/services/` | Orchestrates inspection, policy limits, and selected downloads |
 | `src/telegram_media_bot/application/services/native_options.py` | Builds the public native-only option catalog, enforces codec/transcode invariants, chooses truthful representatives, deduplicates actual plans, and creates opaque option IDs |
 | `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
-| `src/telegram_media_bot/application/services/url_canonicalization.py` | Parses YouTube URL intent, validates video/playlist IDs, removes Mix context from single-video URLs, and supplies credential-safe structured log fields |
+| `src/telegram_media_bot/application/services/url_canonicalization.py` | Parses YouTube URL intent, removes Mix context from single videos, and gives equivalent X/Twitter status-share URLs one query-free identity |
 | `src/telegram_media_bot/application/services/usage_analytics.py` | Builds Tehran-local usage reports and excludes configured administrators from public KPI aggregation |
 | `src/telegram_media_bot/application/ports/usage_analytics.py` | Framework-free usage activity and PNG renderer contracts |
 | `src/telegram_media_bot/application/services/progress.py` | Framework-free download/delivery progress throttling |
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic access, required-channel membership, and rate policy |
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
-| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, zero-transcode AV1/H.264 MP4 and VP9 WebM selection, native/inline compatibility probing, and preflight/thread/concurrency/timeout-bounded explicit transcoding |
+| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, zero-transcode AV1/H.264 MP4 and VP9 WebM selection, narrow Twitter HLS audio-metadata inference, native/inline compatibility probing, and bounded explicit transcoding |
+| `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, bounded output/cancellation, vendor parsing/error mapping, stable asset normalization, and safe original-media download |
+| `src/telegram_media_bot/infrastructure/media_engine_router.py` | Inspection-result routing: image-containing social posts stay gallery-owned; video-only posts and non-gallery sources use yt-dlp |
+| `src/telegram_media_bot/infrastructure/image_validation.py` | Pillow signature/format/dimension/decompression-bomb validation without altering originals |
 | `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for AV1/H.264 MP4 and VP9 WebM selection, stream-copy arguments, and Best Original policy |
 | `src/telegram_media_bot/infrastructure/queue/` | ARQ enqueue plus official abort and transient-key finalization |
 | `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL jobs, durable-first cancellation, users, daily usage, delivery, block, and recovery store |
@@ -25,7 +28,7 @@
 | `src/telegram_media_bot/infrastructure/security/` | Public URL/DNS validation, Redis rate limiting, and membership cache |
 | `src/telegram_media_bot/infrastructure/observability/` | Health HTTP server and Prometheus metrics registry |
 | `src/telegram_media_bot/infrastructure/telegram/local_api.py` | Local Bot API lifecycle, durable migration, endpoint leases, and safe status |
-| `src/telegram_media_bot/infrastructure/archive/` | Safe 7-Zip multi-volume packaging and SHA-256 manifests |
+| `src/telegram_media_bot/infrastructure/archive/` | Safe 7-Zip multi-volume packaging, deterministic ordered image ZIPs, and SHA-256 manifests |
 | `src/telegram_media_bot/infrastructure/storage/` | Exact job-workspace cleanup, symlink-safe deletion, and startup/maintenance sweeping |
 | `src/telegram_media_bot/telegram/` | Versioned Back/Native callback dispatch, real-plan rendering, middleware, and tracked delivery adapter |
 | `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants, FSM state, and reply/inline keyboard builders |
@@ -35,7 +38,7 @@
 | `src/telegram_media_bot/workers/` | ARQ worker settings and job functions, including edit-or-send inspection result publication |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, and composition roots |
 | `tests/unit/` | Fast deterministic tests |
-| `tests/fixtures/` | Versioned configuration fixtures for backward-compatibility regression tests |
+| `tests/fixtures/` | Versioned configuration and sanitized upstream-metadata fixtures for network-free regression tests |
 | `tests/integration/` | Local integration tests with fakes/Redis where available |
 | `tests/integration/test_local_api_large_upload.py` | Explicit opt-in real Local API upload over 200 MB |
 | `tests/contracts/` | Opt-in external yt-dlp smoke tests |
@@ -45,6 +48,7 @@
 | `scripts/compare_canary.py` | Baseline/canary failure-rate promotion gate |
 | `scripts/generate_file_manifest.py` | Deterministic SHA-256 source-manifest generation |
 | `scripts/check_package_assets.py` | Wheel/sdist font-license inspection and clean-wheel resource/decode smoke |
+| `scripts/check_gallerydl_fixtures.py` | Pinned 1.32.8 normalized-fixture upgrade contract and optional installed-version check |
 | `install.sh`, `install.ps1` | Interactive Docker-first one-line installers and global management command setup |
 | `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup/cleanup command; Linux adds isolated transactional replacement, runtime probes, health verification, rollback, `tmb` repair, and guarded project-image reclamation |
 | `scripts/build_release_archives.sh` | Reproducible tar/ZIP assets and v1.0.2-safe executable Linux updater packaging |
