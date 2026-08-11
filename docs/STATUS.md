@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-08-01
+Last updated: 2026-08-11
 
 ## Release state
 
@@ -98,6 +98,11 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-08-11: Fixed the v1.1.0 Linux quality-job failure by replacing a Windows-only-consumed
+  `os.killpg` type suppression with an explicit platform guard. Gallery subprocess cancellation
+  keeps the same Windows CTRL_BREAK and POSIX process-group SIGTERM behavior, while strict mypy now
+  passes on both Windows and Linux platform models. The locked aiohttp patch was also advanced from
+  3.14.2 to 3.14.3 after the release audit identified PYSEC-2026-3545.
 - 2026-08-01: Implemented T013 gallery-dl 1.32.8 media bundles, source-isolated cookies, bounded
   subprocess cancellation, image validation, stable selection persistence, and typed album/ZIP
   delivery with offline fixtures and package/Docker license smokes.

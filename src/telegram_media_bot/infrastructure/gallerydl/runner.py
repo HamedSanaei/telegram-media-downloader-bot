@@ -4,6 +4,7 @@ import asyncio
 import os
 import signal
 import subprocess
+import sys
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -151,11 +152,10 @@ async def _terminate(process: asyncio.subprocess.Process) -> None:
     if process.returncode is not None:
         return
     try:
-        if os.name == "nt":
+        if sys.platform == "win32":
             process.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
         else:
-            kill_process_group = os.killpg  # type: ignore[attr-defined]
-            kill_process_group(process.pid, signal.SIGTERM)
+            os.killpg(process.pid, signal.SIGTERM)
         await asyncio.wait_for(process.wait(), timeout=5)
         return
     except OSError, ProcessLookupError, TimeoutError:
