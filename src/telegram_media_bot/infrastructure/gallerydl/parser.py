@@ -4,6 +4,7 @@ import hashlib
 import json
 import mimetypes
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from telegram_media_bot.domain.errors import (
@@ -16,6 +17,8 @@ from telegram_media_bot.infrastructure.gallerydl.models import GalleryInspection
 
 _IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif", "avif"}
 _VIDEO_EXTENSIONS = {"mp4", "webm", "mov", "mkv"}
+_DIRECTORY_MESSAGE = 2
+_URL_MESSAGE = 3
 _POST_ID_KEYS = {
     "instagram": ("post_shortcode", "shortcode", "post_id", "id"),
     "tiktok": ("id", "post_id", "aweme_id"),
@@ -24,25 +27,29 @@ _POST_ID_KEYS = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class _DirectoryEvent:
+    metadata: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _UrlEvent:
+    url: str
+    metadata: Mapping[str, Any]
+
+
+type _GalleryEvent = _DirectoryEvent | _UrlEvent
+
+
 def parse_inspection(
     payload: bytes,
     *,
     expected_provider: str,
     max_assets: int,
 ) -> GalleryInspection:
-    try:
-        raw = json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise GalleryDlOutputChangedError("gallery-dl returned invalid JSON") from exc
-    if not isinstance(raw, list):
-        raise GalleryDlOutputChangedError("gallery-dl JSON root is not an event list")
-    metadata_items: list[Mapping[str, Any]] = []
-    for event in raw:
-        if not isinstance(event, list) or len(event) != 3 or not isinstance(event[2], Mapping):
-            continue
-        if not isinstance(event[1], str) or not event[1].startswith(("http://", "https://")):
-            raise GalleryDlOutputChangedError("gallery-dl asset event has no HTTP(S) URL")
-        metadata_items.append(event[2])
+    events = _parse_jsonl_events(payload)
+    url_events = tuple(event for event in events if isinstance(event, _UrlEvent))
+    metadata_items = [event.metadata for event in url_events]
     if not metadata_items:
         raise GalleryDlOutputChangedError("gallery-dl emitted no asset events")
     if len(metadata_items) > max_assets:
@@ -51,11 +58,19 @@ def parse_inspection(
     if provider != expected_provider:
         raise GalleryDlOutputChangedError("gallery-dl provider does not match the requested URL")
     post_id = _post_id(metadata_items[0], provider)
-    title = _text(metadata_items[0], "description", "content", "caption", "title") or "Media"
-    assets = tuple(
-        _asset(item, provider=provider, post_id=post_id, index=index)
-        for index, item in enumerate(metadata_items, start=1)
+    directory_metadata = next(
+        (event.metadata for event in events if isinstance(event, _DirectoryEvent)),
+        None,
     )
+    title_metadata = directory_metadata or metadata_items[0]
+    title = _text(title_metadata, "description", "content", "caption", "title") or "Media"
+    assets_list: list[MediaAsset] = []
+    for index, event in enumerate(url_events, start=1):
+        asset = _asset(event.metadata, provider=provider, post_id=post_id, index=index)
+        if event.url.startswith("ytdl:") and asset.kind is not MediaKind.VIDEO:
+            raise GalleryDlOutputChangedError("gallery-dl ytdl event is not video media")
+        assets_list.append(asset)
+    assets = tuple(assets_list)
     if not any(asset.kind is MediaKind.IMAGE for asset in assets):
         raise GalleryDlNoImagesError("The post contains no image assets")
     return GalleryInspection(provider=provider, post_id=post_id, title=title[:512], assets=assets)
@@ -63,22 +78,55 @@ def parse_inspection(
 
 def transient_asset_urls(payload: bytes) -> tuple[str, ...]:
     """Return vendor URLs only for immediate SSRF validation inside the adapter boundary."""
+    return tuple(
+        _public_url(event.url)
+        for event in _parse_jsonl_events(payload)
+        if isinstance(event, _UrlEvent)
+    )
+
+
+def _parse_jsonl_events(payload: bytes) -> tuple[_GalleryEvent, ...]:
     try:
-        raw = json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise GalleryDlOutputChangedError("gallery-dl returned invalid JSON") from exc
-    if not isinstance(raw, list):
-        raise GalleryDlOutputChangedError("gallery-dl JSON root is not an event list")
-    urls: list[str] = []
-    for event in raw:
-        if (
-            isinstance(event, list)
-            and len(event) == 3
-            and isinstance(event[1], str)
-            and event[1].startswith(("http://", "https://"))
-        ):
-            urls.append(event[1])
-    return tuple(urls)
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise GalleryDlOutputChangedError("gallery-dl returned invalid UTF-8") from exc
+    lines = text.splitlines()
+    if not lines:
+        raise GalleryDlOutputChangedError("gallery-dl emitted no JSON Lines events")
+    events: list[_GalleryEvent] = []
+    for line in lines:
+        try:
+            raw: object = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise GalleryDlOutputChangedError("gallery-dl returned invalid JSON Lines") from exc
+        if not isinstance(raw, list) or not raw:
+            raise GalleryDlOutputChangedError("gallery-dl emitted a malformed message tuple")
+        message_type = raw[0]
+        if message_type == _DIRECTORY_MESSAGE:
+            if len(raw) != 2:
+                raise GalleryDlOutputChangedError("gallery-dl directory message shape changed")
+            events.append(_DirectoryEvent(_metadata(raw[1])))
+        elif message_type == _URL_MESSAGE:
+            if len(raw) != 3 or not isinstance(raw[1], str):
+                raise GalleryDlOutputChangedError("gallery-dl URL message shape changed")
+            _public_url(raw[1])
+            events.append(_UrlEvent(raw[1], _metadata(raw[2])))
+        else:
+            raise GalleryDlOutputChangedError("gallery-dl emitted an unexpected message type")
+    return tuple(events)
+
+
+def _metadata(value: object) -> Mapping[str, Any]:
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise GalleryDlOutputChangedError("gallery-dl message metadata shape changed")
+    return value
+
+
+def _public_url(url: str) -> str:
+    candidate = url.removeprefix("ytdl:")
+    if not candidate.startswith(("http://", "https://")):
+        raise GalleryDlOutputChangedError("gallery-dl asset event has no HTTP(S) URL")
+    return candidate
 
 
 def _provider(item: Mapping[str, Any]) -> str:

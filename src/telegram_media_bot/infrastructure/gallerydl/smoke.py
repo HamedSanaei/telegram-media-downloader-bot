@@ -9,34 +9,32 @@ from telegram_media_bot.infrastructure.gallerydl.parser import parse_inspection
 
 
 def main() -> int:
-    payload = json.dumps(
+    events = [
         [
-            [
-                3,
-                "https://cdn.example.invalid/one.jpg",
-                {
-                    "category": "twitter",
-                    "tweet_id": "fixture-1",
-                    "extension": "jpg",
-                    "type": "image",
-                    "width": 1200,
-                    "height": 900,
-                },
-            ],
-            [
-                3,
-                "https://cdn.example.invalid/two.mp4",
-                {
-                    "category": "twitter",
-                    "tweet_id": "fixture-1",
-                    "extension": "mp4",
-                    "type": "video",
-                    "duration": 4,
-                },
-            ],
+            3,
+            "https://cdn.example.invalid/one.jpg",
+            {
+                "category": "twitter",
+                "tweet_id": "fixture-1",
+                "extension": "jpg",
+                "type": "image",
+                "width": 1200,
+                "height": 900,
+            },
         ],
-        separators=(",", ":"),
-    ).encode()
+        [
+            3,
+            "https://cdn.example.invalid/two.mp4",
+            {
+                "category": "twitter",
+                "tweet_id": "fixture-1",
+                "extension": "mp4",
+                "type": "video",
+                "duration": 4,
+            },
+        ],
+    ]
+    payload = "\n".join(json.dumps(event, separators=(",", ":")) for event in events).encode()
     inspection = parse_inspection(payload, expected_provider="twitter", max_assets=2)
     assert tuple(asset.kind for asset in inspection.assets) == (
         MediaKind.IMAGE,

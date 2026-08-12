@@ -53,7 +53,7 @@ class GalleryDlCommandBuilder:
     def inspection(self, url: str) -> tuple[str, list[str]]:
         provider = provider_for_single_item(url, self._settings.enabled_platforms)
         args = self._base(provider)
-        args.extend(("--dump-json", "--simulate", "--no-download", url))
+        args.extend(("-o", "output.jsonl=true", "--dump-json", "--simulate", "--no-download", url))
         return provider, args
 
     def download(self, url: str, workspace: Path) -> tuple[str, list[str]]:

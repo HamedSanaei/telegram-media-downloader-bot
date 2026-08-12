@@ -67,7 +67,8 @@ choices. Telegram callbacks contain only a short opaque option digest.
 
 `MediaAsset` extends this contract with an ordered stable identity and safe normalized metadata.
 It deliberately has no download URL. Gallery inspection is an unstable vendor event protocol
-parsed entirely in `infrastructure/gallerydl/`; SQLite/Redis retain only the canonical post URL,
+requested explicitly as JSON Lines and strictly parsed as gallery-dl message tuples entirely in
+`infrastructure/gallerydl/`; SQLite/Redis retain only the canonical post URL,
 semantic mode, stable asset IDs, and normalized metadata. The worker re-inspects the post before
 download so signed/expiring asset URLs are never durable.
 

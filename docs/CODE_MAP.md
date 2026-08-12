@@ -15,7 +15,7 @@
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
 | `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, zero-transcode AV1/H.264 MP4 and VP9 WebM selection, narrow Twitter HLS audio-metadata inference, native/inline compatibility probing, and bounded explicit transcoding |
-| `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, bounded output/cancellation, vendor parsing/error mapping, stable asset normalization, and safe original-media download |
+| `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, explicit JSON Lines event contract, bounded output/cancellation, strict vendor tuple parsing/error mapping, stable asset normalization, and safe original-media download |
 | `src/telegram_media_bot/infrastructure/media_engine_router.py` | Inspection-result routing: image-containing social posts stay gallery-owned; video-only posts and non-gallery sources use yt-dlp |
 | `src/telegram_media_bot/infrastructure/image_validation.py` | Pillow signature/format/dimension/decompression-bomb validation without altering originals |
 | `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for AV1/H.264 MP4 and VP9 WebM selection, stream-copy arguments, and Best Original policy |

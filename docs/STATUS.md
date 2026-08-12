@@ -1,10 +1,10 @@
 # Project status
 
-Last updated: 2026-08-11
+Last updated: 2026-08-12
 
 ## Release state
 
-Tasks T001 through T012 are implemented; T013 is the active v1.1.0 feature milestone. The v1 flow
+Tasks T001 through T013 are implemented. Patch v1.1.1 fixes the gallery-dl inspection contract. The v1 flow
 is URL validation -> queued inspection ->
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
@@ -98,6 +98,10 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-08-12: Prepared v1.1.1 by explicitly enabling gallery-dl JSON Lines output, strictly parsing
+  directory/URL message tuples, and recognizing `ytdl:` video events as video-only fallback input.
+  Instagram Reels containing no images now reach yt-dlp, while image and mixed-post ownership,
+  transient URL validation, subprocess isolation, and durable URL-free asset models are preserved.
 - 2026-08-11: Fixed the v1.1.0 Linux quality-job failure by replacing a Windows-only-consumed
   `os.killpg` type suppression with an explicit platform guard. Gallery subprocess cancellation
   keeps the same Windows CTRL_BREAK and POSIX process-group SIGTERM behavior, while strict mypy now

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.1.1 - 2026-08-12
+
+### Fixed
+
+- Explicitly request gallery-dl JSON Lines for every machine-consumed inspection and strictly parse
+  directory and URL message tuples instead of relying on the default pretty-printed outer array.
+- Recognize gallery-dl `ytdl:` video events without persisting their pseudo-URLs, allowing
+  video-only Instagram Reels to fall back to yt-dlp while image and mixed posts remain gallery-owned.
+
 ## 1.1.0 - 2026-08-01
 
 ### Added

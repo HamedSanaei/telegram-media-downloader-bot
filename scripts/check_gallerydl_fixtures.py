@@ -20,6 +20,7 @@ EXPECTED: dict[str, tuple[str, tuple[MediaKind, ...]] | None] = {
     ),
     "instagram-mixed.json": ("instagram", (MediaKind.IMAGE, MediaKind.VIDEO)),
     "instagram-story.json": ("instagram", (MediaKind.IMAGE,)),
+    "instagram-reel-ytdl.json": None,
     "tiktok-photo.json": ("tiktok", (MediaKind.IMAGE, MediaKind.IMAGE)),
     "tiktok-video.json": None,
     "twitter-single.json": ("twitter", (MediaKind.IMAGE,)),

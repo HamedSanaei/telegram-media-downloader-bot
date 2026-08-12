@@ -43,7 +43,10 @@ from telegram_media_bot.infrastructure.gallerydl.command_builder import (
 from telegram_media_bot.infrastructure.gallerydl.errors import map_process_failure
 from telegram_media_bot.infrastructure.gallerydl.mapper import map_gallery_info
 from telegram_media_bot.infrastructure.gallerydl.models import GalleryProcessResult
-from telegram_media_bot.infrastructure.gallerydl.parser import parse_inspection
+from telegram_media_bot.infrastructure.gallerydl.parser import (
+    parse_inspection,
+    transient_asset_urls,
+)
 from telegram_media_bot.infrastructure.gallerydl.runner import GalleryDlRunner
 from telegram_media_bot.infrastructure.media_engine_router import RoutedMediaEngine
 
@@ -52,6 +55,18 @@ FIXTURES = Path("tests/fixtures/gallerydl")
 
 def _fixture(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
+
+
+def _fixture_events(name: str) -> list[list[Any]]:
+    return _fixture_payload_events(_fixture(name))
+
+
+def _fixture_payload_events(payload: bytes) -> list[list[Any]]:
+    return [json.loads(line) for line in payload.splitlines()]
+
+
+def _jsonl_payload(events: list[list[Any]]) -> bytes:
+    return b"\n".join(json.dumps(event).encode() for event in events)
 
 
 @pytest.mark.parametrize(
@@ -115,6 +130,7 @@ def test_mapper_exposes_only_semantic_bundle_modes(
         ("tiktok-video.json", "tiktok"),
         ("twitter-video.json", "twitter"),
         ("pinterest-video.json", "pinterest"),
+        ("instagram-reel-ytdl.json", "instagram"),
     ],
 )
 def test_video_only_fixture_signals_ytdlp_fallback(name: str, provider: str) -> None:
@@ -127,6 +143,19 @@ def test_parser_rejects_invalid_and_changed_vendor_output() -> None:
         parse_inspection(b"not-json", expected_provider="twitter", max_assets=30)
     with pytest.raises(GalleryDlOutputChangedError):
         parse_inspection(b'{"unexpected": true}', expected_provider="twitter", max_assets=30)
+
+
+def test_parser_rejects_pretty_printed_non_jsonl_output() -> None:
+    pretty = json.dumps(_fixture_events("instagram-reel-ytdl.json"), indent=2).encode()
+
+    with pytest.raises(GalleryDlOutputChangedError, match=r"message tuple|JSON Lines"):
+        parse_inspection(pretty, expected_provider="instagram", max_assets=30)
+
+
+def test_ytdl_pseudo_url_is_only_exposed_as_transient_http_url() -> None:
+    payload = _fixture("instagram-reel-ytdl.json")
+
+    assert transient_asset_urls(payload) == ("https://www.instagram.com/p/Db4UcovzZnl/1.mp4",)
 
 
 def test_parser_enforces_asset_limit() -> None:
@@ -175,6 +204,8 @@ def test_command_is_argv_only_and_cookie_is_source_isolated(
         assert "--no-colors" in args
         assert "--dump-json" in args
         assert "--no-download" in args
+        option_index = args.index("-o")
+        assert args[option_index : option_index + 2] == ["-o", "output.jsonl=true"]
     assert str(tmp_path / "ig.txt") in instagram
     assert str(tmp_path / "x.txt") not in instagram
     assert str(tmp_path / "x.txt") in twitter
@@ -270,7 +301,7 @@ class _FixtureRunner:
             self.inspections += 1
             return GalleryProcessResult(0, self.payload, b"", 0.01)
         workspace = Path(args[args.index("--directory") + 1])
-        events = json.loads(self.payload)
+        events = [event for event in _fixture_payload_events(self.payload) if event[0] == 3]
         for index, event in enumerate(events, start=1):
             metadata = event[2]
             extension = metadata["extension"]
@@ -363,11 +394,11 @@ def test_adapter_rejects_known_collection_size_before_download(settings: Setting
     raw = settings.model_dump()
     raw["gallery_dl"]["max_total_size_mb"] = 1
     configured = Settings.model_validate(raw)
-    events = json.loads(_fixture("instagram-single.json"))
+    events = _fixture_events("instagram-single.json")
     events[0][2]["filesize"] = 2 * 1024 * 1024
     engine = GalleryDlEngine(
         configured,
-        runner=cast(GalleryDlRunner, _FixtureRunner(json.dumps(events).encode())),
+        runner=cast(GalleryDlRunner, _FixtureRunner(_jsonl_payload(events))),
     )
     engine._validator = cast(Any, _AllowValidator())
 
@@ -423,6 +454,38 @@ def test_router_falls_back_only_for_video_only_single_post(settings: Settings) -
 
     assert info.kind is MediaKind.VIDEO
     assert ytdlp.inspected == ["https://x.com/example/status/8004"]
+
+
+def test_router_falls_back_for_instagram_reel_ytdl_video_event(settings: Settings) -> None:
+    gallery = GalleryDlEngine(
+        settings,
+        runner=cast(GalleryDlRunner, _FixtureRunner(_fixture("instagram-reel-ytdl.json"))),
+    )
+    gallery._validator = cast(Any, _AllowValidator())
+    ytdlp = _FakeEngine()
+    router = RoutedMediaEngine(gallery, cast(DownloadEngine, ytdlp))
+
+    info = router.inspect("https://www.instagram.com/reel/Db4UcovzZnl/")
+
+    assert info.kind is MediaKind.VIDEO
+    assert ytdlp.inspected == ["https://www.instagram.com/reel/Db4UcovzZnl/"]
+
+
+def test_router_keeps_mixed_instagram_ytdl_post_gallery_owned(settings: Settings) -> None:
+    gallery = GalleryDlEngine(
+        settings,
+        runner=cast(GalleryDlRunner, _FixtureRunner(_fixture("instagram-mixed.json"))),
+    )
+    gallery._validator = cast(Any, _AllowValidator())
+    ytdlp = _FakeEngine()
+    router = RoutedMediaEngine(gallery, cast(DownloadEngine, ytdlp))
+
+    info = router.inspect("https://www.instagram.com/p/IG3/")
+
+    assert tuple(asset.kind for asset in info.assets) == (MediaKind.IMAGE, MediaKind.VIDEO)
+    assert ytdlp.inspected == []
+    assert "cdn.example.invalid" not in repr(info)
+    assert "ytdl:" not in repr(info)
 
 
 def test_router_never_turns_social_bulk_url_into_ytdlp_crawl(settings: Settings) -> None:
