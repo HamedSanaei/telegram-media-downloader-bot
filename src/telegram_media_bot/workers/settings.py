@@ -161,6 +161,7 @@ async def startup(ctx: dict[str, Any]) -> None:
                     container_policy=record.container_policy,
                     native_video_codec=record.native_video_codec,
                     selected_format_ids=record.selected_format_ids,
+                    image_delivery_mode=record.image_delivery_mode,
                 )
             requeued_count += 1
             await logger.ainfo(

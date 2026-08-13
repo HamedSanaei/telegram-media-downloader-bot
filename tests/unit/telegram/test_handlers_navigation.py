@@ -13,10 +13,12 @@ from telegram_media_bot.domain.errors import SelectionExpiredError
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
+    ImageDeliveryMode,
     JobId,
     JobKind,
     JobRecord,
     JobStatus,
+    MediaAsset,
     MediaFormatOption,
     MediaInfo,
     MediaKind,
@@ -286,6 +288,86 @@ async def test_native_option_is_revalidated_before_enqueue(
     assert queue.kwargs["selected_format_ids"] == option.selected_format_ids
 
 
+async def test_instagram_document_choice_is_persisted_and_enqueued(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(handlers_module, "Message", FakeMessage)
+    now = datetime.now(UTC)
+
+    class CreatingJobs(FakeJobs):
+        def create_download(self, **kwargs: object) -> tuple[JobRecord, bool]:
+            self.downloads += 1
+            self.kwargs = kwargs
+            return (
+                JobRecord(
+                    JobId("instagram-job"),
+                    JobKind.DOWNLOAD,
+                    JobStatus.QUEUED,
+                    cast(int, kwargs["chat_id"]),
+                    cast(int, kwargs["user_id"]),
+                    str(kwargs["url"]),
+                    cast(DownloadMode, kwargs["mode"]),
+                    "key",
+                    now,
+                    now,
+                    selected_format_ids=cast(tuple[str, ...], kwargs["selected_format_ids"]),
+                    image_delivery_mode=cast(ImageDeliveryMode, kwargs["image_delivery_mode"]),
+                ),
+                True,
+            )
+
+    jobs = CreatingJobs()
+    queue = CapturingQueue()
+    router = build_router(
+        settings=settings,
+        queue=queue,  # type: ignore[arg-type]
+        repository=FakeRepository(_instagram_selection()),  # type: ignore[arg-type]
+        access_policy=FakeAccessPolicy(),  # type: ignore[arg-type]
+        jobs=jobs,  # type: ignore[arg-type]
+        users=FakeUsers(),  # type: ignore[arg-type]
+    )
+    callback = FakeCallback("i2:opaque-token-123:document")
+
+    await _callback_handler(router, "choose_instagram_image_delivery")(callback)
+
+    assert jobs.downloads == 1
+    assert jobs.kwargs["mode"] is DownloadMode.ALL_ORIGINAL_MEDIA
+    assert jobs.kwargs["image_delivery_mode"] is ImageDeliveryMode.DOCUMENT
+    assert queue.kwargs["image_delivery_mode"] is ImageDeliveryMode.DOCUMENT
+    assert queue.kwargs["selected_format_ids"] == ("image", "video")
+
+
+@pytest.mark.parametrize(
+    "data",
+    ["i2:opaque-token-123:raw", "m2:opaque-token-123:all_original_media"],
+)
+async def test_instagram_choice_tampering_cannot_bypass_confirmation(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    data: str,
+) -> None:
+    monkeypatch.setattr(handlers_module, "Message", FakeMessage)
+    jobs = FakeJobs()
+    queue = FakeQueue()
+    router = build_router(
+        settings=settings,
+        queue=queue,  # type: ignore[arg-type]
+        repository=FakeRepository(_instagram_selection()),  # type: ignore[arg-type]
+        access_policy=FakeAccessPolicy(),  # type: ignore[arg-type]
+        jobs=jobs,  # type: ignore[arg-type]
+        users=FakeUsers(),  # type: ignore[arg-type]
+    )
+    callback = FakeCallback(data)
+    handler = "choose_instagram_image_delivery" if data.startswith("i2:") else "choose_media_bundle"
+
+    await _callback_handler(router, handler)(callback)
+
+    assert jobs.downloads == 0
+    assert queue.enqueued == 0
+    assert callback.answers[-1][1] is True
+
+
 def _callback_handler(router: object, name: str) -> Any:
     observer = router.observers["callback_query"]  # type: ignore[attr-defined]
     return next(item.callback for item in observer.handlers if item.callback.__name__ == name)
@@ -348,4 +430,34 @@ def _selection() -> SelectionRecord:
         allowed_modes=(DownloadMode.VIDEO_2160, DownloadMode.VIDEO_1080),
         created_at=now,
         expires_at=now + timedelta(minutes=10),
+    )
+
+
+def _instagram_selection() -> SelectionRecord:
+    now = datetime.now(UTC)
+    assets = (
+        MediaAsset(1, "image", MediaKind.IMAGE, "jpg", "image/jpeg", "post", "instagram"),
+        MediaAsset(2, "video", MediaKind.VIDEO, "mp4", "video/mp4", "post", "instagram"),
+    )
+    return SelectionRecord(
+        SelectionToken("opaque-token-123"),
+        20,
+        10,
+        MediaInfo(
+            "post",
+            "Mixed",
+            "instagram",
+            MediaKind.PLAYLIST,
+            "https://www.instagram.com/p/post/",
+            format_options=(
+                MediaFormatOption(
+                    DownloadMode.ALL_ORIGINAL_MEDIA,
+                    selected_format_ids=("image", "video"),
+                ),
+            ),
+            assets=assets,
+        ),
+        (DownloadMode.ALL_ORIGINAL_MEDIA,),
+        now,
+        now + timedelta(minutes=10),
     )

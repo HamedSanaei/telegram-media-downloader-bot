@@ -77,6 +77,15 @@ Only IDs in `telegram.admin_ids` can use:
 
 No command returns URLs, tokens, cookies, proxy data, internal exception text, or file paths.
 
+Each final inspection/download failure and every `delivery_uncertain` result is also sent privately
+to every unique configured administrator. Intermediate retries, cancellations, and successful jobs
+do not generate alerts. Alerts contain only the opaque job ID, job kind, normalized source,
+terminal status, stable error category, and attempt number. Each administrator must have opened the
+bot's private chat at least once; a blocked/unreachable administrator is counted in a redacted
+worker warning without preventing delivery to other administrators or changing the job outcome.
+Use `/failed` as the durable fallback because alert messages themselves are intentionally not
+stored or replayed.
+
 Weekly and monthly administrator charts are generated entirely in memory with Pillow. The font is
 `telegram_media_bot/assets/fonts/NotoSans-Regular.ttf`, licensed by the adjacent `OFL.txt`, and is
 loaded through `importlib.resources`; Windows, Linux, Docker, and clean wheel installs therefore use

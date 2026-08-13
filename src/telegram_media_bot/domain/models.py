@@ -160,6 +160,11 @@ class DeliveryMethod(StrEnum):
     PHOTO = "photo"
 
 
+class ImageDeliveryMode(StrEnum):
+    PHOTO = "photo"
+    DOCUMENT = "document"
+
+
 class DeliveryProvider(StrEnum):
     BOT_API = "bot_api"
     MULTIPART = "multipart"
@@ -259,6 +264,7 @@ class DownloadRequest:
     native_video_codec: NativeVideoCodec | None = None
     selected_format_ids: tuple[str, ...] = ()
     allow_collection: bool = False
+    image_delivery_mode: ImageDeliveryMode | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -276,6 +282,7 @@ class DownloadArtifact:
     mime_type: str | None = None
     title: str | None = None
     inline_video_streamable: bool = False
+    source_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +298,7 @@ class DownloadResult:
     mime_type: str | None = None
     artifacts: tuple[DownloadArtifact, ...] = ()
     inline_video_streamable: bool = False
+    image_delivery_mode: ImageDeliveryMode | None = None
 
     @property
     def delivery_artifacts(self) -> tuple[DownloadArtifact, ...]:
@@ -304,6 +312,7 @@ class DownloadResult:
                 mime_type=self.mime_type,
                 title=self.title,
                 inline_video_streamable=self.inline_video_streamable,
+                source_index=1,
             ),
         )
 
@@ -387,6 +396,7 @@ class JobRecord:
     container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY
     native_video_codec: NativeVideoCodec | None = None
     selected_format_ids: tuple[str, ...] = ()
+    image_delivery_mode: ImageDeliveryMode | None = None
     status_message_id: int | None = None
     source: str | None = None
     error_category: ErrorCategory | None = None

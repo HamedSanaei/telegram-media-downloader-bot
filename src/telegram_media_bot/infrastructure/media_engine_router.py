@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import shutil
+from dataclasses import replace
+from pathlib import Path
+
 import structlog
 
 from telegram_media_bot.application.ports.download_engine import (
@@ -10,13 +14,19 @@ from telegram_media_bot.application.ports.download_engine import (
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.domain.errors import (
     GalleryDlNoImagesError,
+    GalleryDlOutputChangedError,
     GalleryDlUnsupportedUrlError,
 )
 from telegram_media_bot.domain.models import (
     ComponentHealth,
+    ContainerPolicy,
+    DownloadArtifact,
+    DownloadMode,
     DownloadRequest,
     DownloadResult,
+    MediaAsset,
     MediaInfo,
+    MediaKind,
 )
 from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
 
@@ -60,10 +70,140 @@ class RoutedMediaEngine(DownloadEngine):
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
     ) -> DownloadResult:
-        engine: DownloadEngine = (
-            self._gallery if self._gallery.owns_mode(request.mode) else self._ytdlp
+        if not self._gallery.owns_mode(request.mode):
+            return self._ytdlp.download(
+                request,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+        info = self._gallery.inspect(request.url)
+        images = tuple(asset for asset in info.assets if asset.kind is MediaKind.IMAGE)
+        videos = tuple(asset for asset in info.assets if asset.kind is MediaKind.VIDEO)
+        if info.source.casefold() != "instagram" or not videos:
+            return self._gallery.download_inspected(
+                request,
+                info,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+        if request.mode is DownloadMode.VIDEOS_ONLY:
+            return self._download_instagram_videos(
+                request,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+        if request.mode is not DownloadMode.ALL_ORIGINAL_MEDIA:
+            return self._gallery.download_inspected(
+                request,
+                info,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+        return self._download_instagram_mixed(
+            request,
+            info,
+            images=images,
+            videos=videos,
+            progress=progress,
+            is_cancelled=is_cancelled,
         )
-        return engine.download(request, progress=progress, is_cancelled=is_cancelled)
+
+    def _download_instagram_videos(
+        self,
+        request: DownloadRequest,
+        *,
+        progress: ProgressSink | None,
+        is_cancelled: CancellationCheck | None,
+    ) -> DownloadResult:
+        return self._ytdlp.download(
+            replace(
+                request,
+                mode=DownloadMode.BEST_ORIGINAL,
+                container=None,
+                container_policy=ContainerPolicy.NATIVE_ONLY,
+                native_video_codec=None,
+                selected_format_ids=(),
+            ),
+            progress=progress,
+            is_cancelled=is_cancelled,
+        )
+
+    def _download_instagram_mixed(
+        self,
+        request: DownloadRequest,
+        info: MediaInfo,
+        *,
+        images: tuple[MediaAsset, ...],
+        videos: tuple[MediaAsset, ...],
+        progress: ProgressSink | None,
+        is_cancelled: CancellationCheck | None,
+    ) -> DownloadResult:
+        image_assets = tuple(asset for asset in info.assets if asset.kind is MediaKind.IMAGE)
+        video_assets = tuple(asset for asset in info.assets if asset.kind is MediaKind.VIDEO)
+        if len(image_assets) != len(images) or len(video_assets) != len(videos):
+            raise GalleryDlOutputChangedError("Instagram media plan changed during routing")
+        image_directory = request.output_directory / "images"
+        video_directory = request.output_directory / "videos"
+        video_temp_directory = (
+            request.temp_directory / "videos" if request.temp_directory is not None else None
+        )
+        try:
+            image_result = self._gallery.download_inspected(
+                replace(
+                    request,
+                    mode=DownloadMode.IMAGES_ONLY,
+                    output_directory=image_directory,
+                    selected_format_ids=tuple(asset.asset_id for asset in image_assets),
+                ),
+                info,
+                is_cancelled=is_cancelled,
+            )
+            video_result = self._download_instagram_videos(
+                replace(
+                    request,
+                    output_directory=video_directory,
+                    temp_directory=video_temp_directory,
+                ),
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+            downloaded_images = image_result.delivery_artifacts
+            downloaded_videos = video_result.delivery_artifacts
+            if len(downloaded_images) != len(image_assets):
+                raise GalleryDlOutputChangedError("Instagram image count changed during download")
+            if len(downloaded_videos) != len(video_assets) or any(
+                artifact.kind is not MediaKind.VIDEO for artifact in downloaded_videos
+            ):
+                raise GalleryDlOutputChangedError("yt-dlp Instagram video count changed")
+            ordered: list[DownloadArtifact] = []
+            ordered.extend(downloaded_images)
+            ordered.extend(
+                replace(artifact, source_index=asset.index)
+                for asset, artifact in zip(video_assets, downloaded_videos, strict=True)
+            )
+            if any(artifact.source_index is None for artifact in ordered):
+                raise GalleryDlOutputChangedError("Instagram source ordinal is missing")
+            ordered.sort(key=lambda artifact: artifact.source_index or 0)
+        except BaseException:
+            _cleanup_split_directory(image_directory)
+            _cleanup_split_directory(video_directory)
+            if video_temp_directory is not None:
+                _cleanup_split_directory(video_temp_directory)
+            raise
+        first = ordered[0]
+        return DownloadResult(
+            job_id=request.job_id,
+            media_id=info.media_id,
+            title=info.title,
+            source="instagram",
+            kind=MediaKind.PLAYLIST,
+            file_path=first.file_path,
+            file_size_bytes=sum(artifact.file_size_bytes for artifact in ordered),
+            mime_type=first.mime_type,
+            artifacts=tuple(ordered),
+            inline_video_streamable=first.inline_video_streamable,
+            image_delivery_mode=request.image_delivery_mode,
+        )
 
     def health(self) -> ComponentHealth:
         gallery = self._gallery.health()
@@ -74,3 +214,8 @@ class RoutedMediaEngine(DownloadEngine):
             healthy,
             f"yt-dlp={ytdlp.detail}; gallery-dl={gallery.detail}",
         )
+
+
+def _cleanup_split_directory(path: Path) -> None:
+    if path.is_dir():
+        shutil.rmtree(path)

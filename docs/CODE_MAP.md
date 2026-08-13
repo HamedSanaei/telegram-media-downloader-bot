@@ -7,6 +7,7 @@
 | `src/telegram_media_bot/application/services/` | Orchestrates inspection, policy limits, and selected downloads |
 | `src/telegram_media_bot/application/services/native_options.py` | Builds the public native-only option catalog, enforces codec/transcode invariants, chooses truthful representatives, deduplicates actual plans, and creates opaque option IDs |
 | `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
+| `src/telegram_media_bot/application/services/instagram_delivery.py` | Selects the complete Instagram image/mixed bundle behind the Photo/File confirmation |
 | `src/telegram_media_bot/application/services/url_canonicalization.py` | Parses YouTube URL intent, removes Mix context from single videos, and gives equivalent X/Twitter status-share URLs one query-free identity |
 | `src/telegram_media_bot/application/services/usage_analytics.py` | Builds Tehran-local usage reports and excludes configured administrators from public KPI aggregation |
 | `src/telegram_media_bot/application/ports/usage_analytics.py` | Framework-free usage activity and PNG renderer contracts |
@@ -15,8 +16,8 @@
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
 | `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, zero-transcode AV1/H.264 MP4 and VP9 WebM selection, narrow Twitter HLS audio-metadata inference, native/inline compatibility probing, and bounded explicit transcoding |
-| `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, explicit JSON Lines event contract, bounded output/cancellation, strict vendor tuple parsing/error mapping, stable asset normalization, and safe original-media download |
-| `src/telegram_media_bot/infrastructure/media_engine_router.py` | Inspection-result routing: image-containing social posts stay gallery-owned; video-only posts and non-gallery sources use yt-dlp |
+| `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, explicit JSON Lines event contract, bounded output/cancellation, strict vendor tuple parsing/error mapping, stable asset normalization, and safe original-image download with Instagram videos disabled when required |
+| `src/telegram_media_bot/infrastructure/media_engine_router.py` | Inspection-result routing and fail-closed mixed Instagram merge: gallery-dl images plus canonical-URL yt-dlp videos mapped to source ordinals |
 | `src/telegram_media_bot/infrastructure/image_validation.py` | Pillow signature/format/dimension/decompression-bomb validation without altering originals |
 | `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for AV1/H.264 MP4 and VP9 WebM selection, stream-copy arguments, and Best Original policy |
 | `src/telegram_media_bot/infrastructure/queue/` | ARQ enqueue plus official abort and transient-key finalization |
@@ -30,12 +31,12 @@
 | `src/telegram_media_bot/infrastructure/telegram/local_api.py` | Local Bot API lifecycle, durable migration, endpoint leases, and safe status |
 | `src/telegram_media_bot/infrastructure/archive/` | Safe 7-Zip multi-volume packaging, deterministic ordered image ZIPs, and SHA-256 manifests |
 | `src/telegram_media_bot/infrastructure/storage/` | Exact job-workspace cleanup, symlink-safe deletion, and startup/maintenance sweeping |
-| `src/telegram_media_bot/telegram/` | Versioned Back/Native callback dispatch, real-plan rendering, middleware, and tracked delivery adapter |
+| `src/telegram_media_bot/telegram/` | Versioned Back/Native/Instagram delivery callbacks, real-plan rendering, middleware, tracked exact-byte document delivery, and ordered ten-item media-group planning |
 | `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants, FSM state, and reply/inline keyboard builders |
 | `src/telegram_media_bot/telegram/admin_handlers.py` | Role-checked menu/download/report routing and per-admin report single-flight coordination |
 | `src/telegram_media_bot/telegram/handlers.py` | Shared URL submission, editable job-status ownership, active-job queue reconciliation, callbacks, and cancellation routing |
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction |
-| `src/telegram_media_bot/workers/` | ARQ worker settings and job functions, including edit-or-send inspection result publication |
+| `src/telegram_media_bot/workers/` | ARQ worker settings and job functions, including edit-or-send inspection publication, redacted terminal-failure alerts to configured administrators, retries, receipts, and workspace cleanup |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, and composition roots |
 | `tests/unit/` | Fast deterministic tests |
 | `tests/fixtures/` | Versioned configuration and sanitized upstream-metadata fixtures for network-free regression tests |
@@ -67,8 +68,9 @@
 
 ## Durable state ownership
 
-- `domain/models.py`: stable job, normalized selected-stream/native-option view, progress, selection, health, and delivery records;
+- `domain/models.py`: stable job, normalized selected-stream/native-option view, explicit image delivery mode, source ordinals, progress, selection, health, and delivery records;
 - `application/ports/job_repository.py`: persistence contract;
 - `infrastructure/persistence/sqlite_repository.py`: schema and transition implementation;
-- `workers/jobs.py`: transitions, retry, delivery progress/logging, per-item receipts, and cleanup;
+- `workers/jobs.py`: transitions, retry, delivery progress/logging, per-item receipts, redacted
+  terminal-failure administrator alerts, and cleanup;
 - `telegram/handlers.py`: owner validation, admin controls, and safe enqueue ordering.

@@ -21,6 +21,7 @@ from telegram_media_bot.domain.models import (
     DownloadMode,
     DownloadRequest,
     DownloadResult,
+    ImageDeliveryMode,
     JobId,
     MediaInfo,
     MediaKind,
@@ -75,6 +76,7 @@ class DownloadService:
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
         native_video_codec: NativeVideoCodec | None = None,
         selected_format_ids: tuple[str, ...] = (),
+        image_delivery_mode: ImageDeliveryMode | None = None,
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
     ) -> DownloadResult:
@@ -90,6 +92,7 @@ class DownloadService:
             native_video_codec=native_video_codec,
             selected_format_ids=selected_format_ids,
             allow_collection=info.source.casefold() == "instagram",
+            image_delivery_mode=image_delivery_mode,
         )
         result = self._engine.download(
             request,

@@ -9,6 +9,7 @@ from telegram_media_bot.application.services.url_canonicalization import canonic
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
+    ImageDeliveryMode,
     JobId,
     JobKind,
     JobRecord,
@@ -43,6 +44,7 @@ class JobService:
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
         native_video_codec: NativeVideoCodec | None = None,
         selected_format_ids: tuple[str, ...] = (),
+        image_delivery_mode: ImageDeliveryMode | None = None,
     ) -> tuple[JobRecord, bool]:
         container_policy = normalize_container_policy(mode, container_policy)
         return self._create(
@@ -55,6 +57,7 @@ class JobService:
             container_policy=container_policy,
             native_video_codec=native_video_codec,
             selected_format_ids=selected_format_ids,
+            image_delivery_mode=image_delivery_mode,
         )
 
     def _create(
@@ -69,6 +72,7 @@ class JobService:
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
         native_video_codec: NativeVideoCodec | None = None,
         selected_format_ids: tuple[str, ...] = (),
+        image_delivery_mode: ImageDeliveryMode | None = None,
     ) -> tuple[JobRecord, bool]:
         url = canonicalize_media_url(url).canonical_url
         key = _idempotency_key(
@@ -79,6 +83,7 @@ class JobService:
             container=container,
             native_video_codec=native_video_codec,
             selected_format_ids=selected_format_ids,
+            image_delivery_mode=image_delivery_mode,
         )
         existing = self._repository.find_active_job(key)
         if existing is not None:
@@ -99,6 +104,7 @@ class JobService:
             container_policy=container_policy,
             native_video_codec=native_video_codec,
             selected_format_ids=selected_format_ids,
+            image_delivery_mode=image_delivery_mode,
         )
         persisted = self._repository.create_job(candidate)
         return persisted, persisted.job_id == candidate.job_id
@@ -113,12 +119,15 @@ def _idempotency_key(
     container: OutputContainer | None = None,
     native_video_codec: NativeVideoCodec | None = None,
     selected_format_ids: tuple[str, ...] = (),
+    image_delivery_mode: ImageDeliveryMode | None = None,
 ) -> str:
     parts = [kind.value, str(user_id), url, mode.value if mode else "inspect"]
     if container is not None:
         parts.append(container.value)
     if native_video_codec is not None:
         parts.append(native_video_codec.value)
+    if image_delivery_mode is not None:
+        parts.append(image_delivery_mode.value)
     parts.extend(selected_format_ids)
     material = "\x00".join(parts)
     return hashlib.sha256(material.encode("utf-8")).hexdigest()

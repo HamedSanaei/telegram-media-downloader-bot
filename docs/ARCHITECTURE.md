@@ -57,6 +57,8 @@ The engine port exposes normalized project models:
 - `OutputContainer`/`ContainerPolicy` for native-only or guaranteed MP4/WebM/MP3 output;
 - `DownloadRequest` for semantic requests;
 - `DownloadResult`/`DownloadArtifact` for one or an ordered set of final files;
+- `ImageDeliveryMode` for an explicit Instagram photo-versus-document choice and
+  `DownloadArtifact.source_index` for transient source-order reconciliation;
 - `DeliveryProgressEvent` for packaging, byte transfer, and opaque finalization;
 - project exceptions for failure categories.
 
@@ -73,9 +75,20 @@ semantic mode, stable asset IDs, and normalized metadata. The worker re-inspects
 download so signed/expiring asset URLs are never durable.
 
 The router tries gallery-dl only for its supported social sources. An image-containing result makes
-it owner of the complete post; a typed no-images result selects yt-dlp. A malformed/bulk URL,
-authentication error, missing executable, rate limit, schema change, or unsafe output fails closed
-and is never disguised as video fallback.
+it owner of the post plan; a typed no-images result selects yt-dlp. For mixed Instagram posts,
+gallery-dl is invoked with `extractor.instagram.videos=false` in an isolated image sub-workspace,
+while yt-dlp receives only the canonical public post URL in a separate video sub-workspace. The
+router requires the exact expected video count, maps videos back to safe source ordinals, and merges
+all artifacts before delivery. A malformed/bulk URL, authentication error, missing executable,
+rate limit, schema change, count mismatch, or unsafe output fails closed and is never disguised as
+video fallback.
+
+Instagram selections containing images show an owner-bound `i2` callback with only the opaque
+selection token and `ImageDeliveryMode`. The nullable semantic is stored on the durable job and ARQ
+payload for backward-compatible recovery. Photo delivery chunks total source order into at most ten
+photo/video album items. Document delivery uses ordered same-type runs because Telegram document
+albums cannot mix with photo/video album items; singleton remainders use the matching direct API.
+No production image is resized, converted, recompressed, or otherwise rewritten.
 
 ## Processes
 
@@ -187,6 +200,15 @@ unlinked immediately. The worker then applies idempotent, symlink-safe cleanup t
 and uncertain delivery. Cleanup errors are logged and counted but never replace the primary job
 outcome. Startup and maintenance sweepers remove terminal workspaces immediately and unknown stale
 workspaces only after the orphan grace period; active jobs and storage-root sentinels are preserved.
+
+After a durable inspection/download job reaches `failed` or `delivery_uncertain`, the worker sends
+one best-effort private alert to every unique current `telegram.admin_ids` entry. Intermediate
+retries, cancellation, and successful jobs do not alert. The message is deliberately non-durable
+and contains only the opaque job ID, job kind, normalized source label, terminal status, stable
+error category, and attempt number; URLs, user/chat IDs, titles, paths, filenames, cookies, and raw
+exception text never enter the message. Per-recipient failures are isolated and logged only as
+aggregate counts and exception class names, so alert delivery cannot change the job outcome or
+prevent zero-retention cleanup.
 
 `best_original` is native-only and never transcoded. Public MP4 selection is a zero-transcode
 container contract supporting AV1/AAC and H.264/AAC: codec families are planned independently

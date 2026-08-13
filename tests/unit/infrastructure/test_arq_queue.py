@@ -4,7 +4,12 @@ from typing import Any, cast
 
 from arq.jobs import JobStatus as ArqJobStatus
 
-from telegram_media_bot.domain.models import DownloadMode, JobId, QueueJobStatus
+from telegram_media_bot.domain.models import (
+    DownloadMode,
+    ImageDeliveryMode,
+    JobId,
+    QueueJobStatus,
+)
 from telegram_media_bot.infrastructure.queue import arq_queue
 from telegram_media_bot.infrastructure.queue.arq_queue import ArqJobQueue
 
@@ -96,6 +101,7 @@ async def test_enqueue_payloads_use_canonical_youtube_video_url() -> None:
         url=raw,
         mode=DownloadMode.VIDEO_1080,
         selected_format_ids=("137", "140"),
+        image_delivery_mode=ImageDeliveryMode.DOCUMENT,
     )
 
     assert [call[1]["url"] for call in redis.calls] == [
@@ -103,3 +109,4 @@ async def test_enqueue_payloads_use_canonical_youtube_video_url() -> None:
         "https://www.youtube.com/watch?v=DGbwtVtthu8",
     ]
     assert redis.calls[1][1]["selected_format_ids"] == ["137", "140"]
+    assert redis.calls[1][1]["image_delivery_mode"] == "document"

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -15,7 +16,9 @@ from aiogram.types import (
     Document,
     FSInputFile,
     InputFile,
+    InputMediaDocument,
     InputMediaPhoto,
+    InputMediaVideo,
     Message,
     MessageId,
     PhotoSize,
@@ -31,15 +34,19 @@ from telegram_media_bot.domain.models import (
     DeliveryStage,
     DownloadArtifact,
     DownloadResult,
+    ImageDeliveryMode,
     JobId,
     MediaKind,
 )
 from telegram_media_bot.infrastructure.archive.multipart_zip import MultipartArchive
 from telegram_media_bot.telegram.delivery import (
+    TELEGRAM_MEDIA_GROUP_MAX_ITEMS,
     RoutedDeliveryGateway,
     TelegramDeliveryGateway,
     TrackedFSInputFile,
     _finalization_heartbeat,
+    build_instagram_delivery_batches,
+    chunk_media_items,
     render_caption,
 )
 
@@ -258,9 +265,9 @@ async def test_album_chunks_preserve_order_and_avoid_singleton_group(
     )
     bot = FakeBot()
 
-    receipt = await RoutedDeliveryGateway(cast(Bot, cast(Any, bot)), settings).deliver(
-        chat_id=1, result=result, caption="caption"
-    )
+    receipt = await RoutedDeliveryGateway(
+        cast(Bot, cast(Any, bot)), _auto_delivery(settings)
+    ).deliver(chat_id=1, result=result, caption="caption")
 
     assert [len(cast(list[object], call["media"])) for call in bot.uploads] == [9, 2]
     assert [item.ordinal for item in receipt.items] == list(range(1, 12))
@@ -616,6 +623,274 @@ async def test_multipart_cancellation_stops_active_archive_process(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert cancelled.is_set()
+
+
+def test_instagram_batch_planner_rejects_empty_and_invalid_limits(tmp_path: Path) -> None:
+    with pytest.raises(DeliveryError, match="empty"):
+        build_instagram_delivery_batches((), ImageDeliveryMode.PHOTO)
+    assert chunk_media_items(()) == ()
+    with pytest.raises(ValueError):
+        chunk_media_items((), max_items=0)
+    with pytest.raises(ValueError):
+        chunk_media_items((), max_items=TELEGRAM_MEDIA_GROUP_MAX_ITEMS + 1)
+
+
+@pytest.mark.parametrize(
+    ("count", "expected_request_sizes"),
+    [
+        (1, [1]),
+        (9, [9]),
+        (10, [10]),
+        (11, [10, 1]),
+        (20, [10, 10]),
+        (21, [10, 10, 1]),
+        (37, [10, 10, 10, 7]),
+    ],
+)
+async def test_instagram_photo_batches_preserve_every_source_item(
+    settings: Settings,
+    tmp_path: Path,
+    count: int,
+    expected_request_sizes: list[int],
+) -> None:
+    result = _instagram_result(tmp_path, [MediaKind.IMAGE] * count, ImageDeliveryMode.PHOTO)
+    bot = FakeBot()
+
+    receipt = await RoutedDeliveryGateway(cast(Bot, cast(Any, bot)), settings).deliver(
+        chat_id=1,
+        result=result,
+        caption="caption",
+    )
+
+    assert [
+        len(cast(list[object], upload["media"])) if "media" in upload else 1
+        for upload in bot.uploads
+    ] == expected_request_sizes
+    assert [item.ordinal for item in receipt.items] == list(range(1, count + 1))
+    assert len({item.ordinal for item in receipt.items}) == count
+    remaining = await asyncio.to_thread(
+        lambda: [
+            artifact.file_path
+            for artifact in result.delivery_artifacts
+            if artifact.file_path.exists()
+        ]
+    )
+    assert remaining == []
+
+
+@pytest.mark.parametrize(
+    ("suffix", "mime_type"),
+    [(".jpg", "image/jpeg"), (".png", "image/png"), (".webp", "image/webp")],
+)
+async def test_instagram_document_delivery_preserves_exact_bytes_and_format(
+    settings: Settings,
+    tmp_path: Path,
+    suffix: str,
+    mime_type: str,
+) -> None:
+    payload = b"exact-gallery-dl-original\x00bytes"
+    path = tmp_path / f"0001-image{suffix}"
+    path.write_bytes(payload)
+    result = DownloadResult(
+        job_id=JobId("exact-image"),
+        media_id="post",
+        title="Image",
+        source="instagram",
+        kind=MediaKind.IMAGE,
+        file_path=path,
+        file_size_bytes=len(payload),
+        mime_type=mime_type,
+        image_delivery_mode=ImageDeliveryMode.DOCUMENT,
+    )
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    bot = FakeBot()
+
+    receipt = await TelegramDeliveryGateway(cast(Bot, cast(Any, bot)), settings).deliver(
+        chat_id=1,
+        result=result,
+        caption="caption",
+    )
+
+    upload = cast(FSInputFile, bot.last_upload["document"])
+    upload_path = Path(upload.path)
+    assert receipt.method is DeliveryMethod.DOCUMENT
+    assert upload_path.suffix == suffix
+    delivered_bytes = await asyncio.to_thread(upload_path.read_bytes)
+    assert hashlib.sha256(delivered_bytes).hexdigest() == before
+    assert upload.filename is not None and upload.filename.endswith(suffix)
+
+
+async def test_instagram_document_albums_use_documents_and_exact_ten_boundaries(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    result = _instagram_result(
+        tmp_path,
+        [MediaKind.IMAGE] * 21,
+        ImageDeliveryMode.DOCUMENT,
+    )
+    bot = FakeBot()
+
+    await RoutedDeliveryGateway(cast(Bot, cast(Any, bot)), settings).deliver(
+        chat_id=1,
+        result=result,
+        caption="caption",
+    )
+
+    assert [
+        len(cast(list[object], upload["media"])) if "media" in upload else 1
+        for upload in bot.uploads
+    ] == [10, 10, 1]
+    for upload in bot.uploads[:2]:
+        assert all(
+            isinstance(item, InputMediaDocument) for item in cast(list[object], upload["media"])
+        )
+    assert "document" in bot.uploads[-1]
+
+
+async def test_instagram_mixed_photo_mode_keeps_image_image_video_image_order(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    kinds = [MediaKind.IMAGE, MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.IMAGE]
+    result = _instagram_result(tmp_path, kinds, ImageDeliveryMode.PHOTO)
+    bot = FakeBot()
+
+    receipt = await RoutedDeliveryGateway(cast(Bot, cast(Any, bot)), settings).deliver(
+        chat_id=1,
+        result=result,
+        caption="caption",
+    )
+
+    media = cast(list[object], bot.uploads[0]["media"])
+    assert [type(item) for item in media] == [
+        InputMediaPhoto,
+        InputMediaPhoto,
+        InputMediaVideo,
+        InputMediaPhoto,
+    ]
+    assert [item.ordinal for item in receipt.items] == [1, 2, 3, 4]
+
+
+async def test_instagram_mixed_document_mode_uses_ordered_type_runs(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    kinds = [MediaKind.IMAGE, MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.IMAGE]
+    result = _instagram_result(tmp_path, kinds, ImageDeliveryMode.DOCUMENT)
+    bot = FakeBot()
+
+    receipt = await RoutedDeliveryGateway(
+        cast(Bot, cast(Any, bot)), _auto_delivery(settings)
+    ).deliver(
+        chat_id=1,
+        result=result,
+        caption="caption",
+    )
+
+    assert [
+        len(cast(list[object], upload["media"])) if "media" in upload else 1
+        for upload in bot.uploads
+    ] == [2, 1, 1]
+    assert all(
+        isinstance(item, InputMediaDocument) for item in cast(list[object], bot.uploads[0]["media"])
+    )
+    assert "video" in bot.uploads[1]
+    assert "document" in bot.uploads[2]
+    assert [item.ordinal for item in receipt.items] == [1, 2, 3, 4]
+
+
+async def test_instagram_cancellation_is_checked_between_media_groups(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    cancelled = False
+
+    class CancellingBot(FakeBot):
+        async def send_media_group(self, **kwargs: object) -> list[Message]:
+            nonlocal cancelled
+            messages = await super().send_media_group(**kwargs)
+            cancelled = True
+            return messages
+
+    result = _instagram_result(
+        tmp_path,
+        [MediaKind.IMAGE] * 21,
+        ImageDeliveryMode.PHOTO,
+    )
+    bot = CancellingBot()
+
+    with pytest.raises(asyncio.CancelledError):
+        await RoutedDeliveryGateway(cast(Bot, cast(Any, bot)), settings).deliver(
+            chat_id=1,
+            result=result,
+            caption="caption",
+            is_cancelled=lambda: cancelled,
+        )
+
+    assert len(bot.uploads) == 1
+
+
+async def test_instagram_failure_in_later_batch_stops_before_success_receipt(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    class FailingSecondBatchBot(FakeBot):
+        async def send_media_group(self, **kwargs: object) -> list[Message]:
+            if self.uploads:
+                raise TelegramNetworkError(
+                    method=SendMediaGroup(chat_id=1, media=cast(Any, kwargs["media"])),
+                    message="connection lost",
+                )
+            return await super().send_media_group(**kwargs)
+
+    result = _instagram_result(
+        tmp_path,
+        [MediaKind.IMAGE] * 20,
+        ImageDeliveryMode.PHOTO,
+    )
+
+    with pytest.raises(DeliveryError):
+        await RoutedDeliveryGateway(
+            cast(Bot, cast(Any, FailingSecondBatchBot())), settings
+        ).deliver(chat_id=1, result=result, caption="caption")
+
+
+def _instagram_result(
+    tmp_path: Path,
+    kinds: list[MediaKind],
+    mode: ImageDeliveryMode,
+) -> DownloadResult:
+    artifacts: list[DownloadArtifact] = []
+    for index, kind in enumerate(kinds, start=1):
+        suffix = ".jpg" if kind is MediaKind.IMAGE else ".mp4"
+        path = tmp_path / f"{index:04}{suffix}"
+        path.write_bytes(f"asset-{index}".encode())
+        artifacts.append(
+            DownloadArtifact(
+                file_path=path,
+                file_size_bytes=path.stat().st_size,
+                kind=kind,
+                mime_type="image/jpeg" if kind is MediaKind.IMAGE else "video/mp4",
+                title=f"Asset {index}",
+                inline_video_streamable=kind is MediaKind.VIDEO,
+                source_index=index,
+            )
+        )
+    first = artifacts[0]
+    return DownloadResult(
+        job_id=JobId("instagram-delivery"),
+        media_id="post",
+        title="Instagram post",
+        source="instagram",
+        kind=first.kind if len(artifacts) == 1 else MediaKind.PLAYLIST,
+        file_path=first.file_path,
+        file_size_bytes=sum(item.file_size_bytes for item in artifacts),
+        mime_type=first.mime_type,
+        artifacts=tuple(artifacts) if len(artifacts) > 1 else (),
+        inline_video_streamable=first.inline_video_streamable,
+        image_delivery_mode=mode,
+    )
 
 
 def _auto_delivery(settings: Settings) -> Settings:

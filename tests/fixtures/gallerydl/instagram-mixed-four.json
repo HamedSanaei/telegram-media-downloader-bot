@@ -1,0 +1,5 @@
+[2,{"category":"instagram","subcategory":"post","post_shortcode":"IG4","description":"Mixed post"}]
+[3,"https://cdn.example.invalid/one.jpg",{"category":"instagram","post_shortcode":"IG4","extension":"jpg","type":"image","num":1}]
+[3,"https://cdn.example.invalid/two.jpg",{"category":"instagram","post_shortcode":"IG4","extension":"jpg","type":"image","num":2}]
+[3,"ytdl:https://www.instagram.com/p/IG4/3.mp4",{"category":"instagram","post_shortcode":"IG4","extension":"mp4","type":"video","num":3,"duration":8}]
+[3,"https://cdn.example.invalid/four.jpg",{"category":"instagram","post_shortcode":"IG4","extension":"jpg","type":"image","num":4}]

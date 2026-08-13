@@ -141,10 +141,25 @@ class GalleryDlEngine:
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
     ) -> DownloadResult:
+        info = self.inspect(request.url)
+        return self.download_inspected(
+            request,
+            info,
+            progress=progress,
+            is_cancelled=is_cancelled,
+        )
+
+    def download_inspected(
+        self,
+        request: DownloadRequest,
+        info: MediaInfo,
+        *,
+        progress: ProgressSink | None = None,
+        is_cancelled: CancellationCheck | None = None,
+    ) -> DownloadResult:
         del progress
         if request.mode not in _GALLERY_MODES:
             raise DownloadFailedError("The gallery adapter does not own this semantic mode")
-        info = self.inspect(request.url)
         selected = set(request.selected_format_ids)
         planned = tuple(
             asset for asset in info.assets if not selected or asset.asset_id in selected
@@ -165,7 +180,17 @@ class GalleryDlEngine:
         if is_cancelled is not None and is_cancelled():
             raise JobCancelledError("Gallery download was cancelled")
         _cleanup_gallery_workspace(workspace)
-        provider, args = self._commands.download(request.url, workspace)
+        images_only = info.source.casefold() == "instagram" and request.mode in {
+            DownloadMode.IMAGE_ORIGINAL,
+            DownloadMode.IMAGES_ORIGINAL,
+            DownloadMode.IMAGES_ONLY,
+            DownloadMode.IMAGES_ZIP,
+        }
+        provider, args = self._commands.download(
+            request.url,
+            workspace,
+            images_only=images_only,
+        )
         try:
             with self._process_slot(is_cancelled):
                 result = self._runner.run(
@@ -183,9 +208,14 @@ class GalleryDlEngine:
             self._raise_process_failure(result, provider=provider, job_id=str(request.job_id))
         try:
             files = _validated_output_files(workspace)
-            if len(files) != len(info.assets):
+            downloaded_assets = (
+                tuple(asset for asset in info.assets if asset.kind is MediaKind.IMAGE)
+                if images_only
+                else info.assets
+            )
+            if len(files) != len(downloaded_assets):
                 raise GalleryDlOutputChangedError("gallery-dl file count differs from inspection")
-            paired = tuple(zip(info.assets, files, strict=True))
+            paired = tuple(zip(downloaded_assets, files, strict=True))
             kept: list[tuple[MediaAsset, Path]] = []
             selected_ids = {asset.asset_id for asset in planned}
             for asset, path in paired:
@@ -243,6 +273,7 @@ class GalleryDlEngine:
                 inline_video_streamable=(
                     is_inline_video_streamable(path) if asset.kind is MediaKind.VIDEO else False
                 ),
+                source_index=asset.index,
             )
             for asset, path in kept
         )
@@ -267,8 +298,11 @@ class GalleryDlEngine:
             file_path=first.file_path,
             file_size_bytes=total,
             mime_type=first.mime_type,
-            artifacts=artifacts if len(artifacts) > 1 else (),
+            artifacts=(
+                artifacts if len(artifacts) > 1 or request.image_delivery_mode is not None else ()
+            ),
             inline_video_streamable=first.inline_video_streamable,
+            image_delivery_mode=request.image_delivery_mode,
         )
 
     def health(self) -> ComponentHealth:

@@ -11,6 +11,7 @@ from telegram_media_bot.domain.models import (
     DeliveryStage,
     DownloadMode,
     JobId,
+    MediaAsset,
     MediaFormatOption,
     MediaInfo,
     MediaKind,
@@ -30,7 +31,9 @@ from telegram_media_bot.telegram.ui import (
     BACK_TEXT,
     cancellation_keyboard,
     container_keyboard,
+    instagram_image_delivery_keyboard,
     render_delivery_progress,
+    render_instagram_image_delivery_prompt,
     render_media_info,
     render_progress,
     selection_keyboard,
@@ -124,6 +127,50 @@ def test_media_and_progress_ui_use_owned_models_only() -> None:
     assert cancellation_keyboard(JobId("job")).inline_keyboard[0][0].callback_data == "cancel:job"
     assert "50٪" in render_progress(50, 512, 1024)
     assert "فشرده‌سازی" in render_progress(None, 0, None, status="transcoding")
+
+
+def test_instagram_image_post_ui_offers_only_photo_file_and_cancel() -> None:
+    now = datetime.now(UTC)
+    assets = (
+        MediaAsset(1, "image", MediaKind.IMAGE, "jpg", "image/jpeg", "post", "instagram"),
+        MediaAsset(2, "video", MediaKind.VIDEO, "mp4", "video/mp4", "post", "instagram"),
+    )
+    info = MediaInfo(
+        "post",
+        "Mixed",
+        "instagram",
+        MediaKind.PLAYLIST,
+        "https://www.instagram.com/p/post/",
+        format_options=(
+            MediaFormatOption(
+                DownloadMode.ALL_ORIGINAL_MEDIA,
+                selected_format_ids=("image", "video"),
+            ),
+        ),
+        assets=assets,
+    )
+    selection = SelectionRecord(
+        SelectionToken("opaque-token-123"),
+        1,
+        1,
+        info,
+        (DownloadMode.ALL_ORIGINAL_MEDIA,),
+        now,
+        now + timedelta(minutes=1),
+    )
+
+    keyboard = instagram_image_delivery_keyboard(selection)
+    callbacks = [row[0].callback_data for row in keyboard.inline_keyboard]
+
+    assert callbacks == [
+        "i2:opaque-token-123:photo",
+        "i2:opaque-token-123:document",
+        "n2:opaque-token-123:s",
+    ]
+    assert all(item is not None and len(item.encode("utf-8")) <= 64 for item in callbacks)
+    prompt = render_instagram_image_delivery_prompt(info)
+    assert "1 تصویر" in prompt
+    assert "1 ویدیو" in prompt
 
 
 def test_filename_and_caption_are_sanitized() -> None:

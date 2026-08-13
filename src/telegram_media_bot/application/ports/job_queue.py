@@ -3,6 +3,7 @@ from typing import Protocol
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
+    ImageDeliveryMode,
     JobAbortResult,
     JobId,
     NativeVideoCodec,
@@ -34,6 +35,7 @@ class JobQueue(Protocol):
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
         native_video_codec: NativeVideoCodec | None = None,
         selected_format_ids: tuple[str, ...] = (),
+        image_delivery_mode: ImageDeliveryMode | None = None,
     ) -> JobId:
         """Enqueue a download and return its opaque project job ID."""
         ...

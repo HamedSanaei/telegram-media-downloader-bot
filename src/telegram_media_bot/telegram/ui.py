@@ -10,8 +10,10 @@ from telegram_media_bot.application.services.native_options import (
 from telegram_media_bot.domain.models import (
     DeliveryProgressEvent,
     DeliveryStage,
+    ImageDeliveryMode,
     JobId,
     MediaInfo,
+    MediaKind,
     OutputContainer,
     RequiredChannel,
     SelectionRecord,
@@ -126,6 +128,50 @@ def media_bundle_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
     ]
     rows.append([InlineKeyboardButton(text="❌ لغو", callback_data=f"n2:{selection.token}:s")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def instagram_image_delivery_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🖼 ارسال به‌صورت عکس",
+                    callback_data=(f"i2:{selection.token}:{ImageDeliveryMode.PHOTO.value}"),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📎 ارسال به‌صورت فایل",
+                    callback_data=(f"i2:{selection.token}:{ImageDeliveryMode.DOCUMENT.value}"),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ لغو",
+                    callback_data=f"n2:{selection.token}:s",
+                )
+            ],
+        ]
+    )
+
+
+def render_instagram_image_delivery_prompt(info: MediaInfo) -> str:
+    image_count = sum(asset.kind is MediaKind.IMAGE for asset in info.assets)
+    video_count = sum(asset.kind is MediaKind.VIDEO for asset in info.assets)
+    counts = f"این پست شامل {image_count} تصویر"
+    if video_count:
+        counts += f" و {video_count} ویدیو"
+    return "\n".join(
+        (
+            render_media_info(info),
+            "",
+            f"{counts} است.",
+            "نحوه ارسال تصاویر را انتخاب کنید:",
+            "",
+            "🖼 عکس — نمایش مستقیم در تلگرام؛ ممکن است تلگرام تصویر را فشرده کند.",
+            "📎 فایل — فایل اصلی بدون فشرده‌سازی تلگرام.",
+        )
+    )
 
 
 def required_channels_keyboard(

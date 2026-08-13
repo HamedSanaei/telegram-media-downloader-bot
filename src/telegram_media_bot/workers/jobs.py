@@ -21,6 +21,9 @@ from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.application.ports.user_repository import UserRepository
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.error_policy import error_category
+from telegram_media_bot.application.services.instagram_delivery import (
+    requires_instagram_image_confirmation,
+)
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.application.services.native_options import build_native_option_catalog
 from telegram_media_bot.application.services.progress import (
@@ -57,6 +60,7 @@ from telegram_media_bot.domain.models import (
     DeliveryStage,
     DownloadMode,
     ErrorCategory,
+    ImageDeliveryMode,
     JobId,
     JobKind,
     JobStatus,
@@ -93,8 +97,10 @@ from telegram_media_bot.telegram.texts import (
 )
 from telegram_media_bot.telegram.ui import (
     container_keyboard,
+    instagram_image_delivery_keyboard,
     media_bundle_keyboard,
     render_delivery_progress,
+    render_instagram_image_delivery_prompt,
     render_media_info,
     render_progress,
 )
@@ -208,8 +214,16 @@ async def process_inspection_job(
                 bot=bot,
                 chat_id=chat_id,
                 message_id=record.status_message_id,
-                text=render_media_info(info),
-                reply_markup=media_bundle_keyboard(selection),
+                text=(
+                    render_instagram_image_delivery_prompt(info)
+                    if requires_instagram_image_confirmation(info)
+                    else render_media_info(info)
+                ),
+                reply_markup=(
+                    instagram_image_delivery_keyboard(selection)
+                    if requires_instagram_image_confirmation(info)
+                    else media_bundle_keyboard(selection)
+                ),
             )
             await asyncio.to_thread(repository.set_status_message, job_id, status_message_id)
             await asyncio.to_thread(
@@ -372,6 +386,19 @@ async def process_inspection_job(
         )
         metrics.record_job(outcome="failed", error=ErrorCategory.INTERNAL.value)
         await _notify_failure(ctx, chat_id, record.status_message_id if record else None)
+        await _notify_admins_of_terminal_failure(
+            ctx,
+            job_id=job_id,
+            kind=JobKind.INSPECTION,
+            source=(
+                terminal_record.source
+                if (terminal_record := repository.get_job(job_id)) is not None
+                else None
+            ),
+            status=JobStatus.FAILED,
+            category=ErrorCategory.INTERNAL,
+            attempt=attempt,
+        )
         await logger.aexception("inspection_unexpected_failure", job_id=job_id)
         return str(job_id)
     finally:
@@ -422,6 +449,7 @@ async def process_download_job(
     container_policy: str = ContainerPolicy.NATIVE_ONLY.value,
     native_video_codec: str | None = None,
     selected_format_ids: list[str] | tuple[str, ...] | None = None,
+    image_delivery_mode: str | None = None,
 ) -> str:
     url = canonicalize_media_url(url).canonical_url
     settings = cast(Settings, ctx["settings"])
@@ -502,6 +530,11 @@ async def process_download_job(
             NativeVideoCodec(native_video_codec) if native_video_codec else None
         )
         selected_ids = tuple(selected_format_ids or record.selected_format_ids)
+        selected_image_delivery_mode = (
+            ImageDeliveryMode(image_delivery_mode)
+            if image_delivery_mode
+            else record.image_delivery_mode
+        )
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
         reporter = asyncio.create_task(
             _report_progress(
@@ -517,6 +550,8 @@ async def process_download_job(
             "progress": progress_sink if record.status_message_id is not None else None,
             "is_cancelled": cancellation,
         }
+        if selected_image_delivery_mode is not None:
+            common_download_arguments["image_delivery_mode"] = selected_image_delivery_mode
         if selected_ids:
             common_download_arguments["selected_format_ids"] = selected_ids
         if selected_container is not None:
@@ -559,6 +594,7 @@ async def process_download_job(
             ),
             progress=delivery_progress_sink,
             item_delivered=persist_delivery_item,
+            is_cancelled=cancellation,
         )
         if cancellation():
             raise JobCancelledError("Download was cancelled during delivery")
@@ -655,6 +691,19 @@ async def process_download_job(
             record.status_message_id if record else None,
             DELIVERY_UNCERTAIN_TEXT,
         )
+        await _notify_admins_of_terminal_failure(
+            ctx,
+            job_id=job_id,
+            kind=JobKind.DOWNLOAD,
+            source=(
+                terminal_record.source
+                if (terminal_record := repository.get_job(job_id)) is not None
+                else None
+            ),
+            status=JobStatus.DELIVERY_UNCERTAIN,
+            category=ErrorCategory.DELIVERY_UNCERTAIN,
+            attempt=attempt,
+        )
         progress_fields: dict[str, object] = {}
         if last_delivery_progress is not None:
             progress_fields = {
@@ -729,6 +778,19 @@ async def process_download_job(
         metrics.record_job(outcome="failed", error=ErrorCategory.INTERNAL.value)
         await _record_failed_usage(repository, job_id, user_id)
         await _notify_failure(ctx, chat_id, record.status_message_id if record else None)
+        await _notify_admins_of_terminal_failure(
+            ctx,
+            job_id=job_id,
+            kind=JobKind.DOWNLOAD,
+            source=(
+                terminal_record.source
+                if (terminal_record := repository.get_job(job_id)) is not None
+                else None
+            ),
+            status=JobStatus.FAILED,
+            category=ErrorCategory.INTERNAL,
+            attempt=attempt,
+        )
         await logger.aexception("download_unexpected_failure", job_id=job_id)
         return str(job_id)
     finally:
@@ -843,6 +905,15 @@ async def _handle_controlled_failure(
         chat_id,
         record.status_message_id if record else None,
         _controlled_failure_text(exc),
+    )
+    await _notify_admins_of_terminal_failure(
+        ctx,
+        job_id=job_id,
+        kind=record.kind if record is not None else JobKind.DOWNLOAD,
+        source=record.source if record is not None else None,
+        status=JobStatus.FAILED,
+        category=category,
+        attempt=attempt,
     )
     await logger.awarning(
         "job_controlled_failure",
@@ -970,6 +1041,65 @@ async def _notify(ctx: dict[str, Any], chat_id: int, message_id: int | None, tex
         await delivery.send_text(chat_id, text)
     except DeliveryError as exc:
         await logger.awarning("telegram_notification_failed", error_type=type(exc).__name__)
+
+
+async def _notify_admins_of_terminal_failure(
+    ctx: dict[str, Any],
+    *,
+    job_id: JobId,
+    kind: JobKind,
+    source: str | None,
+    status: JobStatus,
+    category: ErrorCategory,
+    attempt: int,
+) -> None:
+    settings = cast(Settings, ctx["settings"])
+    admin_ids = tuple(dict.fromkeys(settings.telegram.admin_ids))
+    if not admin_ids:
+        return
+    bot = cast(Bot, ctx["bot"])
+    text = (
+        "🚨 خطای نهایی پردازش\n"
+        f"شناسه کار: {job_id}\n"
+        f"نوع کار: {kind.value}\n"
+        f"منبع: {_safe_admin_source(source)}\n"
+        f"وضعیت: {status.value}\n"
+        f"دسته خطا: {category.value}\n"
+        f"تلاش: {attempt}"
+    )
+    results = await asyncio.gather(
+        *(bot.send_message(chat_id=admin_id, text=text) for admin_id in admin_ids),
+        return_exceptions=True,
+    )
+    failures = tuple(result for result in results if isinstance(result, BaseException))
+    log_fields = {
+        "job_id": job_id,
+        "job_kind": kind.value,
+        "status": status.value,
+        "error_category": category.value,
+        "attempt": attempt,
+        "recipient_count": len(admin_ids),
+        "sent_count": len(admin_ids) - len(failures),
+        "failed_count": len(failures),
+    }
+    if failures:
+        await logger.awarning(
+            "admin_failure_notification_incomplete",
+            **log_fields,
+            error_types=sorted({type(failure).__name__ for failure in failures}),
+        )
+        return
+    await logger.ainfo("admin_failure_notification_completed", **log_fields)
+
+
+def _safe_admin_source(source: str | None) -> str:
+    if source is None or not 1 <= len(source) <= 32:
+        return "unknown"
+    if not all(
+        character.isascii() and (character.isalnum() or character in "_-") for character in source
+    ):
+        return "unknown"
+    return source.casefold()
 
 
 async def _safe_edit(delivery: DeliveryGateway, chat_id: int, message_id: int, text: str) -> None:

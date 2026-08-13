@@ -24,9 +24,11 @@ from telegram_media_bot.domain.errors import (
 )
 from telegram_media_bot.domain.models import (
     ComponentHealth,
+    DownloadArtifact,
     DownloadMode,
     DownloadRequest,
     DownloadResult,
+    ImageDeliveryMode,
     JobId,
     MediaInfo,
     MediaKind,
@@ -219,6 +221,25 @@ def test_legacy_instagram_cookie_is_not_shared(settings: Settings, tmp_path: Pat
     assert str(legacy) not in commands.inspection("https://x.com/example/status/123")[1]
 
 
+def test_instagram_image_download_explicitly_disables_gallery_video_downloads(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    commands = GalleryDlCommandBuilder(settings.gallery_dl, None)
+
+    _provider, args = commands.download(
+        "https://instagram.com/p/abc123/",
+        tmp_path,
+        images_only=True,
+    )
+
+    option_index = args.index("-o")
+    assert args[option_index : option_index + 2] == [
+        "-o",
+        "extractor.instagram.videos=false",
+    ]
+
+
 def test_safe_nonzero_mapping_does_not_expose_stderr() -> None:
     error = map_process_failure(1, _fixture("instagram-auth-required.txt"))
     assert isinstance(error, GalleryDlAuthenticationRequiredError)
@@ -285,6 +306,7 @@ class _FixtureRunner:
     def __init__(self, payload: bytes) -> None:
         self.payload = payload
         self.inspections = 0
+        self.download_commands: list[list[str]] = []
 
     def run(
         self,
@@ -301,9 +323,12 @@ class _FixtureRunner:
             self.inspections += 1
             return GalleryProcessResult(0, self.payload, b"", 0.01)
         workspace = Path(args[args.index("--directory") + 1])
+        self.download_commands.append(args)
         events = [event for event in _fixture_payload_events(self.payload) if event[0] == 3]
         for index, event in enumerate(events, start=1):
             metadata = event[2]
+            if "extractor.instagram.videos=false" in args and metadata["type"] == "video":
+                continue
             extension = metadata["extension"]
             path = workspace / f"{index:04}-{metadata['type']}.{extension}"
             if metadata["type"] in {"image", "photo"}:
@@ -486,6 +511,120 @@ def test_router_keeps_mixed_instagram_ytdl_post_gallery_owned(settings: Settings
     assert ytdlp.inspected == []
     assert "cdn.example.invalid" not in repr(info)
     assert "ytdl:" not in repr(info)
+
+
+def test_router_downloads_mixed_instagram_images_with_gallery_and_video_with_ytdlp(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    runner = _FixtureRunner(_fixture("instagram-mixed-four.json"))
+    gallery = GalleryDlEngine(settings, runner=cast(GalleryDlRunner, runner))
+    gallery._validator = cast(Any, _AllowValidator())
+
+    class VideoEngine(_FakeEngine):
+        def __init__(self) -> None:
+            super().__init__()
+            self.downloaded: list[DownloadRequest] = []
+
+        def download(self, request: DownloadRequest, **_kwargs: object) -> DownloadResult:
+            self.downloaded.append(request)
+            request.output_directory.mkdir(parents=True)
+            path = request.output_directory / "0001.mp4"
+            path.write_bytes(b"yt-dlp-video")
+            return DownloadResult(
+                job_id=request.job_id,
+                media_id="IG4",
+                title="Video",
+                source="instagram",
+                kind=MediaKind.VIDEO,
+                file_path=path,
+                file_size_bytes=path.stat().st_size,
+                mime_type="video/mp4",
+                inline_video_streamable=True,
+            )
+
+    ytdlp = VideoEngine()
+    router = RoutedMediaEngine(gallery, cast(DownloadEngine, ytdlp))
+    info = router.inspect("https://www.instagram.com/p/IG4/")
+    option = next(
+        item for item in info.format_options if item.mode is DownloadMode.ALL_ORIGINAL_MEDIA
+    )
+
+    result = router.download(
+        DownloadRequest(
+            job_id=JobId("mixed-job"),
+            url=info.webpage_url,
+            mode=option.mode,
+            output_directory=tmp_path / "job",
+            temp_directory=tmp_path / "temp",
+            selected_format_ids=option.selected_format_ids,
+            allow_collection=True,
+            image_delivery_mode=ImageDeliveryMode.PHOTO,
+        )
+    )
+
+    assert [item.kind for item in result.artifacts] == [
+        MediaKind.IMAGE,
+        MediaKind.IMAGE,
+        MediaKind.VIDEO,
+        MediaKind.IMAGE,
+    ]
+    assert [item.source_index for item in result.artifacts] == [1, 2, 3, 4]
+    assert len(ytdlp.downloaded) == 1
+    assert ytdlp.downloaded[0].url == "https://www.instagram.com/p/IG4/"
+    assert ytdlp.downloaded[0].selected_format_ids == ()
+    assert ytdlp.downloaded[0].output_directory.name == "videos"
+    assert "extractor.instagram.videos=false" in runner.download_commands[0]
+    assert "cdn.example.invalid" not in repr(result)
+    assert "ytdl:" not in repr(result)
+
+
+def test_router_fails_closed_when_ytdlp_video_count_does_not_match_plan(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    runner = _FixtureRunner(_fixture("instagram-mixed-four.json"))
+    gallery = GalleryDlEngine(settings, runner=cast(GalleryDlRunner, runner))
+    gallery._validator = cast(Any, _AllowValidator())
+
+    class ExtraVideoEngine(_FakeEngine):
+        def download(self, request: DownloadRequest, **_kwargs: object) -> DownloadResult:
+            request.output_directory.mkdir(parents=True)
+            artifacts: list[DownloadArtifact] = []
+            for index in (1, 2):
+                path = request.output_directory / f"{index:04}.mp4"
+                path.write_bytes(b"video")
+                artifacts.append(
+                    DownloadArtifact(path, 5, MediaKind.VIDEO, "video/mp4", f"Video {index}")
+                )
+            return DownloadResult(
+                request.job_id,
+                "IG4",
+                "Videos",
+                "instagram",
+                MediaKind.PLAYLIST,
+                artifacts[0].file_path,
+                10,
+                artifacts=tuple(artifacts),
+            )
+
+    router = RoutedMediaEngine(gallery, cast(DownloadEngine, ExtraVideoEngine()))
+    info = router.inspect("https://www.instagram.com/p/IG4/")
+
+    with pytest.raises(GalleryDlOutputChangedError, match="video count"):
+        router.download(
+            DownloadRequest(
+                JobId("mismatch"),
+                info.webpage_url,
+                DownloadMode.ALL_ORIGINAL_MEDIA,
+                tmp_path / "job",
+                temp_directory=tmp_path / "temp",
+                image_delivery_mode=ImageDeliveryMode.PHOTO,
+            )
+        )
+
+    assert not (tmp_path / "job" / "images").exists()
+    assert not (tmp_path / "job" / "videos").exists()
 
 
 def test_router_never_turns_social_bulk_url_into_ytdlp_crawl(settings: Settings) -> None:

@@ -1,8 +1,21 @@
 # Handoff verification report
 
-Generated: 2026-07-30
+Generated: 2026-08-13
 
 ## Current change addendum
+
+- Version 1.2.0 adds an owner-bound Instagram Photo/Document decision before enqueue. Mixed posts
+  retain every source ordinal: gallery-dl supplies validated original images while yt-dlp receives
+  only the canonical Instagram post URL for videos. Media groups are deterministic and capped at
+  ten; document images retain the exact downloaded bytes and format.
+- Terminal inspection/download failures and `delivery_uncertain` states now notify every unique
+  `telegram.admin_ids` recipient after retries are exhausted. Alerts contain only opaque job and
+  stable classification fields; URLs, user/chat IDs, filenames, paths, cookies, titles, and raw
+  exceptions are excluded. One failed recipient does not affect other alerts, the terminal job
+  state, user notification, or cleanup.
+- Zero-retention was reverified for both download and temporary job directories after success,
+  failure, timeout, cancellation, and uncertain delivery. Durable job records remain governed by
+  `storage.job_retention_days`, and Telegram-delivered messages are not purged.
 
 - Version 1.0.10 replaces the v1.0.9 primitive-only RGB encoder with a 2200x1450 in-memory Pillow
   dashboard. Weekly/monthly images contain an English title, Tehran-local range, generated time,
@@ -155,20 +168,26 @@ session is present.
 
 - Runtime baseline: CPython 3.14.5, locked yt-dlp 2026.07.04.
 - `uv lock --check`: passed.
-- `uv sync --frozen --group dev`: passed; 81 installed packages checked.
+- `uv sync --frozen --group dev`: passed; 82 packages checked.
 - Ruff lint: passed.
-- Ruff format check: passed for 138 Python files.
-- Strict mypy: passed for 128 source/test files.
-- Default test suite: 337 passed, 8 skipped on this Windows host (the destructive large-file case,
-  6 Linux-only full-script Bash parse cases, and one unavailable unprivileged symlink case), and 11
-  external contracts deselected.
-- Core branch coverage: 82.57%, above the enforced 80% floor.
+- Ruff format check: passed for 157 Python files.
+- Strict mypy: passed for 146 source/test files.
+- Targeted gallery-dl/router, Twitter HLS, Telegram delivery/navigation/UI, worker/cleanup, and
+  persistence suite: 155 passed and 2 symlink tests skipped for unavailable Windows privilege.
+- Default test suite: 447 passed, 9 skipped on this Windows host (the destructive Local Bot API
+  upload, 6 Linux-only complete Bash parse cases, and 2 unavailable symlink cases), with 15 external
+  contracts deselected.
+- Core branch coverage: 82.43%, above the enforced 80% floor.
+- Contract runner: 3 offline contract smokes passed and 12 live cases skipped because operator
+  fixture URLs/config were absent. Enabling the gallery-dl-specific switch confirmed its four live
+  source contracts skip for the same missing operator configuration rather than fail.
 - Architecture boundary check: passed; only
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
 - Opt-in production regression contract: metadata-only inspection of the YouTube Mix URL passed in
   6.93 seconds as video `DGbwtVtthu8`, with canonical webpage URL and Native format options.
-- UTF-8/text integrity: passed for the complete 201-file tracked text set.
-- Deterministic source manifest regenerated and verified with 208 release entries.
+- UTF-8/text integrity: passed for 242 source text files.
+- Deterministic source manifest regenerated with 249 release entries and verified after the final
+  documentation update.
 - SQLite migration, WAL contention, atomic usage, and cancel-safe recovery tests passed.
 - Linux and Windows mocked `tmb update` tests passed for success, release-download failure, and
   checksum failure. Linux additionally passed permission rollback, candidate crash-state rollback,
@@ -178,16 +197,19 @@ session is present.
   Both platforms preserve fixture administrator IDs and all three required channels.
 - External extractor SDK: lock/sync passed; 1 default test passed and 1 contract was deselected.
 - `config.example.yaml`, Compose YAML, both workflow YAML files, and JSON schema parsed successfully.
-- PowerShell AST parsing: passed for all 5 scripts.
-- Bash syntax parsing: passed for all 6 scripts.
+- PowerShell AST parsing: passed for all 4 scripts.
+- Bash syntax parsing is deferred to CI because no Bash executable is installed on this host; all
+  6 release scripts are parsed by the required Linux jobs.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
-- Python 1.0.10 sdist and wheel builds passed, including bundled-font/OFL archive inspection and a
+- Python 1.2.0 sdist and wheel builds passed, including bundled-font/OFL archive inspection and a
   clean-wheel installation/resource/decode smoke.
 - The privileged filesystem/SQLite/Docker upgrade test could not start because no
   Docker, Podman, or Nerdctl executable is installed on this host.
-- `config.example.yaml` passed `config-check` without printing secrets.
+- Local `config.example.yaml` parsing is covered by the test suite; its runtime `config-check`
+  correctly rejects the container-only `/data/cookies/cookies.txt` path on this Windows host. The
+  required release image mounts a readable cookie fixture before running the same check.
 - `git diff --check`: passed.
 
 Tests cover all-channel membership, administrator bypass, cache behavior, proxy schemes and legacy

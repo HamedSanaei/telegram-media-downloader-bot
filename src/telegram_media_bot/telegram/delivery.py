@@ -5,7 +5,7 @@ import re
 import unicodedata
 from collections.abc import AsyncGenerator, Callable
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -16,12 +16,14 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import (
     FSInputFile,
     InputFile,
+    InputMediaDocument,
     InputMediaPhoto,
     InputMediaVideo,
     Message,
 )
 
 from telegram_media_bot.application.ports.delivery import (
+    DeliveryCancellationCheck,
     DeliveryGateway,
     DeliveryItemSink,
     DeliveryProgressSink,
@@ -38,7 +40,9 @@ from telegram_media_bot.domain.models import (
     DeliveryProvider,
     DeliveryReceipt,
     DeliveryStage,
+    DownloadArtifact,
     DownloadResult,
+    ImageDeliveryMode,
     MediaKind,
 )
 from telegram_media_bot.infrastructure.archive.multipart_zip import MultipartZipBuilder
@@ -46,6 +50,53 @@ from telegram_media_bot.infrastructure.archive.multipart_zip import MultipartZip
 logger = structlog.get_logger(__name__)
 _UNSAFE_FILENAME = re.compile(r"[^\w.()\- ]+", flags=re.UNICODE)
 _WHITESPACE = re.compile(r"\s+")
+TELEGRAM_MEDIA_GROUP_MAX_ITEMS = 10
+
+
+@dataclass(frozen=True, slots=True)
+class InstagramDeliveryBatch:
+    start_ordinal: int
+    artifacts: tuple[DownloadArtifact, ...]
+
+
+def chunk_media_items(
+    items: tuple[DownloadArtifact, ...],
+    *,
+    max_items: int = TELEGRAM_MEDIA_GROUP_MAX_ITEMS,
+) -> tuple[tuple[DownloadArtifact, ...], ...]:
+    if max_items < 1 or max_items > TELEGRAM_MEDIA_GROUP_MAX_ITEMS:
+        raise ValueError("Invalid Telegram media-group chunk size")
+    return tuple(items[start : start + max_items] for start in range(0, len(items), max_items))
+
+
+def build_instagram_delivery_batches(
+    artifacts: tuple[DownloadArtifact, ...],
+    mode: ImageDeliveryMode,
+) -> tuple[InstagramDeliveryBatch, ...]:
+    if not artifacts:
+        raise DeliveryError("Instagram delivery plan is empty")
+    if any(item.kind not in {MediaKind.IMAGE, MediaKind.VIDEO} for item in artifacts):
+        raise DeliveryError("Instagram delivery plan contains unsupported media")
+    groups: list[tuple[DownloadArtifact, ...]] = []
+    if mode is ImageDeliveryMode.PHOTO:
+        groups.extend(chunk_media_items(artifacts))
+    else:
+        run: list[DownloadArtifact] = []
+        run_is_image: bool | None = None
+        for artifact in artifacts:
+            is_image = artifact.kind is MediaKind.IMAGE
+            if run and is_image != run_is_image:
+                groups.extend(chunk_media_items(tuple(run)))
+                run = []
+            run.append(artifact)
+            run_is_image = is_image
+        groups.extend(chunk_media_items(tuple(run)))
+    batches: list[InstagramDeliveryBatch] = []
+    ordinal = 1
+    for group in groups:
+        batches.append(InstagramDeliveryBatch(ordinal, group))
+        ordinal += len(group)
+    return tuple(batches)
 
 
 class _AlbumRejectedError(DeliveryError):
@@ -65,12 +116,21 @@ class TelegramDeliveryGateway(DeliveryGateway):
         caption: str,
         progress: DeliveryProgressSink | None = None,
         item_delivered: DeliveryItemSink | None = None,
+        is_cancelled: DeliveryCancellationCheck | None = None,
     ) -> DeliveryReceipt:
+        if is_cancelled is not None and is_cancelled():
+            raise asyncio.CancelledError
         limit = self._settings.telegram.max_upload_size_mb * 1024 * 1024
         if result.file_size_bytes > limit:
             raise DeliveryTooLargeError("File exceeds the configured Telegram upload limit")
+        filename_source = (
+            result.file_path.stem
+            if result.image_delivery_mode is ImageDeliveryMode.DOCUMENT
+            and result.kind is MediaKind.IMAGE
+            else result.title
+        )
         filename = sanitize_filename(
-            result.title,
+            filename_source,
             suffix=result.file_path.suffix,
             max_length=self._settings.telegram.filename_max_length,
         )
@@ -152,14 +212,26 @@ class TelegramDeliveryGateway(DeliveryGateway):
         media: list[Any] = []
         methods: list[DeliveryMethod] = []
         for index, artifact in enumerate(result.artifacts):
+            filename_source = (
+                artifact.file_path.stem
+                if result.image_delivery_mode is ImageDeliveryMode.DOCUMENT
+                and artifact.kind is MediaKind.IMAGE
+                else artifact.title or result.title
+            )
             filename = sanitize_filename(
-                artifact.title or result.title,
+                filename_source,
                 suffix=artifact.file_path.suffix,
                 max_length=self._settings.telegram.filename_max_length,
             )
             upload = FSInputFile(artifact.file_path, filename=filename)
             item_caption = caption if index == 0 and caption else None
-            if artifact.kind is MediaKind.IMAGE and artifact.mime_type in {
+            if (
+                result.image_delivery_mode is ImageDeliveryMode.DOCUMENT
+                and artifact.kind is MediaKind.IMAGE
+            ):
+                media.append(InputMediaDocument(media=upload, caption=item_caption))
+                methods.append(DeliveryMethod.DOCUMENT)
+            elif artifact.kind is MediaKind.IMAGE and artifact.mime_type in {
                 "image/jpeg",
                 "image/png",
                 "image/webp",
@@ -285,6 +357,11 @@ class TelegramDeliveryGateway(DeliveryGateway):
 
     def _preferred_method(self, result: DownloadResult) -> DeliveryMethod:
         if (
+            result.image_delivery_mode is ImageDeliveryMode.DOCUMENT
+            and result.kind is MediaKind.IMAGE
+        ):
+            return DeliveryMethod.DOCUMENT
+        if (
             (
                 self._settings.telegram.upload_as_document
                 and result.kind is MediaKind.VIDEO
@@ -328,7 +405,17 @@ class RoutedDeliveryGateway(DeliveryGateway):
         caption: str,
         progress: DeliveryProgressSink | None = None,
         item_delivered: DeliveryItemSink | None = None,
+        is_cancelled: DeliveryCancellationCheck | None = None,
     ) -> DeliveryReceipt:
+        if result.image_delivery_mode is not None and result.source.casefold() == "instagram":
+            return await self._deliver_instagram_media(
+                chat_id=chat_id,
+                result=result,
+                caption=caption,
+                progress=progress,
+                item_delivered=item_delivered,
+                is_cancelled=is_cancelled,
+            )
         if result.artifacts:
             return await self._deliver_artifacts(
                 chat_id=chat_id,
@@ -336,6 +423,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 caption=caption,
                 progress=progress,
                 item_delivered=item_delivered,
+                is_cancelled=is_cancelled,
             )
         return await self._deliver_one(
             chat_id=chat_id,
@@ -343,6 +431,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
             caption=caption,
             progress=progress,
             item_delivered=item_delivered,
+            is_cancelled=is_cancelled,
         )
 
     async def _deliver_one(
@@ -353,7 +442,10 @@ class RoutedDeliveryGateway(DeliveryGateway):
         caption: str,
         progress: DeliveryProgressSink | None,
         item_delivered: DeliveryItemSink | None,
+        is_cancelled: DeliveryCancellationCheck | None,
     ) -> DeliveryReceipt:
+        if is_cancelled is not None and is_cancelled():
+            raise asyncio.CancelledError
         direct_limit = self._settings.telegram.max_upload_size_mb * 1024 * 1024
         if result.file_size_bytes <= direct_limit:
             return await self._direct.deliver(
@@ -362,7 +454,13 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 caption=caption,
                 progress=progress,
                 item_delivered=item_delivered,
+                is_cancelled=is_cancelled,
             )
+        if (
+            result.image_delivery_mode is ImageDeliveryMode.DOCUMENT
+            and result.kind is MediaKind.IMAGE
+        ):
+            raise DeliveryTooLargeError("Original image exceeds the direct Telegram upload limit")
         if not self._settings.multipart.enabled:
             raise DeliveryTooLargeError("Multipart delivery is disabled")
         return await self._deliver_multipart(
@@ -371,6 +469,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
             caption=caption,
             progress=progress,
             item_delivered=item_delivered,
+            is_cancelled=is_cancelled,
         )
 
     async def _deliver_artifacts(
@@ -381,6 +480,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
         caption: str,
         progress: DeliveryProgressSink | None,
         item_delivered: DeliveryItemSink | None,
+        is_cancelled: DeliveryCancellationCheck | None,
     ) -> DeliveryReceipt:
         direct_limit = self._settings.telegram.max_upload_size_mb * 1024 * 1024
         album_limit = self._settings.gallery_dl.album_max_items
@@ -404,6 +504,8 @@ class RoutedDeliveryGateway(DeliveryGateway):
             album_receipts: list[DeliveryItemReceipt] = []
             start = 0
             while start < len(result.artifacts):
+                if is_cancelled is not None and is_cancelled():
+                    raise asyncio.CancelledError
                 end = min(start + album_limit, len(result.artifacts))
                 if len(result.artifacts) - end == 1:
                     end -= 1
@@ -455,6 +557,8 @@ class RoutedDeliveryGateway(DeliveryGateway):
         completed_bytes = 0
         total_bytes = result.total_file_size_bytes
         for artifact_index, artifact in enumerate(result.artifacts, start=1):
+            if is_cancelled is not None and is_cancelled():
+                raise asyncio.CancelledError
             child = DownloadResult(
                 job_id=result.job_id,
                 media_id=result.media_id,
@@ -505,6 +609,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 caption=f"{caption}\nرسانه {artifact_index} از {len(result.artifacts)}",  # noqa: RUF001
                 progress=map_progress,
                 item_delivered=persist_item,
+                is_cancelled=is_cancelled,
             )
             receipts.extend(
                 replace(item, ordinal=ordinal_offset + item.ordinal) for item in child_receipt.items
@@ -515,6 +620,182 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 cleanup_reason="artifact_delivered",
             )
             completed_bytes += artifact.file_size_bytes
+        return DeliveryReceipt(items=tuple(receipts))
+
+    async def _deliver_instagram_media(
+        self,
+        *,
+        chat_id: int,
+        result: DownloadResult,
+        caption: str,
+        progress: DeliveryProgressSink | None,
+        item_delivered: DeliveryItemSink | None,
+        is_cancelled: DeliveryCancellationCheck | None,
+    ) -> DeliveryReceipt:
+        mode = result.image_delivery_mode
+        if mode is None:
+            raise DeliveryError("Instagram image delivery mode is missing")
+        artifacts = result.delivery_artifacts
+        batches = build_instagram_delivery_batches(artifacts, mode)
+        direct_limit = self._settings.telegram.max_upload_size_mb * 1024 * 1024
+        receipts: list[DeliveryItemReceipt] = []
+        completed_bytes = 0
+        for batch in batches:
+            if is_cancelled is not None and is_cancelled():
+                raise asyncio.CancelledError
+            can_group = (
+                len(batch.artifacts) >= 2
+                and all(item.file_size_bytes <= direct_limit for item in batch.artifacts)
+                and _instagram_album_compatible(batch.artifacts, mode)
+            )
+            if can_group:
+                chunk_result = replace(
+                    result,
+                    file_path=batch.artifacts[0].file_path,
+                    file_size_bytes=sum(item.file_size_bytes for item in batch.artifacts),
+                    artifacts=batch.artifacts,
+                )
+
+                async def persist_album_item(
+                    item: DeliveryItemReceipt,
+                    *,
+                    start_ordinal: int = batch.start_ordinal,
+                ) -> None:
+                    if item_delivered is not None:
+                        await item_delivered(
+                            replace(
+                                item,
+                                ordinal=start_ordinal + item.ordinal - 1,
+                            )
+                        )
+
+                try:
+                    receipt = await self._direct.deliver_album(
+                        chat_id=chat_id,
+                        result=chunk_result,
+                        caption=caption if batch.start_ordinal == 1 else "",
+                        item_delivered=persist_album_item,
+                    )
+                except _AlbumRejectedError:
+                    receipt = await self._deliver_instagram_items_individually(
+                        chat_id=chat_id,
+                        result=result,
+                        batch=batch,
+                        caption=caption,
+                        completed_bytes=completed_bytes,
+                        progress=progress,
+                        item_delivered=item_delivered,
+                        is_cancelled=is_cancelled,
+                    )
+                else:
+                    receipt = DeliveryReceipt(
+                        items=tuple(
+                            replace(
+                                item,
+                                ordinal=batch.start_ordinal + item.ordinal - 1,
+                            )
+                            for item in receipt.items
+                        )
+                    )
+                    for artifact in batch.artifacts:
+                        await _delete_confirmed_delivery_file(
+                            artifact.file_path,
+                            job_id=result.job_id,
+                            cleanup_reason="instagram_album_delivered",
+                        )
+            else:
+                receipt = await self._deliver_instagram_items_individually(
+                    chat_id=chat_id,
+                    result=result,
+                    batch=batch,
+                    caption=caption,
+                    completed_bytes=completed_bytes,
+                    progress=progress,
+                    item_delivered=item_delivered,
+                    is_cancelled=is_cancelled,
+                )
+            receipts.extend(receipt.items)
+            completed_bytes += sum(item.file_size_bytes for item in batch.artifacts)
+        if len(receipts) != len(artifacts):
+            raise DeliveryError("Instagram delivery receipt count changed")
+        return DeliveryReceipt(items=tuple(receipts))
+
+    async def _deliver_instagram_items_individually(
+        self,
+        *,
+        chat_id: int,
+        result: DownloadResult,
+        batch: InstagramDeliveryBatch,
+        caption: str,
+        completed_bytes: int,
+        progress: DeliveryProgressSink | None,
+        item_delivered: DeliveryItemSink | None,
+        is_cancelled: DeliveryCancellationCheck | None,
+    ) -> DeliveryReceipt:
+        receipts: list[DeliveryItemReceipt] = []
+        batch_completed = 0
+        total_bytes = result.total_file_size_bytes
+        for offset, artifact in enumerate(batch.artifacts):
+            if is_cancelled is not None and is_cancelled():
+                raise asyncio.CancelledError
+            ordinal = batch.start_ordinal + offset
+            child = DownloadResult(
+                job_id=result.job_id,
+                media_id=result.media_id,
+                title=artifact.title or artifact.file_path.stem,
+                source=result.source,
+                kind=artifact.kind,
+                file_path=artifact.file_path,
+                file_size_bytes=artifact.file_size_bytes,
+                duration_seconds=result.duration_seconds,
+                mime_type=artifact.mime_type,
+                inline_video_streamable=artifact.inline_video_streamable,
+                image_delivery_mode=result.image_delivery_mode,
+            )
+
+            def map_progress(
+                event: DeliveryProgressEvent,
+                *,
+                already_delivered: int = completed_bytes + batch_completed,
+                item_ordinal: int = ordinal,
+            ) -> None:
+                if progress is not None:
+                    progress(
+                        replace(
+                            event,
+                            transferred_bytes=min(
+                                total_bytes,
+                                already_delivered + event.item_transferred_bytes,
+                            ),
+                            total_bytes=total_bytes,
+                            item_ordinal=item_ordinal,
+                            item_count=len(result.delivery_artifacts),
+                        )
+                    )
+
+            async def persist_item(
+                item: DeliveryItemReceipt,
+                *,
+                item_ordinal: int = ordinal,
+            ) -> None:
+                if item_delivered is not None:
+                    await item_delivered(replace(item, ordinal=item_ordinal))
+
+            receipt = await self._deliver_one(
+                chat_id=chat_id,
+                result=child,
+                caption=caption if ordinal == 1 else "",
+                progress=map_progress,
+                item_delivered=persist_item,
+                is_cancelled=is_cancelled,
+            )
+            receipts.extend(replace(item, ordinal=ordinal) for item in receipt.items)
+            await _delete_confirmed_delivery_file(
+                artifact.file_path,
+                job_id=result.job_id,
+                cleanup_reason="instagram_item_delivered",
+            )
+            batch_completed += artifact.file_size_bytes
         return DeliveryReceipt(items=tuple(receipts))
 
     async def send_text(self, chat_id: int, text: str) -> int:
@@ -531,6 +812,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
         caption: str,
         progress: DeliveryProgressSink | None,
         item_delivered: DeliveryItemSink | None,
+        is_cancelled: DeliveryCancellationCheck | None,
     ) -> DeliveryReceipt:
         packaging_started = monotonic()
         if progress is not None:
@@ -559,6 +841,8 @@ class RoutedDeliveryGateway(DeliveryGateway):
         completed_bytes = 0
         receipts: list[DeliveryItemReceipt] = []
         for ordinal, path in enumerate(paths, start=1):
+            if is_cancelled is not None and is_cancelled():
+                raise asyncio.CancelledError
             part = DownloadResult(
                 job_id=result.job_id,
                 media_id=result.media_id,
@@ -599,6 +883,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 result=part,
                 caption=part_caption,
                 progress=map_progress,
+                is_cancelled=is_cancelled,
             )
             item = replace(
                 receipt.primary,
@@ -621,6 +906,25 @@ class RoutedDeliveryGateway(DeliveryGateway):
             "بررسی کنید.",
         )
         return DeliveryReceipt(items=tuple(receipts))
+
+
+def _instagram_album_compatible(
+    artifacts: tuple[DownloadArtifact, ...],
+    mode: ImageDeliveryMode,
+) -> bool:
+    if mode is ImageDeliveryMode.DOCUMENT:
+        # Bot API document albums cannot be mixed with photo/video album items.
+        return all(item.kind is MediaKind.IMAGE for item in artifacts) or all(
+            item.kind is MediaKind.VIDEO and item.inline_video_streamable for item in artifacts
+        )
+    return all(
+        (
+            item.kind is MediaKind.IMAGE
+            and item.mime_type in {"image/jpeg", "image/png", "image/webp"}
+        )
+        or (item.kind is MediaKind.VIDEO and item.inline_video_streamable)
+        for item in artifacts
+    )
 
 
 async def _delete_confirmed_delivery_file(

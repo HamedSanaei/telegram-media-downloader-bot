@@ -15,6 +15,7 @@ from telegram_media_bot.domain.models import (
     DownloadMode,
     DownloadRequest,
     DownloadResult,
+    ImageDeliveryMode,
     JobId,
     MediaInfo,
     MediaKind,
@@ -94,6 +95,21 @@ def test_exact_inspection_format_pair_reaches_download_engine(tmp_path: Path) ->
     )
 
     assert engine.download_requests[0].selected_format_ids == selected
+
+
+def test_image_delivery_mode_reaches_download_engine_explicitly(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    service = DownloadService(engine, frozenset({"example"}))
+
+    service.download(
+        job_id=JobId("image-mode"),
+        url="https://example.com/media",
+        mode=DownloadMode.IMAGE_ORIGINAL,
+        output_directory=tmp_path / "image-mode",
+        image_delivery_mode=ImageDeliveryMode.DOCUMENT,
+    )
+
+    assert engine.download_requests[0].image_delivery_mode is ImageDeliveryMode.DOCUMENT
 
 
 def test_rejects_url_credentials() -> None:

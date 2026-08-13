@@ -18,6 +18,7 @@ from telegram_media_bot.domain.models import (
     DeliveryProvider,
     DownloadMode,
     ErrorCategory,
+    ImageDeliveryMode,
     JobId,
     JobKind,
     JobRecord,
@@ -178,6 +179,7 @@ def test_initialize_non_destructively_migrates_legacy_jobs_table(tmp_path: Path)
     assert record.container is None
     assert record.container_policy is ContainerPolicy.NATIVE_ONLY
     assert record.native_video_codec is None
+    assert record.image_delivery_mode is None
     with closing(sqlite3.connect(path)) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
         user_tables = connection.execute(
@@ -186,7 +188,12 @@ def test_initialize_non_destructively_migrates_legacy_jobs_table(tmp_path: Path)
             WHERE type = 'table' AND name IN ('users', 'user_usage_daily', 'download_usage_events')
             """
         ).fetchone()
-    assert {"container", "container_policy", "native_video_codec"} <= columns
+    assert {
+        "container",
+        "container_policy",
+        "native_video_codec",
+        "image_delivery_mode",
+    } <= columns
     assert user_tables == (3,)
 
 
@@ -365,6 +372,7 @@ def test_container_fields_and_format_options_survive_round_trip(
         container_policy=ContainerPolicy.GUARANTEED,
         native_video_codec=NativeVideoCodec.VP9,
         selected_format_ids=("248", "251"),
+        image_delivery_mode=ImageDeliveryMode.DOCUMENT,
     )
     loaded = repository.get_job(record.job_id)
     assert loaded is not None
@@ -372,6 +380,7 @@ def test_container_fields_and_format_options_survive_round_trip(
     assert loaded.container_policy is ContainerPolicy.GUARANTEED
     assert loaded.native_video_codec is NativeVideoCodec.VP9
     assert loaded.selected_format_ids == ("248", "251")
+    assert loaded.image_delivery_mode is ImageDeliveryMode.DOCUMENT
 
 
 def test_user_usage_is_idempotent_and_persistent(

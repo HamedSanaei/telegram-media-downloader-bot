@@ -14,6 +14,10 @@ from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.application.ports.usage_analytics import UsageChartRenderer
 from telegram_media_bot.application.ports.user_repository import UserRepository
 from telegram_media_bot.application.services.access_policy import AccessPolicyService
+from telegram_media_bot.application.services.instagram_delivery import (
+    instagram_default_bundle_option,
+    requires_instagram_image_confirmation,
+)
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.application.services.native_options import (
     build_native_option_catalog,
@@ -37,6 +41,7 @@ from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
     ErrorCategory,
+    ImageDeliveryMode,
     JobId,
     JobStatus,
     OutputContainer,
@@ -370,6 +375,108 @@ def build_router(
                 return
         await callback.answer("ثبت شد" if created else "این دانلود از قبل فعال است")
 
+    @router.callback_query(F.data.startswith("i2:"))
+    async def choose_instagram_image_delivery(callback: CallbackQuery) -> None:
+        if callback.from_user is None or callback.data is None:
+            return
+        await _save_callback_user(users, callback)
+        try:
+            _prefix, raw_token, raw_delivery_mode = callback.data.split(":", maxsplit=2)
+            image_delivery_mode = ImageDeliveryMode(raw_delivery_mode)
+            await access_policy.authorize_request(callback.from_user.id, consume_rate_limit=False)
+            selection = await asyncio.to_thread(
+                repository.get_selection,
+                SelectionToken(raw_token),
+                callback.from_user.id,
+            )
+            if not requires_instagram_image_confirmation(selection.media):
+                raise SelectionOwnershipError("Image delivery confirmation was not offered")
+            option = instagram_default_bundle_option(selection.media)
+            if option.mode not in selection.allowed_modes:
+                raise SelectionOwnershipError("Instagram complete-media plan was not offered")
+        except SelectionExpiredError:
+            await callback.answer(SELECTION_EXPIRED_TEXT, show_alert=True)
+            return
+        except SelectionOwnershipError, ValueError:
+            await callback.answer(SELECTION_INVALID_TEXT, show_alert=True)
+            return
+        except MembershipRequiredError as exc:
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(
+                    _membership_text(),
+                    reply_markup=required_channels_keyboard(exc.channels),
+                )
+            await callback.answer("ابتدا در کانال‌های الزامی عضو شوید.", show_alert=True)
+            return
+        except AccessDeniedError:
+            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            return
+        except UserRateLimitError:
+            await callback.answer(RATE_LIMIT_TEXT, show_alert=True)
+            return
+        except PolicyBackendError:
+            await callback.answer(SERVICE_UNAVAILABLE_TEXT, show_alert=True)
+            return
+        record, created = await asyncio.to_thread(
+            jobs.create_download,
+            chat_id=selection.chat_id,
+            user_id=selection.owner_user_id,
+            url=selection.media.webpage_url,
+            mode=option.mode,
+            selected_format_ids=option.selected_format_ids,
+            image_delivery_mode=image_delivery_mode,
+        )
+        if record.status is JobStatus.DELIVERY_UNCERTAIN:
+            await callback.answer(
+                "وضعیت ارسال قبلی نامشخص است؛ مدیر باید آن را بررسی کند.",
+                show_alert=True,
+            )
+            return
+        if isinstance(callback.message, Message):
+            await callback.message.edit_text(
+                QUEUED_TEXT.format(job_id=record.job_id),
+                reply_markup=cancellation_keyboard(record.job_id),
+            )
+            await asyncio.to_thread(
+                repository.set_status_message, record.job_id, callback.message.message_id
+            )
+        if created:
+            try:
+                await queue.enqueue_download(
+                    job_id=record.job_id,
+                    chat_id=record.chat_id,
+                    user_id=record.user_id,
+                    url=record.url,
+                    mode=option.mode,
+                    selected_format_ids=record.selected_format_ids,
+                    image_delivery_mode=record.image_delivery_mode,
+                )
+            except Exception as exc:
+                await asyncio.to_thread(
+                    repository.transition,
+                    record.job_id,
+                    JobStatus.FAILED,
+                    error_category=ErrorCategory.INTERNAL,
+                    error_summary="queue_enqueue_failed",
+                )
+                await asyncio.to_thread(
+                    users.record_download_outcome,
+                    job_id=record.job_id,
+                    user_id=record.user_id,
+                    day=datetime.now(UTC).date(),
+                    succeeded=False,
+                )
+                if isinstance(callback.message, Message):
+                    await callback.message.edit_text("ثبت کار در صف ممکن نشد؛ دوباره تلاش کنید.")
+                await logger.aexception(
+                    "download_enqueue_failed",
+                    job_id=record.job_id,
+                    error_type=type(exc).__name__,
+                )
+                await callback.answer("صف موقتاً در دسترس نیست", show_alert=True)
+                return
+        await callback.answer("ثبت شد" if created else "این دانلود از قبل فعال است")
+
     @router.callback_query(F.data.startswith("m2:"))
     async def choose_media_bundle(callback: CallbackQuery) -> None:
         if callback.from_user is None or callback.data is None:
@@ -384,6 +491,10 @@ def build_router(
                 SelectionToken(raw_token),
                 callback.from_user.id,
             )
+            if requires_instagram_image_confirmation(selection.media):
+                raise SelectionOwnershipError(
+                    "Instagram image posts require an explicit delivery choice"
+                )
             if mode not in selection.allowed_modes:
                 raise SelectionOwnershipError("Media-bundle mode was not offered")
             option = next(

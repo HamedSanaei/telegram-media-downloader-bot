@@ -19,6 +19,7 @@ from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
+    ImageDeliveryMode,
     JobAbortResult,
     JobId,
     NativeVideoCodec,
@@ -74,6 +75,7 @@ class ArqJobQueue(JobQueue):
         container_policy: ContainerPolicy = ContainerPolicy.NATIVE_ONLY,
         native_video_codec: NativeVideoCodec | None = None,
         selected_format_ids: tuple[str, ...] = (),
+        image_delivery_mode: ImageDeliveryMode | None = None,
     ) -> JobId:
         url = canonicalize_media_url(url).canonical_url
         container_policy = normalize_container_policy(mode, container_policy)
@@ -87,6 +89,7 @@ class ArqJobQueue(JobQueue):
             container_policy=container_policy.value,
             native_video_codec=native_video_codec.value if native_video_codec else None,
             selected_format_ids=list(selected_format_ids),
+            image_delivery_mode=image_delivery_mode.value if image_delivery_mode else None,
             _job_id=str(job_id),
             _queue_name=self._queue_name,
         )

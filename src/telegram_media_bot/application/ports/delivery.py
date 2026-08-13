@@ -10,6 +10,7 @@ from telegram_media_bot.domain.models import (
 
 DeliveryProgressSink = Callable[[DeliveryProgressEvent], None]
 DeliveryItemSink = Callable[[DeliveryItemReceipt], Awaitable[None]]
+DeliveryCancellationCheck = Callable[[], bool]
 
 
 class DeliveryGateway(Protocol):
@@ -21,6 +22,7 @@ class DeliveryGateway(Protocol):
         caption: str,
         progress: DeliveryProgressSink | None = None,
         item_delivered: DeliveryItemSink | None = None,
+        is_cancelled: DeliveryCancellationCheck | None = None,
     ) -> DeliveryReceipt: ...
 
     async def send_text(self, chat_id: int, text: str) -> int: ...

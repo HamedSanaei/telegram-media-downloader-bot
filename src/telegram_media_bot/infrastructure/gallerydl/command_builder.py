@@ -56,9 +56,13 @@ class GalleryDlCommandBuilder:
         args.extend(("-o", "output.jsonl=true", "--dump-json", "--simulate", "--no-download", url))
         return provider, args
 
-    def download(self, url: str, workspace: Path) -> tuple[str, list[str]]:
+    def download(
+        self, url: str, workspace: Path, *, images_only: bool = False
+    ) -> tuple[str, list[str]]:
         provider = provider_for_single_item(url, self._settings.enabled_platforms)
         args = self._base(provider)
+        if images_only and provider == "instagram":
+            args.extend(("-o", "extractor.instagram.videos=false"))
         args.extend(
             (
                 "--directory",

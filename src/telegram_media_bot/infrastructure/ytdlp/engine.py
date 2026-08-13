@@ -405,6 +405,7 @@ class YtDlpEngine:
                 mime_type=mimetypes.guess_type(final_file.name)[0],
                 artifacts=artifacts,
                 inline_video_streamable=self._inline_streamable(final_file),
+                image_delivery_mode=request.image_delivery_mode,
             )
         except Exception as exc:
             if isinstance(exc, MediaBotError):

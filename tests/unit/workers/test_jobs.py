@@ -20,6 +20,7 @@ from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     DeliveryError,
+    DownloadFailedError,
     JobCancelledError,
     MediaTooLargeError,
     RateLimitedError,
@@ -34,7 +35,9 @@ from telegram_media_bot.domain.models import (
     DownloadResult,
     ErrorCategory,
     JobId,
+    JobKind,
     JobStatus,
+    MediaAsset,
     MediaFormatOption,
     MediaInfo,
     MediaKind,
@@ -170,6 +173,29 @@ class FakeYoutubeInspectionService:
         )
 
 
+class FakeInstagramImageInspectionService:
+    def inspect(self, url: str) -> MediaInfo:
+        assets = (
+            MediaAsset(1, "image", MediaKind.IMAGE, "jpg", "image/jpeg", "post", "instagram"),
+            MediaAsset(2, "video", MediaKind.VIDEO, "mp4", "video/mp4", "post", "instagram"),
+        )
+        return MediaInfo(
+            "post",
+            "Instagram mixed post",
+            "instagram",
+            MediaKind.PLAYLIST,
+            url,
+            item_count=2,
+            format_options=(
+                MediaFormatOption(
+                    DownloadMode.ALL_ORIGINAL_MEDIA,
+                    selected_format_ids=("image", "video"),
+                ),
+            ),
+            assets=assets,
+        )
+
+
 class FakeTwitterInspectionWithoutNativeFormats:
     def inspect(self, url: str) -> MediaInfo:
         return MediaInfo(
@@ -182,10 +208,17 @@ class FakeTwitterInspectionWithoutNativeFormats:
 
 
 class FakeInspectionBot:
-    def __init__(self, *, fail_edit: bool) -> None:
+    def __init__(
+        self,
+        *,
+        fail_edit: bool,
+        fail_send_chat_ids: tuple[int, ...] = (),
+    ) -> None:
         self.fail_edit = fail_edit
+        self.fail_send_chat_ids = frozenset(fail_send_chat_ids)
         self.edits: list[dict[str, object]] = []
         self.messages: list[dict[str, object]] = []
+        self.send_attempts: list[dict[str, object]] = []
 
     async def edit_message_text(self, **kwargs: object) -> object:
         self.edits.append(kwargs)
@@ -201,6 +234,9 @@ class FakeInspectionBot:
         return SimpleNamespace(message_id=kwargs["message_id"])
 
     async def send_message(self, **kwargs: object) -> object:
+        self.send_attempts.append(kwargs)
+        if kwargs["chat_id"] in self.fail_send_chat_ids:
+            raise RuntimeError("sensitive admin transport detail")
         self.messages.append(kwargs)
         return SimpleNamespace(message_id=900 + len(self.messages))
 
@@ -269,6 +305,7 @@ async def test_worker_download_persists_receipt_and_cleans(
         ).fetchone()
     assert usage == (1, 5)
     assert not (cast(Settings, context["settings"]).storage.downloads_path() / job_id).exists()
+    assert not (cast(Settings, context["settings"]).storage.temp_path() / job_id).exists()
 
 
 async def test_recovered_youtube_mix_job_is_normalized_at_execution_boundary(
@@ -449,6 +486,50 @@ async def test_existing_instagram_download_is_reenqueued_for_redis_recovery(
     assert queue.download["job_id"] == existing.job_id
 
 
+async def test_instagram_image_inspection_requires_photo_or_file_confirmation(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    configured = Settings.model_validate(raw)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    inspection, _ = JobService(repository).create_inspection(
+        chat_id=10,
+        user_id=20,
+        url="https://www.instagram.com/p/post/",
+    )
+    repository.set_status_message(inspection.job_id, 30)
+    bot = FakeInspectionBot(fail_edit=False)
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "download_service": FakeInstagramImageInspectionService(),
+        "bot": bot,
+        "metrics": MetricsRegistry(),
+        "job_id": str(inspection.job_id),
+        "job_try": 1,
+    }
+
+    await process_inspection_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url=inspection.url,
+    )
+
+    keyboard = cast(InlineKeyboardMarkup, bot.edits[0]["reply_markup"])
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert all(callback is not None for callback in callbacks)
+    safe_callbacks = [cast(str, callback) for callback in callbacks]
+    assert safe_callbacks[0].startswith("i2:") and safe_callbacks[0].endswith(":photo")
+    assert safe_callbacks[1].startswith("i2:") and safe_callbacks[1].endswith(":document")
+    assert safe_callbacks[2].startswith("n2:")
+    assert all(not callback.startswith("m2:") for callback in safe_callbacks)
+
+
 async def test_twitter_native_planning_failure_has_distinct_category_and_source(
     settings: Settings,
     tmp_path: Path,
@@ -466,11 +547,12 @@ async def test_twitter_native_planning_failure_has_distinct_category_and_source(
     )
     repository.set_status_message(inspection.job_id, 30)
     delivery = FakeDelivery()
+    bot = FakeInspectionBot(fail_edit=False)
     context: dict[str, Any] = {
         "settings": configured,
         "repository": repository,
         "download_service": FakeTwitterInspectionWithoutNativeFormats(),
-        "bot": FakeInspectionBot(fail_edit=False),
+        "bot": bot,
         "delivery": delivery,
         "metrics": MetricsRegistry(),
         "job_id": str(inspection.job_id),
@@ -490,6 +572,97 @@ async def test_twitter_native_planning_failure_has_distinct_category_and_source(
     assert persisted.source == "twitter"
     assert persisted.error_category is ErrorCategory.FORMAT_UNAVAILABLE
     assert delivery.edits
+    assert not bot.messages
+
+
+async def test_terminal_controlled_inspection_failure_alerts_each_unique_admin(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    raw["telegram"]["admin_ids"] = [99, 100, 99]
+    configured = Settings.model_validate(raw)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    url = "https://x.com/example/status/1951000000000000000?s=20"
+    inspection, _ = JobService(repository).create_inspection(
+        chat_id=10,
+        user_id=20,
+        url=url,
+    )
+    repository.set_status_message(inspection.job_id, 30)
+    bot = FakeInspectionBot(fail_edit=False)
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "download_service": FakeTwitterInspectionWithoutNativeFormats(),
+        "bot": bot,
+        "delivery": FakeDelivery(),
+        "metrics": MetricsRegistry(),
+        "job_id": str(inspection.job_id),
+        "job_try": 1,
+    }
+
+    await process_inspection_job(context, chat_id=10, user_id=20, url=url)
+
+    assert [message["chat_id"] for message in bot.messages] == [99, 100]
+    for message in bot.messages:
+        text = str(message["text"])
+        assert str(inspection.job_id) in text
+        assert "inspection" in text
+        assert "twitter" in text
+        assert JobStatus.FAILED.value in text
+        assert ErrorCategory.FORMAT_UNAVAILABLE.value in text
+        assert url not in text
+        assert "user_id" not in text
+        assert "chat_id" not in text
+        assert "Twitter without native formats" not in text
+
+
+async def test_terminal_unexpected_inspection_failure_alert_is_redacted(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    class FailingInspectionService:
+        def inspect(self, _url: str) -> MediaInfo:
+            raise RuntimeError("unexpected inspection detail")
+
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    raw["telegram"]["admin_ids"] = [99]
+    configured = Settings.model_validate(raw)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    url = "https://example.com/private-query?token=secret"
+    inspection, _ = JobService(repository).create_inspection(
+        chat_id=10,
+        user_id=20,
+        url=url,
+    )
+    repository.set_status_message(inspection.job_id, 30)
+    bot = FakeInspectionBot(fail_edit=False)
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "download_service": FailingInspectionService(),
+        "bot": bot,
+        "delivery": FakeDelivery(),
+        "metrics": MetricsRegistry(),
+        "job_id": str(inspection.job_id),
+        "job_try": configured.queue.max_tries,
+    }
+
+    await process_inspection_job(context, chat_id=10, user_id=20, url=url)
+
+    persisted = repository.get_job(inspection.job_id)
+    assert persisted is not None and persisted.status is JobStatus.FAILED
+    alert = str(bot.messages[0]["text"])
+    assert ErrorCategory.INTERNAL.value in alert
+    assert url not in alert
+    assert "unexpected inspection detail" not in alert
 
 
 async def test_worker_honors_pre_start_cancellation(
@@ -520,6 +693,12 @@ async def test_user_cancel_during_worker_shutdown_is_not_requeued(
 
     class BlockingDownloadService(FakeDownloadService):
         def download(self, **kwargs: Any) -> DownloadResult:
+            output = cast(Path, kwargs["output_directory"])
+            temporary = cast(Path, kwargs["temp_directory"])
+            output.mkdir(parents=True)
+            temporary.mkdir(parents=True)
+            (output / "video.part").write_bytes(b"partial")
+            (temporary / "ffmpeg.tmp.mp4").write_bytes(b"partial")
             started.set()
             is_cancelled = cast(Callable[[], bool], kwargs["is_cancelled"])
             while not is_cancelled():
@@ -546,6 +725,9 @@ async def test_user_cancel_during_worker_shutdown_is_not_requeued(
     assert current is not None and current.status is JobStatus.CANCELLED
     assert delivery.deliveries == 0
     assert delivery.edits == []
+    configured = cast(Settings, context["settings"])
+    assert not (configured.storage.downloads_path() / str(job_id)).exists()
+    assert not (configured.storage.temp_path() / str(job_id)).exists()
 
 
 async def test_retryable_failure_is_deferred_without_delivery(
@@ -564,6 +746,47 @@ async def test_retryable_failure_is_deferred_without_delivery(
     record = repository.get_job(JobId(str(context["job_id"])))
     assert record is not None and record.status is JobStatus.RETRYING
     assert delivery.deliveries == 0
+
+
+async def test_retryable_failure_alerts_only_after_retries_are_exhausted(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+) -> None:
+    context, repository, service, delivery = worker_context
+    configured = cast(Settings, context["settings"])
+    raw = configured.model_dump()
+    raw["telegram"]["admin_ids"] = [99]
+    configured = Settings.model_validate(raw)
+    context["settings"] = configured
+    bot = FakeInspectionBot(fail_edit=False)
+    context["bot"] = bot
+    service.failure = RateLimitedError("remote throttled with private detail")
+
+    with pytest.raises(Retry):
+        await process_download_job(
+            context,
+            chat_id=10,
+            user_id=20,
+            url="https://example.com/media",
+            mode=DownloadMode.BEST.value,
+        )
+    assert bot.send_attempts == []
+
+    context["job_try"] = configured.queue.max_tries
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media",
+        mode=DownloadMode.BEST.value,
+    )
+
+    record = repository.get_job(JobId(str(context["job_id"])))
+    assert record is not None and record.status is JobStatus.FAILED
+    assert delivery.deliveries == 0
+    assert len(bot.messages) == 1
+    alert = str(bot.messages[0]["text"])
+    assert ErrorCategory.RATE_LIMITED.value in alert
+    assert "private detail" not in alert
 
 
 async def test_ambiguous_delivery_is_quarantined_with_specific_user_message(
@@ -589,6 +812,167 @@ async def test_ambiguous_delivery_is_quarantined_with_specific_user_message(
     assert any("دانلود کامل شد" in text for text in delivery.edits)
 
 
+async def test_terminal_unexpected_download_failure_alert_is_redacted(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+) -> None:
+    context, repository, service, delivery = worker_context
+    configured = cast(Settings, context["settings"])
+    raw = configured.model_dump()
+    raw["telegram"]["admin_ids"] = [99]
+    configured = Settings.model_validate(raw)
+    context["settings"] = configured
+    context["job_try"] = configured.queue.max_tries
+    bot = FakeInspectionBot(fail_edit=False)
+    context["bot"] = bot
+    service.failure = RuntimeError("unexpected download private detail")
+
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media?token=secret",
+        mode=DownloadMode.BEST.value,
+    )
+
+    record = repository.get_job(JobId(str(context["job_id"])))
+    assert record is not None and record.status is JobStatus.FAILED
+    assert delivery.deliveries == 0
+    alert = str(bot.messages[0]["text"])
+    assert ErrorCategory.INTERNAL.value in alert
+    assert "token=secret" not in alert
+    assert "private detail" not in alert
+
+
+async def test_delivery_uncertain_alerts_admins_without_changing_cleanup(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+) -> None:
+    context, repository, _service, delivery = worker_context
+    configured = cast(Settings, context["settings"])
+    raw = configured.model_dump()
+    raw["telegram"]["admin_ids"] = [99, 100]
+    configured = Settings.model_validate(raw)
+    context["settings"] = configured
+    bot = FakeInspectionBot(fail_edit=False)
+    context["bot"] = bot
+    delivery.failure = DeliveryError("ambiguous response with private detail")
+
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media",
+        mode=DownloadMode.BEST.value,
+    )
+
+    record = repository.get_job(JobId(str(context["job_id"])))
+    assert record is not None and record.status is JobStatus.DELIVERY_UNCERTAIN
+    assert [message["chat_id"] for message in bot.messages] == [99, 100]
+    assert all(
+        ErrorCategory.DELIVERY_UNCERTAIN.value in str(message["text"])
+        and "private detail" not in str(message["text"])
+        for message in bot.messages
+    )
+    assert not (configured.storage.downloads_path() / str(record.job_id)).exists()
+    assert not (configured.storage.temp_path() / str(record.job_id)).exists()
+
+
+async def test_admin_notification_failure_is_isolated_and_logged_without_recipient_ids(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["admin_ids"] = [99, 100]
+    configured = Settings.model_validate(raw)
+    bot = FakeInspectionBot(fail_edit=False, fail_send_chat_ids=(99,))
+
+    class CapturingLogger:
+        def __init__(self) -> None:
+            self.warnings: list[tuple[str, dict[str, object]]] = []
+
+        async def awarning(self, event: str, **kwargs: object) -> None:
+            self.warnings.append((event, kwargs))
+
+        async def ainfo(self, _event: str, **_kwargs: object) -> None:
+            return None
+
+    captured = CapturingLogger()
+    monkeypatch.setattr(jobs_module, "logger", captured)
+    await jobs_module._notify_admins_of_terminal_failure(
+        {"settings": configured, "bot": bot},
+        job_id=JobId("opaque-job"),
+        kind=JobKind.DOWNLOAD,
+        source="instagram",
+        status=JobStatus.FAILED,
+        category=ErrorCategory.INTERNAL,
+        attempt=3,
+    )
+
+    assert [attempt["chat_id"] for attempt in bot.send_attempts] == [99, 100]
+    assert [message["chat_id"] for message in bot.messages] == [100]
+    event, fields = captured.warnings[0]
+    assert event == "admin_failure_notification_incomplete"
+    assert fields["recipient_count"] == 2
+    assert fields["sent_count"] == 1
+    assert fields["failed_count"] == 1
+    serialized = repr(fields)
+    assert "sensitive admin transport detail" not in serialized
+    assert "99" not in serialized
+    assert "100" not in serialized
+
+
+async def test_admin_notification_is_noop_when_no_admins_are_configured(
+    settings: Settings,
+) -> None:
+    await jobs_module._notify_admins_of_terminal_failure(
+        {"settings": settings},
+        job_id=JobId("opaque-job"),
+        kind=JobKind.DOWNLOAD,
+        source="instagram",
+        status=JobStatus.FAILED,
+        category=ErrorCategory.INTERNAL,
+        attempt=1,
+    )
+
+
+async def test_success_and_cancellation_do_not_alert_admins(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+) -> None:
+    context, repository, _service, _delivery = worker_context
+    configured = cast(Settings, context["settings"])
+    raw = configured.model_dump()
+    raw["telegram"]["admin_ids"] = [99]
+    configured = Settings.model_validate(raw)
+    context["settings"] = configured
+    bot = FakeInspectionBot(fail_edit=False)
+    context["bot"] = bot
+
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media",
+        mode=DownloadMode.BEST.value,
+    )
+    assert bot.send_attempts == []
+
+    cancelled, _ = JobService(repository).create_download(
+        chat_id=10,
+        user_id=21,
+        url="https://example.com/cancelled",
+        mode=DownloadMode.BEST,
+    )
+    repository.request_cancel(cancelled.job_id, 21)
+    context["job_id"] = str(cancelled.job_id)
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=21,
+        url=cancelled.url,
+        mode=DownloadMode.BEST.value,
+    )
+    assert bot.send_attempts == []
+
+
 async def test_partial_download_failure_removes_every_job_file(
     worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
 ) -> None:
@@ -609,6 +993,40 @@ async def test_partial_download_failure_removes_every_job_file(
     context["download_service"] = PartialFailureService()
     job_id = JobId(str(context["job_id"]))
 
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media",
+        mode=DownloadMode.BEST.value,
+    )
+
+    record = repository.get_job(job_id)
+    assert record is not None and record.status is JobStatus.FAILED
+    assert delivery.deliveries == 0
+    assert not (configured.storage.downloads_path() / str(job_id)).exists()
+    assert not (configured.storage.temp_path() / str(job_id)).exists()
+
+
+async def test_terminal_timeout_removes_download_and_temp_workspaces(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+) -> None:
+    context, repository, _service, delivery = worker_context
+    configured = cast(Settings, context["settings"])
+    context["job_try"] = configured.queue.max_tries
+
+    class TimedOutService(FakeDownloadService):
+        def download(self, **kwargs: Any) -> DownloadResult:
+            output = cast(Path, kwargs["output_directory"])
+            temporary = cast(Path, kwargs["temp_directory"])
+            output.mkdir(parents=True)
+            temporary.mkdir(parents=True)
+            (output / "video.part").write_bytes(b"partial")
+            (temporary / "socket.tmp").write_bytes(b"partial")
+            raise DownloadFailedError("download timed out")
+
+    context["download_service"] = TimedOutService()
+    job_id = JobId(str(context["job_id"]))
     await process_download_job(
         context,
         chat_id=10,
@@ -671,3 +1089,6 @@ async def test_completion_persistence_failure_never_retries_delivery(
     record = repository.get_job(JobId(result))
     assert record is not None and record.status is JobStatus.DELIVERY_UNCERTAIN
     assert delivery.deliveries == 1
+    configured = cast(Settings, context["settings"])
+    assert not (configured.storage.downloads_path() / result).exists()
+    assert not (configured.storage.temp_path() / result).exists()

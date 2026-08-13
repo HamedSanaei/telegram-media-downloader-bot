@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## 1.2.0 - 2026-08-13
+
+### Added
+
+- Ask users whether Instagram images should be delivered as Telegram photos or byte-preserving
+  documents before creating the download job; the typed choice survives SQLite, ARQ, worker
+  recovery, download planning, and delivery.
+- Deliver ordered Instagram carousels in deterministic groups of at most ten. Photo mode uses
+  photo/video albums; document mode uses ordered document and video runs so no item is converted,
+  reordered, or dropped by Telegram media-group type restrictions.
+- Split mixed Instagram posts across the existing isolated engines: gallery-dl downloads only the
+  original image assets while yt-dlp downloads every video from the canonical post URL. Exact
+  source ordinals are reconciled fail-closed before delivery.
+- Notify every uniquely configured Telegram administrator when an inspection or download reaches
+  a final failure or uncertain-delivery state. Alerts expose only the opaque job ID, job kind,
+  normalized source, terminal status, stable error category, and attempt number.
+
+### Operations
+
+- Reverified zero-retention cleanup for successful, failed, cancelled, timed-out, and
+  delivery-uncertain workspaces, including both download and temporary job directories. Durable
+  job records continue to follow the configured retention period.
+- Keep administrator alert failures isolated from job state, user notifications, other
+  administrators, and workspace cleanup; intermediate retries and user cancellations do not alert.
+
+### Security
+
+- Keep gallery-dl CDN and `ytdl:` pseudo-URLs transient, preserve signature/decompression and
+  workspace checks, and never rewrite validated production image bytes.
+
 ## 1.1.1 - 2026-08-12
 
 ### Fixed

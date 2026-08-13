@@ -1,10 +1,11 @@
 # Project status
 
-Last updated: 2026-08-12
+Last updated: 2026-08-13
 
 ## Release state
 
-Tasks T001 through T013 are implemented. Patch v1.1.1 fixes the gallery-dl inspection contract. The v1 flow
+Tasks T001 through T013 are implemented. Release v1.2.0 adds explicit Instagram Photo/File
+confirmation and lossless mixed-post delivery while preserving the v1.1.1 video-only fallback. The v1 flow
 is URL validation -> queued inspection ->
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
@@ -24,6 +25,16 @@ posts on Instagram, TikTok, Twitter/X, and Pinterest. Image-bearing posts remain
 video-only posts use yt-dlp. Durable selection stores stable asset identities but no CDN URL, and
 delivery supports photo, chunked media groups, documents, deterministic image ZIP, and the existing
 multipart path. YouTube thumbnails and SoundCloud artwork remain yt-dlp actions.
+
+The v1.2.0 work persists a typed Photo/Document choice only for Instagram inspections containing
+images. Mixed posts download original images with gallery-dl's Instagram video output disabled and
+download videos through yt-dlp from the canonical post URL, then reconcile exact counts and merge
+safe source ordinals. Photo/video albums and ordered document/video runs are capped at ten items;
+document images retain the exact validated gallery-dl bytes, filename extension, and format.
+Terminal inspection/download failures and uncertain deliveries now generate a redacted private
+alert for every uniquely configured administrator after retries are exhausted. Cancellation,
+intermediate retries, URLs, user/chat IDs, filenames, paths, and raw exceptions stay outside the
+alert contract, and one unreachable administrator cannot affect other alerts or job cleanup.
 
 All deterministic Python, architecture, security, fixture-contract, package, and Windows updater
 gates pass for T013. Docker/Compose runtime execution remains pending on this review host because
@@ -84,6 +95,8 @@ dependency, license, adapter-fixture, doctor, cleanup, and Compose smokes.
 - Terminal job workspaces are removed idempotently after success, failure, cancellation, timeout,
   or uncertain delivery; startup and maintenance sweepers preserve active jobs while reclaiming
   stale or terminal directories, with structured cleanup metrics.
+- Final job failures and delivery uncertainty are proactively sent to every unique configured
+  administrator using opaque IDs and stable categories; `/failed` remains the durable fallback.
 - Verified updates and `tmb cleanup [--dry-run]` may reclaim only unreferenced old project-image
   IDs and superseded stopped project containers. Current/referenced images, other repositories,
   volumes, and build caches are protected.
@@ -98,6 +111,14 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-08-13: Prepared v1.2.0 with an owner-bound Instagram Photo/File confirmation, nullable
+  backward-compatible durable/ARQ state, exact-byte image document delivery, deterministic
+  ten-item chunking, and mixed-post gallery-image/yt-dlp-video reconciliation. Video-only Reels,
+  Twitter HLS remux, other gallery sources, cleanup, cancellation, and signed-URL isolation remain
+  unchanged.
+- 2026-08-13: Added redacted push alerts to all configured administrators for terminal inspection
+  and download failures plus delivery uncertainty, and reverified removal of download/temp job
+  workspaces across success, failure, timeout, cancellation, and uncertain delivery.
 - 2026-08-12: Prepared v1.1.1 by explicitly enabling gallery-dl JSON Lines output, strictly parsing
   directory/URL message tuples, and recognizing `ytdl:` video events as video-only fallback input.
   Instagram Reels containing no images now reach yt-dlp, while image and mixed-post ownership,
