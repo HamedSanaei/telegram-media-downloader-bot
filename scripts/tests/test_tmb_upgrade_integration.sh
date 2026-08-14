@@ -19,8 +19,11 @@ BIN_ROOT="$TEST_ROOT/bin"
 REGISTRY_NAME="tmb-upgrade-registry-$$"
 REGISTRY_PORT="${TMB_TEST_REGISTRY_PORT:-5055}"
 IMAGE_REPOSITORY="localhost:${REGISTRY_PORT}/telegram-media-downloader-bot"
+TEST_COMPOSE_PROJECT_NAME="tmb-upgrade-test-$$"
 INSTALL_OWNER_UID="$(id -u)"
 INSTALL_OWNER_GID="$(id -g)"
+RUNTIME_UID="$INSTALL_OWNER_UID"
+RUNTIME_GID="$INSTALL_OWNER_GID"
 
 assert_owner_mode() {
   local path="$1" expected_owner="$2" expected_mode="$3" label="$4" actual
@@ -31,9 +34,18 @@ assert_owner_mode() {
   fi
 }
 
+assert_mode() {
+  local path="$1" expected_mode="$2" label="$3" actual
+  actual="$(stat -c '%a' "$path")"
+  if [[ "$actual" != "$expected_mode" ]]; then
+    echo "Unexpected $label mode: $(stat -c '%U:%G %a %n' "$path")" >&2
+    return 1
+  fi
+}
+
 cleanup() {
   docker compose --project-directory "$INSTALL_ROOT" --profile local-api down \
-    --remove-orphans >/dev/null 2>&1 || true
+    --remove-orphans --volumes >/dev/null 2>&1 || true
   docker rm -f "$REGISTRY_NAME" >/dev/null 2>&1 || true
   sudo rm -rf -- "$TEST_ROOT"
 }
@@ -77,9 +89,10 @@ awk '
 mv "$INSTALL_ROOT/config.yaml.without-gallery" "$INSTALL_ROOT/config.yaml"
 cat >"$INSTALL_ROOT/.env" <<EOF
 TMB_IMAGE=${IMAGE_REPOSITORY}:${PREVIOUS_VERSION}
+COMPOSE_PROJECT_NAME=${TEST_COMPOSE_PROJECT_NAME}
 COMPOSE_PROFILES=local-api
-APP_UID=${INSTALL_OWNER_UID}
-APP_GID=${INSTALL_OWNER_GID}
+APP_UID=${RUNTIME_UID}
+APP_GID=${RUNTIME_GID}
 TMB_WORKER_CPUS=1.5
 EOF
 chmod 755 "$INSTALL_ROOT"
@@ -200,16 +213,41 @@ sudo env \
   "TMB_ROOT_DIR=$INSTALL_ROOT" \
   bash "$UPDATER_PATH" update
 
+assert_mode "$INSTALL_ROOT" 755 "post-update application root"
 assert_owner_mode "$INSTALL_ROOT/.env" "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 600 \
   "post-update deployment environment"
 assert_owner_mode "$INSTALL_ROOT/config.yaml" "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 600 \
   "post-update application config"
+assert_owner_mode "$INSTALL_ROOT/data" "${RUNTIME_UID}:${RUNTIME_GID}" 700 \
+  "runtime data root"
+assert_owner_mode "$INSTALL_ROOT/data/state" "${RUNTIME_UID}:${RUNTIME_GID}" 700 \
+  "runtime state directory"
+assert_owner_mode "$INSTALL_ROOT/data/state/jobs.sqlite3" \
+  "${RUNTIME_UID}:${RUNTIME_GID}" 600 "runtime SQLite database"
+assert_owner_mode "$INSTALL_ROOT/data/downloads" "${RUNTIME_UID}:${RUNTIME_GID}" 700 \
+  "runtime downloads directory"
+assert_owner_mode "$INSTALL_ROOT/data/downloads/existing.bin" \
+  "${RUNTIME_UID}:${RUNTIME_GID}" 600 "existing runtime download"
+assert_owner_mode "$INSTALL_ROOT/data/temp" "${RUNTIME_UID}:${RUNTIME_GID}" 700 \
+  "runtime temporary directory"
+assert_owner_mode "$INSTALL_ROOT/data/cookies" "${RUNTIME_UID}:${RUNTIME_GID}" 700 \
+  "restricted cookie directory"
+assert_owner_mode "$INSTALL_ROOT/data/cookies/cookies.txt" \
+  "${RUNTIME_UID}:${RUNTIME_GID}" 600 "restricted cookie file"
+assert_owner_mode "$INSTALL_ROOT/data/telegram-bot-api" \
+  "${RUNTIME_UID}:${RUNTIME_GID}" 700 "Local Bot API state directory"
+assert_owner_mode "$INSTALL_ROOT/data/telegram-bot-api/state.bin" \
+  "${RUNTIME_UID}:${RUNTIME_GID}" 600 "existing Local Bot API state"
+assert_owner_mode "$INSTALL_ROOT/backups" "${RUNTIME_UID}:${RUNTIME_GID}" 700 \
+  "runtime backup directory"
 [[ -x "$TEST_ROOT" && -x "$INSTALL_ROOT" && -r "$INSTALL_ROOT/.env" ]]
 PATH="$BIN_ROOT:$PATH" command -v tmb >/dev/null
 test -x "$(readlink -f "$(PATH="$BIN_ROOT:$PATH" command -v tmb)")"
 bash -n "$INSTALL_ROOT/scripts/tmb.sh"
 sudo env "PATH=$BIN_ROOT:$PATH" "TMB_ROOT_DIR=$INSTALL_ROOT" tmb status >/dev/null
 sudo grep -q "^TMB_IMAGE=.*:${RELEASE_VERSION}$" "$INSTALL_ROOT/.env"
+grep -q "^APP_UID=${RUNTIME_UID}$" "$INSTALL_ROOT/.env"
+grep -q "^APP_GID=${RUNTIME_GID}$" "$INSTALL_ROOT/.env"
 sudo grep -q 'CHANGE_ME' "$INSTALL_ROOT/config.yaml"
 if sudo grep -q '^gallery_dl:' "$INSTALL_ROOT/config.yaml"; then
   echo "Update unexpectedly injected a gallery_dl configuration section." >&2
@@ -223,13 +261,35 @@ test "$(sudo sha256sum "$INSTALL_ROOT/data/cookies/cookies.txt" | cut -d' ' -f1)
   "$COOKIE_HASH_BEFORE"
 grep -q "^version = \"${RELEASE_VERSION}\"$" "$INSTALL_ROOT/pyproject.toml"
 
+COMPOSE_CONTRACT="$TEST_ROOT/compose-contract.json"
+docker compose --project-directory "$INSTALL_ROOT" --profile local-api \
+  config --format json >"$COMPOSE_CONTRACT"
+python - "$COMPOSE_CONTRACT" "$TEST_COMPOSE_PROJECT_NAME" \
+  "${RUNTIME_UID}:${RUNTIME_GID}" "$INSTALL_ROOT/config.yaml" "$INSTALL_ROOT/data" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+contract_path, expected_project, expected_user, config_path, data_path = sys.argv[1:]
+contract = json.loads(Path(contract_path).read_text(encoding="utf-8"))
+assert contract["name"] == expected_project
+for service_name in ("bot", "worker", "local-api"):
+    service = contract["services"][service_name]
+    assert service["user"] == expected_user
+    volumes = {volume["target"]: volume for volume in service["volumes"]}
+    assert volumes["/app/config.yaml"]["source"] == config_path
+    assert volumes["/app/config.yaml"]["read_only"] is True
+    assert volumes["/data"]["source"] == data_path
+    assert not volumes["/data"].get("read_only", False)
+PY
+
 DOCTOR_OUTPUT="$(
   docker compose --project-directory "$INSTALL_ROOT" --profile local-api run --rm --no-deps \
     worker telegram-media-bot doctor --config /app/config.yaml
 )"
 grep -Eq '^OK +gallery_dl_cookie_instagram$' <<<"$DOCTOR_OUTPUT"
 
-docker run --rm --user 10001:10001 --entrypoint python \
+docker run --rm --user "${RUNTIME_UID}:${RUNTIME_GID}" --entrypoint python \
   -v "$INSTALL_ROOT/data:/data" \
   "${IMAGE_REPOSITORY}:${RELEASE_VERSION}" -c '
 import pathlib

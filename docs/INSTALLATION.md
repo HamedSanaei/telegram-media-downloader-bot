@@ -68,8 +68,13 @@ local state only after the literal `DELETE` confirmation.
 
 Before restart, the Linux updater resolves `APP_UID`/`APP_GID` from the Compose environment or
 `.env` with fallback `10001:10001`. It repairs `data/`, SQLite/WAL/SHM, downloads, temp, cookies,
-Local API state, and backups to private runtime-owned modes. A container running as that exact
-identity must create/remove a state probe and enable SQLite WAL. The updater then guarantees
+Local API state, and backups to the configured runtime owner with directories at `0700` and files
+at `0600`. This keeps cookie material unavailable to group/other while allowing the runtime's
+upstream cookie jar to read and persist required updates. The application root remains traversable
+at `0755` (its owner depends on the historical updater path); installer-managed `.env` and
+`config.yaml` retain their installer owner and `0600` mode. A container running as the exact
+configured runtime identity must create/remove a state probe and enable SQLite WAL. The updater
+then guarantees
 `scripts/tmb.sh` is executable, repairs `$TMB_BIN_DIR/tmb` (default `/usr/local/bin/tmb`), resolves
 its target, and runs `tmb status`.
 

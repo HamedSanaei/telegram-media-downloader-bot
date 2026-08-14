@@ -4,11 +4,12 @@ Generated: 2026-08-14
 
 ## Current change addendum
 
-- CI follow-up aligns the privileged fixture's `APP_UID/GID` with the GitHub runner, as the
-  installer does. The published v1.0.2 updater had deterministically changed `.env` to the fixture's
-  unrelated UID 10001 with mode `0600`; the later non-root Compose doctor therefore could not open
-  it. Owner/mode and parent traversal are now asserted before and after both upgrade variants, and
-  the current updater preserves `.env` metadata across elevated `sed -i` image-pin replacement.
+- CI follow-up aligns the privileged fixture's configured `APP_UID/GID` with the installer and uses
+  that same identity for its final direct filesystem/SQLite probe. WSL2 diagnostics before update,
+  after update, and before the probe showed legacy state moving from `root:root` `0500`/`0400` to
+  runtime-owned `0700`/`0600`; only the probe's hard-coded `10001:10001` identity was wrong. The
+  fixture now asserts each persistent path and the resolved Compose user/config/data mounts.
+  `.env` owner/mode preservation across elevated image-pin replacement remains covered.
 - ShellCheck SC2251 is resolved with an explicit conditional that fails when a `gallery_dl` section
   is present; no diagnostic suppression or assertion weakening was introduced.
 - Patch 1.2.2 fixes Linux prepared-release preflight. The old command ran the configured old image
@@ -191,7 +192,28 @@ Larger files through the 4096 MB media ceiling use stored 1850 MB ZIP volumes wi
 manifest. No Telegram user account, phone number, SMS code, 2FA password, Userbot, or MTProto
 session is present.
 
-## Verification completed on this host
+## WSL2 privileged-updater follow-up
+
+- Real Docker upgrade coverage passed four clean, consecutive lifecycles: v1.0.2 legacy updater,
+  v1.2.1 checksummed standalone updater, then the same two paths a second time. Every run preserved
+  config/cookie hashes and SQLite sentinel data, enabled WAL, and completed the runtime write probe.
+- The observed configured runtime was `1000:1000`. The v1.0.2 updater changed legacy runtime
+  directories from `root:root 0500` to `1000:1000 0700` and files from `root:root 0400` to
+  `1000:1000 0600`; `.env` and `config.yaml` stayed installer-owned `0600`.
+- Each fixture resolved Compose `bot`, `worker`, and `local-api` to `1000:1000`, with read-only
+  config and writable data binds. Unique Compose project names plus `down --volumes` left no test
+  container, network, volume, registry, temporary root, or temporary sudo policy behind.
+- ShellCheck, complete Bash parsing, and the Linux mocked updater recovery suite passed. Lock/frozen
+  sync, architecture, UTF-8 (236 files), Ruff lint/format (157 files), strict mypy (146 files),
+  detect-secrets, `pip check`, and `pip-audit` all passed.
+- The default non-contract suite passed with 466 tests, one destructive Local Bot API test skipped,
+  and 15 external contracts deselected. Branch coverage was 82.68% against the 80% gate.
+- Wheel/sdist build, bundled-license checks, clean-wheel installation, release tar/ZIP/standalone
+  updater checksum smoke, example extractor SDK, Compose validation, and all existing CI-image
+  gallery-dl/native-selection/UI/doctor/multipart/usage-chart smokes passed.
+- Live external YouTube contracts were intentionally not rerun for this filesystem-fixture fix.
+
+## Earlier Windows release verification
 
 - Runtime baseline: CPython 3.14.5, locked yt-dlp 2026.07.04.
 - `uv lock --check`: passed.
@@ -237,8 +259,8 @@ session is present.
   clean-wheel installation/resource/decode smoke.
 - Release tar/ZIP/updater asset generation passed; all three SHA-256 files verified and the
   standalone updater retained executable mode.
-- The privileged filesystem/SQLite/Docker upgrade test could not start because no
-  Docker, Podman, or Nerdctl executable is installed on this host.
+- The privileged filesystem/SQLite/Docker upgrade test was unavailable on that earlier Windows
+  host; the WSL2 follow-up above now supplies the required real-Docker result.
 - Local `config.example.yaml` parsing is covered by the test suite; its runtime `config-check`
   correctly rejects the container-only `/data/cookies/cookies.txt` path on this Windows host. The
   required release image mounts a readable cookie fixture before running the same check.
@@ -251,7 +273,7 @@ conversion/delivery, dynamic attribution, multi-artifact delivery, SQLite migrat
 idempotency, tracked upload progress, multipart persistence, Local API migration safety, and safe
 interactive configuration output.
 
-## Checks not executable on this host
+## Checks not executable on the earlier Windows host
 
 - Docker Desktop/Engine is not installed, so an actual Compose startup or final Docker build could
   not run locally. CI has a required image build and the release workflow publishes the supported

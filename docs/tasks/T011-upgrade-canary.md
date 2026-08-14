@@ -16,6 +16,11 @@ Verified updates may subsequently remove only unused old images from the exact p
 the current/referenced images and all unrelated Docker resources remain protected. Operators can
 preview the same allowlisted action with `tmb cleanup --dry-run`.
 
+The v1.2.2 privileged regression derives its final filesystem and SQLite WAL probe from the exact
+`APP_UID`/`APP_GID` consumed by Compose. It asserts the post-migration owner/mode of persistent
+state, downloads, temp, cookies, Local Bot API state, and backups for both the v1.0.2 legacy updater
+and the checksummed v1.2.1 standalone-updater bootstrap.
+
 ## Deliverables
 
 - Improve the upgrade script to record old/new versions and retain rollback instructions.
