@@ -273,7 +273,9 @@ stop. Top-level application entries use rollback snapshots, while local configur
 outside replacement. A same-UID filesystem write and SQLite WAL probe must pass before candidate
 startup. Container
 running/health state is then mandatory; any post-stop failure restores the prior source, image,
-usable permissions, command link, and previous service set.
+usable permissions, command link, and previous service set. Image-pin rewrites retain the
+pre-existing numeric owner/group and mode of `.env`, including when an authorized operator invokes
+the updater through `sudo`.
 
 The v1.2.1 installed updater cannot consume a corrected updater from its release archive before its
 old preflight. Patch releases therefore publish `tmb-updater.sh` with its own SHA-256 file. Affected

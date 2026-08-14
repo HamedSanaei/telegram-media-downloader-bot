@@ -14,6 +14,8 @@
   SQLite, migration, download, cookie, or other persistent runtime state.
 - Publish a checksummed standalone updater asset for the one-time v1.2.1 bootstrap, whose installed
   updater necessarily runs its old preflight before it can replace application files.
+- Preserve the existing owner and restrictive mode of `.env` when an elevated updater changes the
+  pinned image, and align privileged fixtures with the installer's UID/GID contract.
 - Cover default Instagram fallback, explicit gallery-dl cookies, missing and unreadable files,
   disabled gallery-dl, byte-identical configuration/cookies, and previous-release updater layouts.
 

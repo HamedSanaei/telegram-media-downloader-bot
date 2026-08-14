@@ -173,11 +173,22 @@ cleanup_prepared_release() {
 }
 
 set_configured_image() {
-  local image="$1"
-  if grep -q '^TMB_IMAGE=' .env; then
-    sed -i "s|^TMB_IMAGE=.*|TMB_IMAGE=$image|" .env
+  local image="$1" env_path="$ROOT_DIR/.env" owner="" mode="" current_owner
+  if [[ -e "$env_path" ]]; then
+    owner="$(stat -c '%u:%g' "$env_path")" || return 1
+    mode="$(stat -c '%a' "$env_path")" || return 1
+  fi
+  if grep -q '^TMB_IMAGE=' "$env_path"; then
+    sed -i "s|^TMB_IMAGE=.*|TMB_IMAGE=$image|" "$env_path"
   else
-    echo "TMB_IMAGE=$image" >> .env
+    echo "TMB_IMAGE=$image" >>"$env_path"
+  fi
+  if [[ -n "$owner" ]]; then
+    current_owner="$(stat -c '%u:%g' "$env_path")" || return 1
+    if [[ "$current_owner" != "$owner" ]]; then
+      chown "$owner" "$env_path" || return 1
+    fi
+    chmod "$mode" "$env_path" || return 1
   fi
 }
 

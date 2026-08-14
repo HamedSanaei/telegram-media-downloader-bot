@@ -19,6 +19,17 @@ BIN_ROOT="$TEST_ROOT/bin"
 REGISTRY_NAME="tmb-upgrade-registry-$$"
 REGISTRY_PORT="${TMB_TEST_REGISTRY_PORT:-5055}"
 IMAGE_REPOSITORY="localhost:${REGISTRY_PORT}/telegram-media-downloader-bot"
+INSTALL_OWNER_UID="$(id -u)"
+INSTALL_OWNER_GID="$(id -g)"
+
+assert_owner_mode() {
+  local path="$1" expected_owner="$2" expected_mode="$3" label="$4" actual
+  actual="$(stat -c '%u:%g %a' "$path")"
+  if [[ "$actual" != "$expected_owner $expected_mode" ]]; then
+    echo "Unexpected $label permissions: $(stat -c '%U:%G %a %n' "$path")" >&2
+    return 1
+  fi
+}
 
 cleanup() {
   docker compose --project-directory "$INSTALL_ROOT" --profile local-api down \
@@ -67,10 +78,12 @@ mv "$INSTALL_ROOT/config.yaml.without-gallery" "$INSTALL_ROOT/config.yaml"
 cat >"$INSTALL_ROOT/.env" <<EOF
 TMB_IMAGE=${IMAGE_REPOSITORY}:${PREVIOUS_VERSION}
 COMPOSE_PROFILES=local-api
-APP_UID=10001
-APP_GID=10001
+APP_UID=${INSTALL_OWNER_UID}
+APP_GID=${INSTALL_OWNER_GID}
 TMB_WORKER_CPUS=1.5
 EOF
+chmod 755 "$INSTALL_ROOT"
+chmod 600 "$INSTALL_ROOT/.env" "$INSTALL_ROOT/config.yaml"
 mkdir -p \
   "$INSTALL_ROOT/data/state" \
   "$INSTALL_ROOT/data/cookies" \
@@ -141,10 +154,30 @@ sudo chown -R 0:0 "$INSTALL_ROOT/data" "$INSTALL_ROOT/backups"
 sudo find "$INSTALL_ROOT/data" "$INSTALL_ROOT/backups" -type d -exec chmod 500 {} +
 sudo find "$INSTALL_ROOT/data" "$INSTALL_ROOT/backups" -type f -exec chmod 400 {} +
 if [[ "$USE_RELEASE_UPDATER_ASSET" == "1" ]]; then
-  sudo chown 10001:10001 \
+  sudo chown "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" \
     "$INSTALL_ROOT/data" \
     "$INSTALL_ROOT/data/cookies" \
     "$INSTALL_ROOT/data/cookies/cookies.txt"
+fi
+
+assert_owner_mode "$TEST_ROOT" "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 700 \
+  "temporary parent"
+assert_owner_mode "$INSTALL_ROOT" "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 755 \
+  "installation root"
+assert_owner_mode "$INSTALL_ROOT/.env" "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 600 \
+  "deployment environment"
+assert_owner_mode "$INSTALL_ROOT/config.yaml" "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 600 \
+  "application config"
+[[ -x "$TEST_ROOT" && -x "$INSTALL_ROOT" && -r "$INSTALL_ROOT/.env" ]]
+if [[ "$USE_RELEASE_UPDATER_ASSET" == "1" ]]; then
+  assert_owner_mode "$INSTALL_ROOT/data" "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 500 \
+    "preflight data root"
+  assert_owner_mode "$INSTALL_ROOT/data/cookies" \
+    "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 500 "preflight cookie directory"
+  assert_owner_mode "$INSTALL_ROOT/data/cookies/cookies.txt" \
+    "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 400 "preflight cookie"
+else
+  assert_owner_mode "$INSTALL_ROOT/data" "0:0" 500 "legacy root-owned data"
 fi
 
 UPDATER_PATH="$INSTALL_ROOT/scripts/tmb.sh"
@@ -167,13 +200,21 @@ sudo env \
   "TMB_ROOT_DIR=$INSTALL_ROOT" \
   bash "$UPDATER_PATH" update
 
+assert_owner_mode "$INSTALL_ROOT/.env" "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 600 \
+  "post-update deployment environment"
+assert_owner_mode "$INSTALL_ROOT/config.yaml" "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 600 \
+  "post-update application config"
+[[ -x "$TEST_ROOT" && -x "$INSTALL_ROOT" && -r "$INSTALL_ROOT/.env" ]]
 PATH="$BIN_ROOT:$PATH" command -v tmb >/dev/null
 test -x "$(readlink -f "$(PATH="$BIN_ROOT:$PATH" command -v tmb)")"
 bash -n "$INSTALL_ROOT/scripts/tmb.sh"
 sudo env "PATH=$BIN_ROOT:$PATH" "TMB_ROOT_DIR=$INSTALL_ROOT" tmb status >/dev/null
 sudo grep -q "^TMB_IMAGE=.*:${RELEASE_VERSION}$" "$INSTALL_ROOT/.env"
 sudo grep -q 'CHANGE_ME' "$INSTALL_ROOT/config.yaml"
-! sudo grep -q '^gallery_dl:' "$INSTALL_ROOT/config.yaml"
+if sudo grep -q '^gallery_dl:' "$INSTALL_ROOT/config.yaml"; then
+  echo "Update unexpectedly injected a gallery_dl configuration section." >&2
+  exit 1
+fi
 sudo grep -q '^cookie-sentinel$' "$INSTALL_ROOT/data/cookies/cookies.txt"
 sudo grep -q '^download-sentinel$' "$INSTALL_ROOT/data/downloads/existing.bin"
 sudo grep -q '^local-api-sentinel$' "$INSTALL_ROOT/data/telegram-bot-api/state.bin"

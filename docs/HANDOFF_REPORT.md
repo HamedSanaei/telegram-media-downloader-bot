@@ -4,6 +4,13 @@ Generated: 2026-08-14
 
 ## Current change addendum
 
+- CI follow-up aligns the privileged fixture's `APP_UID/GID` with the GitHub runner, as the
+  installer does. The published v1.0.2 updater had deterministically changed `.env` to the fixture's
+  unrelated UID 10001 with mode `0600`; the later non-root Compose doctor therefore could not open
+  it. Owner/mode and parent traversal are now asserted before and after both upgrade variants, and
+  the current updater preserves `.env` metadata across elevated `sed -i` image-pin replacement.
+- ShellCheck SC2251 is resolved with an explicit conditional that fails when a `gallery_dl` section
+  is present; no diagnostic suppression or assertion weakening was introduced.
 - Patch 1.2.2 fixes Linux prepared-release preflight. The old command ran the configured old image
   with only `config.yaml`, so `/data` cookie paths valid in Compose were absent. Preflight now pulls
   the prepared image and runs `config-check --read-only-runtime` with read-only root, configuration,
@@ -221,8 +228,8 @@ session is present.
 - External extractor SDK: lock/sync passed; 1 default test passed and 1 contract was deselected.
 - `config.example.yaml`, Compose YAML, both workflow YAML files, and JSON schema parsed successfully.
 - PowerShell AST parsing: passed for all 4 scripts.
-- Git Bash syntax parsing passed for all 6 release scripts; the required Linux jobs parse them
-  again and add ShellCheck.
+- Git Bash syntax parsing passed for all 6 release scripts. Portable ShellCheck 0.11.0 also passed
+  every Linux management/release script, including the corrected privileged integration test.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
@@ -249,8 +256,8 @@ interactive configuration output.
 - Docker Desktop/Engine is not installed, so an actual Compose startup or final Docker build could
   not run locally. CI has a required image build and the release workflow publishes the supported
   amd64 image only after a matching version tag.
-- ShellCheck and PSScriptAnalyzer are not installed locally. Bash/PowerShell parsers passed, and CI
-  now has required Linux ShellCheck and Windows PSScriptAnalyzer jobs.
+- PSScriptAnalyzer is not installed locally. PowerShell parser/recovery tests passed, and CI retains
+  the required Windows PSScriptAnalyzer job.
 - Fresh Ubuntu VM and Windows Sandbox end-to-end installer runs need Docker and release credentials
   and were not available on this workstation.
 - Twelve source/gallery contracts skipped because operator-maintained fixture URLs were not

@@ -364,6 +364,10 @@ def test_linux_installer_and_updater_install_command_and_repair_permissions() ->
     assert 'sudo ln -sfn "$INSTALL_DIR/scripts/tmb.sh" "$TMB_BIN_DIR/tmb"' in installer
     assert "repair_tmb_command" in updater
     assert "normalize_runtime_permissions" in updater
+    assert "stat -c '%u:%g'" in updater
+    assert "stat -c '%a'" in updater
+    assert 'chown "$owner" "$env_path"' in updater
+    assert 'chmod "$mode" "$env_path"' in updater
     assert "docker run --rm --user 0 --entrypoint sh" in updater
     assert "find /workspace/data /workspace/backups -type f -exec chmod 600" in updater
     assert 'connection.execute("PRAGMA journal_mode = WAL")' in updater

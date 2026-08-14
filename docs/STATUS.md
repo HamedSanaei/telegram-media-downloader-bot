@@ -116,6 +116,10 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-08-14: Corrected the v1.2.2 privileged-updater fixture to use the installing runner's
+  UID/GID, matching `install.sh`, and added explicit owner/mode/traversal assertions before and
+  after both legacy and release-asset upgrades. Elevated image-pin rewrites now preserve `.env`
+  ownership and mode. The ShellCheck SC2251 negation was replaced with an explicit failure branch.
 - 2026-08-14: Prepared patch 1.2.2 so Linux update preflight pulls the prepared image and mounts
   `config.yaml` plus project `/data` read-only. Runtime-valid default Instagram cookie fallback and
   explicit gallery cookie paths now validate without configuration edits; missing or unreadable

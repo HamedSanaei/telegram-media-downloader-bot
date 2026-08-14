@@ -44,6 +44,7 @@ yt_dlp:
 EOF
   printf 'TMB_IMAGE=example.invalid/tmb:1.0.2\nCOMPOSE_PROFILES=local-api\nAPP_UID=10001\nAPP_GID=10001\nTMB_WORKER_CPUS=1.5\n' \
     >"$case_root/.env"
+  chmod 600 "$case_root/.env"
   printf 'version = "1.0.2"\n' >"$case_root/pyproject.toml"
   printf 'sqlite-v1-state' >"$case_root/data/state/jobs.sqlite3"
   printf 'cookies-v1-state' >"$case_root/data/cookies/cookies.txt"
@@ -215,7 +216,10 @@ EOF
 run_success_case() {
   local case_root="$TEST_ROOT/success"
   local log="$case_root/operations.log"
+  local env_owner_before env_mode_before
   prepare_case "$case_root"
+  env_owner_before="$(stat -c '%u:%g' "$case_root/.env")"
+  env_mode_before="$(stat -c '%a' "$case_root/.env")"
   cp "$case_root/config.yaml" "$TEST_ROOT/success-config.expected"
   cp "$case_root/data/cookies/cookies.txt" "$TEST_ROOT/success-cookie.expected"
   (
@@ -231,6 +235,10 @@ run_success_case() {
   diff -u <(
     printf 'TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.3\nCOMPOSE_PROFILES=local-api\nAPP_UID=10001\nAPP_GID=10001\nTMB_WORKER_CPUS=1.5\n'
   ) "$case_root/.env" || fail "update changed .env beyond TMB_IMAGE"
+  [[ "$(stat -c '%u:%g' "$case_root/.env")" == "$env_owner_before" ]] \
+    || fail "update changed .env ownership"
+  [[ "$(stat -c '%a' "$case_root/.env")" == "$env_mode_before" ]] \
+    || fail "update changed .env mode"
   grep -q 'V1_CONFIG_SENTINEL' "$case_root/config.yaml" \
     || fail "successful update overwrote config.yaml"
   cmp "$TEST_ROOT/success-config.expected" "$case_root/config.yaml" \
