@@ -141,7 +141,11 @@ jobs:
         shell: bash
         env:
           RUN_PRIVILEGED_UPGRADE_TESTS: "1"
-        run: bash scripts/tests/test_tmb_upgrade_integration.sh
+        run: |
+          TMB_TEST_PREVIOUS_VERSION=1.0.2 \
+            bash scripts/tests/test_tmb_upgrade_integration.sh
+          TMB_TEST_PREVIOUS_VERSION=1.2.1 TMB_USE_RELEASE_UPDATER_ASSET=1 \
+            bash scripts/tests/test_tmb_upgrade_integration.sh
 
   installer-quality:
     strategy:

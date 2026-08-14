@@ -39,6 +39,8 @@ telegram:
       - chat_id: -1000000000003
         title: Fixture Channel Three
         join_url: https://t.me/fixture_channel_three
+yt_dlp:
+  cookies_file: /data/cookies/cookies.txt
 EOF
   printf 'TMB_IMAGE=example.invalid/tmb:1.0.2\nCOMPOSE_PROFILES=local-api\nAPP_UID=10001\nAPP_GID=10001\nTMB_WORKER_CPUS=1.5\n' \
     >"$case_root/.env"
@@ -51,6 +53,15 @@ EOF
   cat >"$case_root/fake-bin/docker" <<'EOF'
 #!/usr/bin/env bash
 printf 'docker %s\n' "$*" >>"$TMB_TEST_LOG"
+if [[ "$*" == *"telegram-media-bot config-check"* ]]; then
+  [[ "$*" == *"run --rm --read-only --user 10001:10001"* ]] || exit 91
+  [[ "$*" == *"--tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777"* ]] || exit 92
+  [[ "$*" == *"-v $TMB_CASE_ROOT/config.yaml:/app/config.yaml:ro"* ]] || exit 93
+  [[ "$*" == *"-v $TMB_CASE_ROOT/data:/data:ro"* ]] || exit 94
+  [[ "$*" == *"--read-only-runtime"* ]] || exit 95
+  [[ "${TMB_PREFLIGHT_COOKIE_UNREADABLE:-0}" != "1" ]] || exit 96
+  [[ -r "$TMB_CASE_ROOT/data/cookies/cookies.txt" ]] || exit 97
+fi
 if [[ "$*" == *" ps --services --filter status=running"* ]]; then
   printf 'bot\nworker\nlocal-api\nredis\n'
 fi
@@ -205,6 +216,8 @@ run_success_case() {
   local case_root="$TEST_ROOT/success"
   local log="$case_root/operations.log"
   prepare_case "$case_root"
+  cp "$case_root/config.yaml" "$TEST_ROOT/success-config.expected"
+  cp "$case_root/data/cookies/cookies.txt" "$TEST_ROOT/success-cookie.expected"
   (
     cd "$case_root"
     PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
@@ -220,6 +233,13 @@ run_success_case() {
   ) "$case_root/.env" || fail "update changed .env beyond TMB_IMAGE"
   grep -q 'V1_CONFIG_SENTINEL' "$case_root/config.yaml" \
     || fail "successful update overwrote config.yaml"
+  cmp "$TEST_ROOT/success-config.expected" "$case_root/config.yaml" \
+    || fail "successful update changed config.yaml bytes"
+  cmp "$TEST_ROOT/success-cookie.expected" "$case_root/data/cookies/cookies.txt" \
+    || fail "successful update changed cookie bytes"
+  if grep -q '^gallery_dl:' "$case_root/config.yaml"; then
+    fail "update required a temporary gallery_dl override"
+  fi
   [[ "$(grep -c 'Fixture Channel' "$case_root/config.yaml")" == "3" ]] \
     || fail "successful update changed required channels"
   [[ "$(grep -cE '^    - (111111111|222222222)$' "$case_root/config.yaml")" == "2" ]] \
@@ -248,6 +268,12 @@ run_success_case() {
   download_line="$(grep -n '^curl ' "$log" | head -n 1 | cut -d: -f1)"
   ((download_line < backup_line && backup_line < stop_line)) \
     || fail "release validation, backup, and service-stop ordering is wrong"
+  grep -q 'docker run --rm --read-only --user 10001:10001 .*config.yaml:/app/config.yaml:ro .*data:/data:ro ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.3 telegram-media-bot config-check --config /app/config.yaml --read-only-runtime' "$log" \
+    || fail "prepared-release config check did not use the read-only runtime data contract"
+  local preflight_line
+  preflight_line="$(grep -n 'config-check --config /app/config.yaml --read-only-runtime' "$log" | head -n 1 | cut -d: -f1)"
+  ((preflight_line < stop_line)) \
+    || fail "prepared-release config check ran after service stop"
   grep -q 'docker .* pull' "$log" || fail "updated images were not pulled"
   grep -q 'docker run --rm --user 0 --entrypoint sh' "$log" \
     || fail "runtime permissions were not normalized through the release image"
@@ -290,6 +316,53 @@ run_success_case() {
   cleanup_line="$(grep -n 'docker image rm sha256:old-unused' "$log" | tail -n 1 | cut -d: -f1)"
   ((doctor_line < cleanup_line)) \
     || fail "old image cleanup ran before runtime verification"
+}
+
+run_missing_cookie_preflight_case() {
+  local case_root="$TEST_ROOT/missing-cookie"
+  local log="$case_root/operations.log"
+  prepare_case "$case_root"
+  cp "$case_root/config.yaml" "$TEST_ROOT/missing-cookie-config.expected"
+  rm "$case_root/data/cookies/cookies.txt"
+  if (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh update
+  ); then
+    fail "missing preflight cookie unexpectedly succeeded"
+  fi
+
+  cmp "$TEST_ROOT/missing-cookie-config.expected" "$case_root/config.yaml" \
+    || fail "missing-cookie preflight changed config.yaml"
+  grep -q '^version = "1.0.2"$' "$case_root/pyproject.toml" \
+    || fail "missing-cookie preflight changed installed source"
+  if grep -q 'docker .* stop -t 45' "$log"; then
+    fail "missing-cookie preflight stopped application services"
+  fi
+  if grep -q '^tar -czf' "$log"; then
+    fail "missing-cookie preflight created a post-validation backup"
+  fi
+}
+
+run_unreadable_cookie_preflight_case() {
+  local case_root="$TEST_ROOT/unreadable-cookie"
+  local log="$case_root/operations.log"
+  prepare_case "$case_root"
+  if (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_PREFLIGHT_COOKIE_UNREADABLE=1 \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh update
+  ); then
+    fail "unreadable preflight cookie unexpectedly succeeded"
+  fi
+  if grep -q 'docker .* stop -t 45' "$log"; then
+    fail "unreadable-cookie preflight stopped application services"
+  fi
 }
 
 run_checksum_failure_case() {
@@ -413,6 +486,8 @@ run_cleanup_dry_run_case() {
 }
 
 run_success_case
+run_missing_cookie_preflight_case
+run_unreadable_cookie_preflight_case
 run_checksum_failure_case
 run_download_failure_case
 run_permission_failure_case

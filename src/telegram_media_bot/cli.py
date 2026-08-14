@@ -37,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     config_check = subparsers.add_parser("config-check", help="Validate configuration")
     config_check.add_argument("--config", type=Path, default=None)
+    config_check.add_argument(
+        "--read-only-runtime",
+        action="store_true",
+        help="Validate mounted runtime files without write probes",
+    )
 
     doctor = subparsers.add_parser("doctor", help="Check local runtime prerequisites")
     doctor.add_argument("--config", type=Path, default=None)
@@ -111,7 +116,10 @@ def main() -> None:
             run_worker(WorkerSettings)
         elif args.command == "config-check":
             settings = load_settings(args.config, require_token=False)
-            _run_config_check(settings)
+            _run_config_check(
+                settings,
+                runtime_filesystem_read_only=bool(args.read_only_runtime),
+            )
             print("Configuration is valid.")
         elif args.command == "doctor":
             settings = load_settings(args.config, require_token=False)
@@ -231,7 +239,11 @@ async def _required_channels_ready(settings: Settings) -> bool:
         await bot.session.close()
 
 
-def _run_config_check(settings: Settings) -> None:
+def _run_config_check(
+    settings: Settings,
+    *,
+    runtime_filesystem_read_only: bool = False,
+) -> None:
     gallery_failures: list[str] = []
     if settings.gallery_dl.enabled:
         from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
@@ -249,7 +261,11 @@ def _run_config_check(settings: Settings) -> None:
     local_api = settings.telegram.local_bot_api
     if not local_api.enabled:
         return
-    diagnostics = _local_api_diagnostics(settings, require_reachable=False)
+    diagnostics = _local_api_diagnostics(
+        settings,
+        require_reachable=False,
+        probe_directory_writes=not runtime_filesystem_read_only,
+    )
     failed = [name for name, healthy in diagnostics.items() if not healthy]
     if failed:
         raise ConfigurationError(
@@ -261,6 +277,7 @@ def _local_api_diagnostics(
     settings: Settings,
     *,
     require_reachable: bool,
+    probe_directory_writes: bool = True,
 ) -> dict[str, bool]:
     local_api = settings.telegram.local_bot_api
     base_url = settings.telegram.local_api_base_url
@@ -279,7 +296,10 @@ def _local_api_diagnostics(
                 local_api.log_file.parent,
             )
         )
-    directories_ok = all(_directory_writable(path) for path in directories)
+    directories_ok = all(
+        _directory_writable(path) if probe_directory_writes else _directory_readable(path)
+        for path in directories
+    )
     credentials_ok = True
     if local_api.mode == "managed":
         credentials_ok = bool(
@@ -320,6 +340,11 @@ def _directory_writable(path: Path) -> bool:
     except OSError:
         return False
     return True
+
+
+def _directory_readable(path: Path) -> bool:
+    resolved = path.expanduser().resolve()
+    return resolved.is_dir() and os.access(resolved, os.R_OK | os.X_OK)
 
 
 async def _run_local_api(settings: Settings, action: str, confirmed: bool) -> None:

@@ -179,7 +179,14 @@ script Bash is reading. Release archives carry the command through an executable
 bootstrap safely from the published v1.0.2 updater. Linux release archives omit tracked `data/`
 placeholders so the old updater's final `cp -a` cannot reset freshly migrated state ownership.
 Complete staged Bash scripts, Compose, and the existing configuration are validated before
-application writers stop.
+application writers stop. Prepared-image configuration validation receives the same project data
+path contract as runtime, but both the container root and persistent `/data` bind are read-only.
+The configured runtime UID/GID is retained and cookie readability remains mandatory. Non-mutating
+directory accessibility replaces write probes only in this preflight mode; real runtime-user
+writes and SQLite WAL are still required after service stop and before candidate startup. Because
+v1.2.1 runs this step from its already-installed script, v1.2.2 also publishes a separately
+checksummed updater bootstrap. It is executed once without replacing configuration or persistent
+state, then the transactional update installs the fixed command for subsequent releases.
 
 Top-level application entries are replaced with a rollback snapshot while `.env`, `config.yaml`,
 data, backups, cookies, downloads, Redis, and Local API state remain outside replacement. Before

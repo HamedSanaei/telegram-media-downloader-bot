@@ -56,3 +56,15 @@ git archive \
   sha256sum telegram-media-downloader-bot.zip \
     >telegram-media-downloader-bot.zip.sha256
 )
+
+# v1.2.1 performs preflight with its already-installed updater, before application replacement.
+# Publish the prepared updater separately so affected installations can bootstrap this preflight
+# fix without weakening config validation or editing config.yaml.
+cp \
+  "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tmb-current.sh" \
+  "$OUTPUT_DIRECTORY/tmb-updater.sh"
+chmod 755 "$OUTPUT_DIRECTORY/tmb-updater.sh"
+(
+  cd "$OUTPUT_DIRECTORY"
+  sha256sum tmb-updater.sh >tmb-updater.sh.sha256
+)

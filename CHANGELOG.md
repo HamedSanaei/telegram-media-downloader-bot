@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 1.2.2 - 2026-08-14
+
+### Fixed
+
+- Validate an update with the prepared release image before stopping services, mounting the
+  existing configuration and persistent `/data` filesystem read-only so runtime-valid cookie
+  paths remain visible to gallery-dl checks under the configured runtime UID/GID.
+- Add a non-mutating `config-check --read-only-runtime` mode for updater preflight. Cookie
+  readability remains fail-closed, while Local Bot API directory validation does not write to
+  SQLite, migration, download, cookie, or other persistent runtime state.
+- Publish a checksummed standalone updater asset for the one-time v1.2.1 bootstrap, whose installed
+  updater necessarily runs its old preflight before it can replace application files.
+- Cover default Instagram fallback, explicit gallery-dl cookies, missing and unreadable files,
+  disabled gallery-dl, byte-identical configuration/cookies, and previous-release updater layouts.
+
 ## 1.2.1 - 2026-08-13
 
 ### Fixed

@@ -81,6 +81,30 @@ sudo ln -sfn "$(pwd)/scripts/tmb.sh" /usr/local/bin/tmb
 TMB_RELEASE_TAG=v1.0.3 tmb update
 ```
 
+The published v1.2.1 updater validates with its old container mounts before it can install a newer
+script. To move an affected v1.2.1 installation to v1.2.2 without editing `config.yaml`, verify and
+run the standalone release updater once from the project root:
+
+```bash
+release_tag="v1.2.2"
+project_root="$(pwd -P)"
+bootstrap_dir="$(mktemp -d)"
+curl -fsSL \
+  "https://github.com/HamedSanaei/telegram-media-downloader-bot/releases/download/${release_tag}/tmb-updater.sh" \
+  -o "$bootstrap_dir/tmb-updater.sh"
+curl -fsSL \
+  "https://github.com/HamedSanaei/telegram-media-downloader-bot/releases/download/${release_tag}/tmb-updater.sh.sha256" \
+  -o "$bootstrap_dir/tmb-updater.sh.sha256"
+(cd "$bootstrap_dir" && sha256sum --check tmb-updater.sh.sha256)
+sudo env TMB_ROOT_DIR="$project_root" TMB_RELEASE_TAG="$release_tag" \
+  bash "$bootstrap_dir/tmb-updater.sh" update
+rm -rf -- "$bootstrap_dir"
+```
+
+Run this only after v1.2.2 assets are published and from the directory containing the installation's
+`config.yaml`. The checksum is mandatory. This changes neither the configuration nor cookie bytes;
+ordinary `tmb update` is sufficient again after v1.2.2 is installed.
+
 Backups contain `config.yaml`, `.env`, SQLite/state, cookies, and Local API state. Large
 `data/downloads` and disposable `data/temp` content are preserved in place during update but
 excluded from archives to avoid duplicating multi-gigabyte media.

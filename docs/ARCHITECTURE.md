@@ -263,11 +263,22 @@ covers Redis, SQLite, writable storage, Telegram, ffmpeg, and the engine. Compos
 the port to the host by default; the worker container health check consumes it internally.
 
 Linux release updates run from an isolated script copy and validate the complete staged Bash,
-Compose, configuration, and executable-mode payload before stopping writers. Top-level application
-entries use rollback snapshots, while local configuration/state remain outside replacement. A
-same-UID filesystem write and SQLite WAL probe must pass before candidate startup. Container
+Compose, configuration, and executable-mode payload before stopping writers. Preflight pulls the
+prepared image and runs its configuration checker with a read-only container root, read-only
+`config.yaml`, and the project's persistent data bind mounted read-only at `/data`. This mirrors
+runtime path visibility and UID/GID without permitting changes to cookies, SQLite, downloads, or
+Local Bot API state. File readability remains strict; directory diagnostics use non-mutating
+accessibility checks until the existing same-UID write and SQLite WAL probes run after service
+stop. Top-level application entries use rollback snapshots, while local configuration/state remain
+outside replacement. A same-UID filesystem write and SQLite WAL probe must pass before candidate
+startup. Container
 running/health state is then mandatory; any post-stop failure restores the prior source, image,
 usable permissions, command link, and previous service set.
+
+The v1.2.1 installed updater cannot consume a corrected updater from its release archive before its
+old preflight. Patch releases therefore publish `tmb-updater.sh` with its own SHA-256 file. Affected
+v1.2.1 installations verify and execute that asset once against the existing project root; the
+normal transactional install then places the corrected updater for every later `tmb update`.
 
 Only after candidate health, exact runtime version, dependency doctor, and Compose status pass may
 the updater clean Docker resources. It removes stopped containers from this Compose project only

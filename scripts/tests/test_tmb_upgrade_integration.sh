@@ -11,6 +11,7 @@ RELEASE_VERSION="$(
   sed -n 's/^version = "\([^"]*\)"/\1/p' "$SOURCE_ROOT/pyproject.toml" | head -n 1
 )"
 PREVIOUS_VERSION="${TMB_TEST_PREVIOUS_VERSION:-1.0.2}"
+USE_RELEASE_UPDATER_ASSET="${TMB_USE_RELEASE_UPDATER_ASSET:-0}"
 TEST_ROOT="$(mktemp -d)"
 INSTALL_ROOT="$TEST_ROOT/installation"
 ASSET_ROOT="$TEST_ROOT/releases/download/v${RELEASE_VERSION}"
@@ -43,7 +44,9 @@ grep -Eq \
 tar -xzf "$ASSET_ROOT/telegram-media-downloader-bot.tar.gz" \
   -C "$INSTALL_ROOT" --strip-components=1
 
-# Model the exact published v1.0.2 updater, including its self-replacement ordering defect.
+# Model the exact selected previous installation. v1.2.1 cannot replace its running updater before
+# preflight, so that case later executes the separately checksummed release updater asset against
+# this unchanged old layout. The v1.0.2 case retains legacy self-replacement regression coverage.
 sed -i \
   "s/^version = \"${RELEASE_VERSION}\"/version = \"${PREVIOUS_VERSION}\"/" \
   "$INSTALL_ROOT/pyproject.toml"
@@ -55,6 +58,12 @@ sed -i \
   "$INSTALL_ROOT/scripts/tmb.sh"
 chmod 755 "$INSTALL_ROOT/scripts/tmb.sh"
 cp "$INSTALL_ROOT/config.example.yaml" "$INSTALL_ROOT/config.yaml"
+awk '
+  /^gallery_dl:/ { skipping = 1; next }
+  skipping && /^[^[:space:]#]/ { skipping = 0 }
+  !skipping { print }
+' "$INSTALL_ROOT/config.yaml" >"$INSTALL_ROOT/config.yaml.without-gallery"
+mv "$INSTALL_ROOT/config.yaml.without-gallery" "$INSTALL_ROOT/config.yaml"
 cat >"$INSTALL_ROOT/.env" <<EOF
 TMB_IMAGE=${IMAGE_REPOSITORY}:${PREVIOUS_VERSION}
 COMPOSE_PROFILES=local-api
@@ -82,6 +91,8 @@ PY
 printf 'cookie-sentinel' >"$INSTALL_ROOT/data/cookies/cookies.txt"
 printf 'download-sentinel' >"$INSTALL_ROOT/data/downloads/existing.bin"
 printf 'local-api-sentinel' >"$INSTALL_ROOT/data/telegram-bot-api/state.bin"
+CONFIG_HASH_BEFORE="$(sha256sum "$INSTALL_ROOT/config.yaml" | cut -d' ' -f1)"
+COOKIE_HASH_BEFORE="$(sha256sum "$INSTALL_ROOT/data/cookies/cookies.txt" | cut -d' ' -f1)"
 
 docker run -d --rm \
   --name "$REGISTRY_NAME" \
@@ -129,6 +140,23 @@ chmod 755 "$BIN_ROOT/curl"
 sudo chown -R 0:0 "$INSTALL_ROOT/data" "$INSTALL_ROOT/backups"
 sudo find "$INSTALL_ROOT/data" "$INSTALL_ROOT/backups" -type d -exec chmod 500 {} +
 sudo find "$INSTALL_ROOT/data" "$INSTALL_ROOT/backups" -type f -exec chmod 400 {} +
+if [[ "$USE_RELEASE_UPDATER_ASSET" == "1" ]]; then
+  sudo chown 10001:10001 \
+    "$INSTALL_ROOT/data" \
+    "$INSTALL_ROOT/data/cookies" \
+    "$INSTALL_ROOT/data/cookies/cookies.txt"
+fi
+
+UPDATER_PATH="$INSTALL_ROOT/scripts/tmb.sh"
+if [[ "$USE_RELEASE_UPDATER_ASSET" == "1" ]]; then
+  (
+    cd "$ASSET_ROOT"
+    sha256sum --check --status tmb-updater.sh.sha256
+  )
+  UPDATER_PATH="$TEST_ROOT/tmb-updater.sh"
+  cp "$ASSET_ROOT/tmb-updater.sh" "$UPDATER_PATH"
+  chmod 755 "$UPDATER_PATH"
+fi
 
 sudo env \
   "PATH=$BIN_ROOT:$PATH" \
@@ -136,7 +164,8 @@ sudo env \
   "TMB_RELEASE_TAG=v${RELEASE_VERSION}" \
   "TMB_IMAGE_REPOSITORY=$IMAGE_REPOSITORY" \
   "TMB_TEST_ASSET_ROOT=$ASSET_ROOT" \
-  bash -c "cd '$INSTALL_ROOT' && bash scripts/tmb.sh update"
+  "TMB_ROOT_DIR=$INSTALL_ROOT" \
+  bash "$UPDATER_PATH" update
 
 PATH="$BIN_ROOT:$PATH" command -v tmb >/dev/null
 test -x "$(readlink -f "$(PATH="$BIN_ROOT:$PATH" command -v tmb)")"
@@ -144,9 +173,20 @@ bash -n "$INSTALL_ROOT/scripts/tmb.sh"
 sudo env "PATH=$BIN_ROOT:$PATH" "TMB_ROOT_DIR=$INSTALL_ROOT" tmb status >/dev/null
 sudo grep -q "^TMB_IMAGE=.*:${RELEASE_VERSION}$" "$INSTALL_ROOT/.env"
 sudo grep -q 'CHANGE_ME' "$INSTALL_ROOT/config.yaml"
+! sudo grep -q '^gallery_dl:' "$INSTALL_ROOT/config.yaml"
 sudo grep -q '^cookie-sentinel$' "$INSTALL_ROOT/data/cookies/cookies.txt"
 sudo grep -q '^download-sentinel$' "$INSTALL_ROOT/data/downloads/existing.bin"
 sudo grep -q '^local-api-sentinel$' "$INSTALL_ROOT/data/telegram-bot-api/state.bin"
+test "$(sudo sha256sum "$INSTALL_ROOT/config.yaml" | cut -d' ' -f1)" = "$CONFIG_HASH_BEFORE"
+test "$(sudo sha256sum "$INSTALL_ROOT/data/cookies/cookies.txt" | cut -d' ' -f1)" = \
+  "$COOKIE_HASH_BEFORE"
+grep -q "^version = \"${RELEASE_VERSION}\"$" "$INSTALL_ROOT/pyproject.toml"
+
+DOCTOR_OUTPUT="$(
+  docker compose --project-directory "$INSTALL_ROOT" --profile local-api run --rm --no-deps \
+    worker telegram-media-bot doctor --config /app/config.yaml
+)"
+grep -Eq '^OK +gallery_dl_cookie_instagram$' <<<"$DOCTOR_OUTPUT"
 
 docker run --rm --user 10001:10001 --entrypoint python \
   -v "$INSTALL_ROOT/data:/data" \
@@ -163,4 +203,4 @@ assert connection.execute("SELECT value FROM upgrade_sentinel").fetchone() == ("
 connection.close()
 '
 
-echo "Privileged filesystem/SQLite updater integration test passed."
+echo "Privileged filesystem/SQLite updater integration test passed for previous ${PREVIOUS_VERSION}."

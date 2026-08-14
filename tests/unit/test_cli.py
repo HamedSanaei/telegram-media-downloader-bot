@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -46,12 +47,112 @@ def test_config_check_rejects_unreadable_explicit_gallery_cookie(
         cli._run_config_check(Settings.model_validate(raw))
 
 
+def test_config_check_accepts_legacy_instagram_cookie_fallback_without_gallery_section(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_bytes(b"fixture-cookie")
+    raw = settings.model_dump()
+    raw.pop("gallery_dl")
+    raw["yt_dlp"]["cookies_file"] = str(cookie)
+
+    cli._run_config_check(Settings.model_validate(raw))
+
+
+def test_config_check_rejects_missing_legacy_instagram_cookie_without_gallery_section(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    raw = settings.model_dump()
+    raw.pop("gallery_dl")
+    raw["yt_dlp"]["cookies_file"] = str(tmp_path / "missing.txt")
+
+    with pytest.raises(ConfigurationError, match="gallery_dl_cookie_instagram"):
+        cli._run_config_check(Settings.model_validate(raw))
+
+
+def test_config_check_rejects_existing_but_unreadable_gallery_cookie(
+    settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_bytes(b"fixture-cookie")
+    raw = settings.model_dump()
+    raw["yt_dlp"]["cookies_file"] = None
+    raw["gallery_dl"]["cookies"]["instagram"] = str(cookie)
+    original_access = os.access
+    monkeypatch.setattr(
+        os,
+        "access",
+        lambda path, mode: False if Path(path) == cookie else original_access(path, mode),
+    )
+
+    with pytest.raises(ConfigurationError, match="gallery_dl_cookie_instagram"):
+        cli._run_config_check(Settings.model_validate(raw))
+
+
+def test_config_check_preserves_disabled_gallery_semantics(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    raw = settings.model_dump()
+    raw["yt_dlp"]["cookies_file"] = str(tmp_path / "missing.txt")
+    raw["gallery_dl"]["enabled"] = False
+
+    cli._run_config_check(Settings.model_validate(raw))
+
+
+def test_config_check_accepts_readable_explicit_instagram_cookie(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    cookie = tmp_path / "instagram.txt"
+    cookie.write_bytes(b"fixture-cookie")
+    raw = settings.model_dump()
+    raw["yt_dlp"]["cookies_file"] = None
+    raw["gallery_dl"]["cookies"]["instagram"] = str(cookie)
+
+    cli._run_config_check(Settings.model_validate(raw))
+
+
+def test_read_only_config_check_uses_non_mutating_directory_validation(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = settings.model_dump()
+    raw["yt_dlp"]["cookies_file"] = None
+    raw["telegram"]["local_api_base_url"] = "http://local-api:8081"
+    raw["telegram"]["local_api_is_local"] = True
+    raw["telegram"]["local_bot_api"]["enabled"] = True
+    raw["telegram"]["local_bot_api"]["mode"] = "external"
+    configured = Settings.model_validate(raw)
+    monkeypatch.setattr(
+        cli,
+        "_directory_writable",
+        lambda _path: pytest.fail("read-only config check attempted a write probe"),
+    )
+    monkeypatch.setattr(cli, "_directory_readable", lambda _path: True)
+
+    cli._run_config_check(configured, runtime_filesystem_read_only=True)
+
+
 def test_local_api_status_parser_does_not_require_migration_confirmation_flag() -> None:
     args = cli.build_parser().parse_args(["local-api", "status"])
 
     assert args.command == "local-api"
     assert args.local_api_action == "status"
     assert not hasattr(args, "yes")
+
+
+def test_config_check_parser_supports_read_only_runtime() -> None:
+    args = cli.build_parser().parse_args(
+        ["config-check", "--config", "custom.yaml", "--read-only-runtime"]
+    )
+
+    assert args.config == Path("custom.yaml")
+    assert args.read_only_runtime is True
 
 
 @pytest.mark.parametrize(

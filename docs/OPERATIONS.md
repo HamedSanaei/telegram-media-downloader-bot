@@ -27,6 +27,11 @@ usable permissions, `tmb` command, and previous service set.
 Backup archives exclude downloads/temp but include configuration, SQLite/WAL state, cookies, and
 Local API state; Redis continues to use its persistent Compose volume.
 
+An affected v1.2.1 installation must use the checksummed standalone v1.2.2 updater once because its
+installed script cannot replace itself before the faulty old preflight. The exact verification and
+execution sequence is documented in `docs/INSTALLATION.md`; no `gallery_dl` configuration edit is
+required.
+
 A user cancellation is committed to SQLite as `cancelled` before ARQ abort is requested. Pending or
 running queue work is aborted with ARQ's official API and finalized transient keys are removed.
 Startup reconciliation converts legacy `cancel_requested=1` queued/running/retrying rows to

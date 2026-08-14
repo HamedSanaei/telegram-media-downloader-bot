@@ -1,9 +1,20 @@
 # Handoff verification report
 
-Generated: 2026-08-13
+Generated: 2026-08-14
 
 ## Current change addendum
 
+- Patch 1.2.2 fixes Linux prepared-release preflight. The old command ran the configured old image
+  with only `config.yaml`, so `/data` cookie paths valid in Compose were absent. Preflight now pulls
+  the prepared image and runs `config-check --read-only-runtime` with read-only root, configuration,
+  and project data mounts plus an ephemeral `/tmp`. Cookie checks remain strict; Local Bot API
+  directory diagnostics are non-mutating until the existing post-stop runtime UID/SQLite WAL probe.
+- Updater regression coverage preserves exact config/cookie bytes, requires no `gallery_dl`
+  override, and fails missing/unreadable cookies before service stop. Because the original v1.2.1
+  script cannot consume new updater code before its old preflight, v1.2.2 publishes a standalone
+  updater with its SHA-256 file. The privileged previous-layout case verifies and runs that release
+  asset. Existing project-image cleanup remains unchanged and occurs only after health, version,
+  doctor, and Compose verification.
 - Patch 1.2.1 fixes mixed Instagram parent discovery when yt-dlp encounters photo carousel children
   with no video formats before the real video child. The yt-dlp adapter reads raw parent entries
   with `process=False`, validates the exact gallery-dl slot count and all video ordinals, and then
@@ -181,20 +192,24 @@ session is present.
 - Ruff lint: passed.
 - Ruff format check: passed for 157 Python files.
 - Strict mypy: passed for 146 source/test files.
+- Patch 1.2.2 CLI/architecture regression selection: 38 passed and 6 Linux-only Bash parser
+  cases skipped on Windows. The Linux mocked updater suite passed cookie visibility, read-only
+  mounts, byte preservation, pre-stop failures, rollback, and project-image cleanup cases.
 - Patch 1.2.1 targeted gallery-dl/router, yt-dlp engine, Twitter HLS, and Telegram delivery suite:
   108 passed and 1 symlink test skipped for unavailable Windows privilege.
-- Default test suite: 450 passed, 9 skipped on this Windows host (the destructive Local Bot API
+- Default test suite: 458 passed, 9 skipped on this Windows host (the destructive Local Bot API
   upload, 6 Linux-only complete Bash parse cases, and 2 unavailable symlink cases), with 15 external
   contracts deselected.
 - Core branch coverage: 82.59%, above the enforced 80% floor.
-- Contract runner: 3 offline contract smokes passed and 12 live cases skipped because operator
-  fixture URLs/config were absent. Enabling the gallery-dl-specific switch confirmed its four live
-  source contracts skip for the same missing operator configuration rather than fail.
+- Opt-in contract runner: 12 cases skipped because operator gallery/source fixtures were absent;
+  the 3 fixed public YouTube cases failed externally with HTTP 429 / authentication-required after
+  network timeouts. No yt-dlp adapter or dependency changed in this patch, but this live gate is not
+  green on the current host.
 - Architecture boundary check: passed; only
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
-- Opt-in production regression contract: metadata-only inspection of the YouTube Mix URL passed in
-  6.93 seconds as video `DGbwtVtthu8`, with canonical webpage URL and Native format options.
-- UTF-8/text integrity: passed for 243 source text files.
+- The YouTube Mix contract still canonicalized to video `DGbwtVtthu8`, but upstream rejected the
+  metadata request before format inspection with the same HTTP 429/authentication challenge.
+- UTF-8/text integrity: passed for 244 source text files.
 - Deterministic source manifest regenerated and verified after the final documentation update.
 - SQLite migration, WAL contention, atomic usage, and cancel-safe recovery tests passed.
 - Linux and Windows mocked `tmb update` tests passed for success, release-download failure, and
@@ -206,13 +221,15 @@ session is present.
 - External extractor SDK: lock/sync passed; 1 default test passed and 1 contract was deselected.
 - `config.example.yaml`, Compose YAML, both workflow YAML files, and JSON schema parsed successfully.
 - PowerShell AST parsing: passed for all 4 scripts.
-- Bash syntax parsing is deferred to CI because no Bash executable is installed on this host; all
-  6 release scripts are parsed by the required Linux jobs.
+- Git Bash syntax parsing passed for all 6 release scripts; the required Linux jobs parse them
+  again and add ShellCheck.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
-- Python 1.2.1 sdist and wheel builds passed, including bundled-font/OFL archive inspection and a
+- Python 1.2.2 sdist and wheel builds passed, including bundled-font/OFL archive inspection and a
   clean-wheel installation/resource/decode smoke.
+- Release tar/ZIP/updater asset generation passed; all three SHA-256 files verified and the
+  standalone updater retained executable mode.
 - The privileged filesystem/SQLite/Docker upgrade test could not start because no
   Docker, Podman, or Nerdctl executable is installed on this host.
 - Local `config.example.yaml` parsing is covered by the test suite; its runtime `config-check`
@@ -236,9 +253,10 @@ interactive configuration output.
   now has required Linux ShellCheck and Windows PSScriptAnalyzer jobs.
 - Fresh Ubuntu VM and Windows Sandbox end-to-end installer runs need Docker and release credentials
   and were not available on this workstation.
-- The contract command ran, but all 8 source contracts skipped because operator-maintained public
-  fixture URLs were not configured. The real Local API upload over 200 MB also remained skipped
-  because its destructive opt-in variables were absent.
+- Twelve source/gallery contracts skipped because operator-maintained fixture URLs were not
+  configured. Three fixed public YouTube contracts were attempted and rejected upstream with HTTP
+  429/authentication-required. The real Local API upload over 200 MB also remained skipped because
+  its destructive opt-in variables were absent.
 
 ## Operational limitations
 

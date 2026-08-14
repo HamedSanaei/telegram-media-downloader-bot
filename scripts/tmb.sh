@@ -75,6 +75,9 @@ prepare_verified_release() {
 }
 
 validate_prepared_release() {
+  local prepared_image="$IMAGE_REPOSITORY:$RELEASE_VERSION" uid gid
+  uid="$(runtime_identity APP_UID 10001)"
+  gid="$(runtime_identity APP_GID 10001)"
   docker compose \
     --project-directory "$ROOT_DIR" \
     --env-file "$ROOT_DIR/.env" \
@@ -83,10 +86,17 @@ validate_prepared_release() {
     echo "Verified release contains an invalid Compose definition." >&2
     return 1
   }
-  docker run --rm \
+  docker pull "$prepared_image" >/dev/null || {
+    echo "Unable to pull the prepared release image for validation." >&2
+    return 1
+  }
+  docker run --rm --read-only --user "$uid:$gid" \
+    --tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777 \
     -v "$ROOT_DIR/config.yaml:/app/config.yaml:ro" \
-    "$(configured_image)" \
-    telegram-media-bot config-check --config /app/config.yaml >/dev/null || {
+    -v "$ROOT_DIR/data:/data:ro" \
+    "$prepared_image" \
+    telegram-media-bot config-check --config /app/config.yaml \
+      --read-only-runtime >/dev/null || {
     echo "Existing config.yaml is not valid for the prepared release." >&2
     return 1
   }

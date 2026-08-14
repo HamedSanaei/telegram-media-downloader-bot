@@ -1,11 +1,14 @@
 # Project status
 
-Last updated: 2026-08-13
+Last updated: 2026-08-14
 
 ## Release state
 
-Tasks T001 through T013 are implemented. Patch 1.2.1 fixes mixed Instagram video-child discovery
-without changing the v1.2.0 Photo/File or administrator-alert contracts. Release v1.2.0 adds
+Tasks T001 through T013 are implemented. Patch 1.2.2 fixes updater preflight validation for
+runtime cookie paths without weakening gallery-dl checks or mutating persistent data. A checksummed
+updater asset provides the required one-time bootstrap from v1.2.1. Patch 1.2.1 fixes mixed
+Instagram video-child discovery without changing the v1.2.0 Photo/File or administrator-alert
+contracts. Release v1.2.0 adds
 explicit Instagram Photo/File confirmation and lossless mixed-post delivery while preserving the
 v1.1.1 video-only fallback. The v1 flow
 is URL validation -> queued inspection ->
@@ -113,6 +116,12 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-08-14: Prepared patch 1.2.2 so Linux update preflight pulls the prepared image and mounts
+  `config.yaml` plus project `/data` read-only. Runtime-valid default Instagram cookie fallback and
+  explicit gallery cookie paths now validate without configuration edits; missing or unreadable
+  cookies still fail before service stop. Config/cookie bytes, rollback, backup, and project-scoped
+  post-verification image cleanup remain unchanged. A standalone updater plus SHA-256 asset bridges
+  the v1.2.1 installed script, which necessarily executes its old preflight before file replacement.
 - 2026-08-13: Prepared patch 1.2.1 for production mixed carousel `DZUwLh3jEDk`.
   yt-dlp now classifies raw parent entries without processing photo children, requires all 17
   gallery slots and the exact video ordinal 11, and downloads only child `DZUtxnNDJg7` through the

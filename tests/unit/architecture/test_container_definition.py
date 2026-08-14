@@ -190,6 +190,8 @@ def test_ci_builds_and_smoke_tests_runtime_with_shared_buildkit_cache() -> None:
     assert "usage-chart-monthly-smoke.png" in artifact["with"]["path"]
     assert any("RUN_PRIVILEGED_UPGRADE_TESTS" in str(step.get("env", "")) for step in steps)
     assert any("test_tmb_upgrade_integration.sh" in run for run in runs)
+    assert any("TMB_TEST_PREVIOUS_VERSION=1.2.1" in run for run in runs)
+    assert any("TMB_USE_RELEASE_UPDATER_ASSET=1" in run for run in runs)
     assert all("docker compose --profile local-api build" not in run for run in runs)
 
 
@@ -244,9 +246,9 @@ def test_release_tag_exactly_matches_project_version() -> None:
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.2.1"
+    assert version == "1.2.2"
     assert __version__ == version
-    assert tag == "v1.2.1"
+    assert tag == "v1.2.2"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
     assert 'if tag != f"v{version}":' in workflow
 
@@ -271,6 +273,10 @@ def test_release_waits_for_published_image_smoke_test_and_attaches_verified_asse
     assert "--verify-uid 10001" in workflow
     assert "--network none --read-only" in workflow
     assert "test_tmb_upgrade_integration.sh" in workflow
+    assert "TMB_TEST_PREVIOUS_VERSION=1.2.1" in workflow
+    assert "TMB_USE_RELEASE_UPDATER_ASSET=1" in workflow
+    assert "tmb-updater.sh.sha256" in workflow
+    assert "sha256sum --check tmb-updater.sh.sha256" in workflow
     assert "scripts/build_release_archives.sh" in workflow
     assert "tmb-current.sh" in workflow
     assert "generate_release_notes: true" in workflow
@@ -287,6 +293,8 @@ def test_release_waits_for_published_image_smoke_test_and_attaches_verified_asse
         "telegram-media-downloader-bot.tar.gz.sha256",
         "telegram-media-downloader-bot.zip",
         "telegram-media-downloader-bot.zip.sha256",
+        "tmb-updater.sh",
+        "tmb-updater.sh.sha256",
     ):
         assert asset in workflow
 
@@ -309,6 +317,31 @@ def test_management_cleanup_is_project_scoped_and_runs_after_update_verification
     )
     assert windows.index('"telegram-media-bot", "doctor"') < windows.index(
         "try { Invoke-TmbCleanup"
+    )
+
+
+def test_linux_update_preflight_uses_prepared_image_and_read_only_runtime_data() -> None:
+    updater = Path("scripts/tmb.sh").read_text(encoding="utf-8")
+    preflight = updater.split("validate_prepared_release() {", maxsplit=1)[1].split(
+        "\n}", maxsplit=1
+    )[0]
+
+    assert 'prepared_image="$IMAGE_REPOSITORY:$RELEASE_VERSION"' in preflight
+    assert 'docker pull "$prepared_image"' in preflight
+    assert 'uid="$(runtime_identity APP_UID 10001)"' in preflight
+    assert 'gid="$(runtime_identity APP_GID 10001)"' in preflight
+    assert 'docker run --rm --read-only --user "$uid:$gid"' in preflight
+    assert "--tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777" in preflight
+    assert '-v "$ROOT_DIR/config.yaml:/app/config.yaml:ro"' in preflight
+    assert '-v "$ROOT_DIR/data:/data:ro"' in preflight
+    assert "--read-only-runtime" in preflight
+    assert "/var/run/docker.sock" not in preflight
+    assert "/root" not in preflight
+    assert updater.index("validate_prepared_release || return 1") < updater.index(
+        "backup || return 1"
+    )
+    assert updater.index("validate_prepared_release || return 1") < updater.index(
+        "compose --profile local-api stop -t 45"
     )
 
 
@@ -349,6 +382,8 @@ def test_linux_release_archive_bootstraps_safely_from_v1_0_2_updater() -> None:
     assert "chmod 755" in builder
     assert "--sort=name" in builder
     assert "gzip -n -9" in builder
+    assert '"$OUTPUT_DIRECTORY/tmb-updater.sh"' in builder
+    assert "sha256sum tmb-updater.sh >tmb-updater.sh.sha256" in builder
 
 
 def test_worker_enables_official_arq_abort_support() -> None:
