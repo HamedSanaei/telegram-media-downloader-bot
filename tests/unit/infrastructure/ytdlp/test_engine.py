@@ -11,6 +11,7 @@ from telegram_media_bot.domain.errors import (
     DownloadFailedError,
     JobCancelledError,
     MediaTooLargeError,
+    MediaUnavailableError,
     RateLimitedError,
     UnsafeUrlError,
 )
@@ -696,6 +697,75 @@ def test_cancellation_stops_before_upstream_download(settings: Settings) -> None
             ),
             is_cancelled=lambda: True,
         )
+
+
+@pytest.mark.parametrize("expected_video_indices", [(10,), (11, 15)])
+def test_instagram_raw_discovery_requires_every_expected_video_slot(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    expected_video_indices: tuple[int, ...],
+) -> None:
+    class RawInstagramYoutubeDL:
+        calls: ClassVar[list[tuple[bool, bool]]] = []
+
+        def __init__(self, options: dict[str, Any]) -> None:
+            assert "ignoreerrors" not in options
+
+        def __enter__(self) -> RawInstagramYoutubeDL:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def extract_info(
+            self,
+            _url: str,
+            *,
+            download: bool,
+            process: bool = True,
+        ) -> dict[str, Any]:
+            self.calls.append((download, process))
+            entries = [
+                {
+                    "id": "DZUtxnNDJg7" if index == 11 else f"PHOTO{index:02d}",
+                    "extractor_key": "Instagram",
+                    "formats": (
+                        [{"format_id": "video", "vcodec": "avc1", "acodec": "none"}]
+                        if index == 11
+                        else []
+                    ),
+                }
+                for index in range(1, 18)
+            ]
+            return {
+                "_type": "playlist",
+                "id": "DZUwLh3jEDk",
+                "title": "Mixed carousel",
+                "extractor_key": "Instagram",
+                "entries": entries,
+            }
+
+        def sanitize_info(self, raw: Any) -> Any:
+            return raw
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", RawInstagramYoutubeDL)
+    configured = _without_dns_checks(settings)
+    engine = engine_module.YtDlpEngine(configured)
+
+    with pytest.raises(MediaUnavailableError, match="video slots"):
+        engine.download_instagram_video_children(
+            DownloadRequest(
+                JobId("strict-carousel"),
+                "https://www.instagram.com/p/DZUwLh3jEDk/",
+                DownloadMode.BEST_ORIGINAL,
+                configured.storage.downloads_path() / "strict-carousel",
+            ),
+            expected_parent_media_id="DZUwLh3jEDk",
+            expected_total_slots=17,
+            expected_video_indices=expected_video_indices,
+        )
+
+    assert RawInstagramYoutubeDL.calls == [(False, False)]
 
 
 def test_extracted_playlist_entry_urls_are_revalidated(settings: Settings) -> None:

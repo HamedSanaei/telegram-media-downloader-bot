@@ -4,8 +4,10 @@ Last updated: 2026-08-13
 
 ## Release state
 
-Tasks T001 through T013 are implemented. Release v1.2.0 adds explicit Instagram Photo/File
-confirmation and lossless mixed-post delivery while preserving the v1.1.1 video-only fallback. The v1 flow
+Tasks T001 through T013 are implemented. Patch 1.2.1 fixes mixed Instagram video-child discovery
+without changing the v1.2.0 Photo/File or administrator-alert contracts. Release v1.2.0 adds
+explicit Instagram Photo/File confirmation and lossless mixed-post delivery while preserving the
+v1.1.1 video-only fallback. The v1 flow
 is URL validation -> queued inspection ->
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
@@ -111,6 +113,11 @@ gate run. External contracts remain opt-in and require operator-maintained publi
 
 ## Recent fixes
 
+- 2026-08-13: Prepared patch 1.2.1 for production mixed carousel `DZUwLh3jEDk`.
+  yt-dlp now classifies raw parent entries without processing photo children, requires all 17
+  gallery slots and the exact video ordinal 11, and downloads only child `DZUtxnNDJg7` through the
+  normal strict yt-dlp path. Plan mismatch fails before gallery image download; `ignoreerrors`
+  remains disabled and signed media URLs remain transient.
 - 2026-08-13: Prepared v1.2.0 with an owner-bound Instagram Photo/File confirmation, nullable
   backward-compatible durable/ARQ state, exact-byte image document delivery, deterministic
   ten-item chunking, and mixed-post gallery-image/yt-dlp-video reconciliation. Video-only Reels,

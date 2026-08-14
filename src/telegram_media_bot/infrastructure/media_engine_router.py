@@ -9,6 +9,7 @@ import structlog
 from telegram_media_bot.application.ports.download_engine import (
     CancellationCheck,
     DownloadEngine,
+    InstagramVideoDownloadEngine,
     ProgressSink,
 )
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
@@ -36,7 +37,7 @@ logger = structlog.get_logger(__name__)
 class RoutedMediaEngine(DownloadEngine):
     """Choose an engine from normalized inspection outcome, never from Telegram handlers."""
 
-    def __init__(self, gallery: GalleryDlEngine, ytdlp: DownloadEngine) -> None:
+    def __init__(self, gallery: GalleryDlEngine, ytdlp: InstagramVideoDownloadEngine) -> None:
         self._gallery = gallery
         self._ytdlp = ytdlp
 
@@ -89,6 +90,8 @@ class RoutedMediaEngine(DownloadEngine):
         if request.mode is DownloadMode.VIDEOS_ONLY:
             return self._download_instagram_videos(
                 request,
+                info,
+                videos=videos,
                 progress=progress,
                 is_cancelled=is_cancelled,
             )
@@ -111,22 +114,49 @@ class RoutedMediaEngine(DownloadEngine):
     def _download_instagram_videos(
         self,
         request: DownloadRequest,
+        info: MediaInfo,
         *,
+        videos: tuple[MediaAsset, ...],
         progress: ProgressSink | None,
         is_cancelled: CancellationCheck | None,
     ) -> DownloadResult:
-        return self._ytdlp.download(
-            replace(
-                request,
-                mode=DownloadMode.BEST_ORIGINAL,
-                container=None,
-                container_policy=ContainerPolicy.NATIVE_ONLY,
-                native_video_codec=None,
-                selected_format_ids=(),
-            ),
-            progress=progress,
-            is_cancelled=is_cancelled,
+        video_directory = request.output_directory / "videos"
+        video_temp_directory = (
+            request.temp_directory / "videos" if request.temp_directory is not None else None
         )
+        try:
+            result = self._ytdlp.download_instagram_video_children(
+                replace(
+                    request,
+                    mode=DownloadMode.BEST_ORIGINAL,
+                    output_directory=video_directory,
+                    temp_directory=video_temp_directory,
+                    container=None,
+                    container_policy=ContainerPolicy.NATIVE_ONLY,
+                    native_video_codec=None,
+                    selected_format_ids=(),
+                    allow_collection=False,
+                ),
+                expected_parent_media_id=info.media_id,
+                expected_total_slots=len(info.assets),
+                expected_video_indices=tuple(asset.index for asset in videos),
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+            downloaded_videos = result.delivery_artifacts
+            if (
+                len(downloaded_videos) != len(videos)
+                or any(artifact.kind is not MediaKind.VIDEO for artifact in downloaded_videos)
+                or tuple(artifact.source_index for artifact in downloaded_videos)
+                != tuple(asset.index for asset in videos)
+            ):
+                raise GalleryDlOutputChangedError("yt-dlp Instagram video count changed")
+        except BaseException:
+            _cleanup_split_directory(video_directory)
+            if video_temp_directory is not None:
+                _cleanup_split_directory(video_temp_directory)
+            raise
+        return result
 
     def _download_instagram_mixed(
         self,
@@ -148,6 +178,13 @@ class RoutedMediaEngine(DownloadEngine):
             request.temp_directory / "videos" if request.temp_directory is not None else None
         )
         try:
+            video_result = self._download_instagram_videos(
+                request,
+                info,
+                videos=video_assets,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
             image_result = self._gallery.download_inspected(
                 replace(
                     request,
@@ -158,29 +195,20 @@ class RoutedMediaEngine(DownloadEngine):
                 info,
                 is_cancelled=is_cancelled,
             )
-            video_result = self._download_instagram_videos(
-                replace(
-                    request,
-                    output_directory=video_directory,
-                    temp_directory=video_temp_directory,
-                ),
-                progress=progress,
-                is_cancelled=is_cancelled,
-            )
             downloaded_images = image_result.delivery_artifacts
             downloaded_videos = video_result.delivery_artifacts
             if len(downloaded_images) != len(image_assets):
                 raise GalleryDlOutputChangedError("Instagram image count changed during download")
-            if len(downloaded_videos) != len(video_assets) or any(
-                artifact.kind is not MediaKind.VIDEO for artifact in downloaded_videos
+            if (
+                len(downloaded_videos) != len(video_assets)
+                or any(artifact.kind is not MediaKind.VIDEO for artifact in downloaded_videos)
+                or tuple(artifact.source_index for artifact in downloaded_videos)
+                != tuple(asset.index for asset in video_assets)
             ):
                 raise GalleryDlOutputChangedError("yt-dlp Instagram video count changed")
             ordered: list[DownloadArtifact] = []
             ordered.extend(downloaded_images)
-            ordered.extend(
-                replace(artifact, source_index=asset.index)
-                for asset, artifact in zip(video_assets, downloaded_videos, strict=True)
-            )
+            ordered.extend(downloaded_videos)
             if any(artifact.source_index is None for artifact in ordered):
                 raise GalleryDlOutputChangedError("Instagram source ordinal is missing")
             ordered.sort(key=lambda artifact: artifact.source_index or 0)

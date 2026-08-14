@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 import shutil
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -65,6 +66,21 @@ from telegram_media_bot.infrastructure.ytdlp.transcoder import (
 )
 
 logger = structlog.get_logger(__name__)
+
+_INSTAGRAM_MEDIA_ID = re.compile(r"^[A-Za-z0-9_-]{5,64}$")
+
+
+@dataclass(frozen=True, slots=True)
+class _InstagramVideoChild:
+    media_id: str
+    public_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class _InstagramVideoPlan:
+    media_id: str
+    title: str
+    children: tuple[_InstagramVideoChild, ...]
 
 
 def _sum_known(values: list[int | None]) -> int | None:
@@ -411,6 +427,160 @@ class YtDlpEngine:
             if isinstance(exc, MediaBotError):
                 raise
             raise map_ytdlp_error(exc) from exc
+
+    def download_instagram_video_children(
+        self,
+        request: DownloadRequest,
+        *,
+        expected_parent_media_id: str,
+        expected_total_slots: int,
+        expected_video_indices: tuple[int, ...],
+        progress: ProgressSink | None = None,
+        is_cancelled: CancellationCheck | None = None,
+    ) -> DownloadResult:
+        """Resolve raw carousel entries, then strictly download the expected video children."""
+        expected_indices = self._validate_instagram_video_expectations(
+            expected_total_slots,
+            expected_video_indices,
+        )
+        plan = self._resolve_instagram_video_children(
+            request.url,
+            expected_parent_media_id=expected_parent_media_id,
+            expected_total_slots=expected_total_slots,
+            expected_video_indices=expected_indices,
+        )
+        artifacts: list[DownloadArtifact] = []
+        durations: list[int] = []
+        for source_index, child in zip(expected_indices, plan.children, strict=True):
+            if is_cancelled is not None and is_cancelled():
+                raise JobCancelledError("Download was cancelled")
+            child_request = replace(
+                request,
+                url=child.public_url,
+                output_directory=request.output_directory / f"{source_index:04d}",
+                temp_directory=(
+                    request.temp_directory / f"{source_index:04d}"
+                    if request.temp_directory is not None
+                    else None
+                ),
+                allow_collection=False,
+            )
+            result = self.download(
+                child_request,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+            child_artifacts = result.delivery_artifacts
+            if (
+                result.source != "instagram"
+                or result.media_id != child.media_id
+                or len(child_artifacts) != 1
+                or child_artifacts[0].kind is not MediaKind.VIDEO
+            ):
+                raise MediaUnavailableError(
+                    "Resolved Instagram child did not satisfy the expected video contract"
+                )
+            artifacts.append(replace(child_artifacts[0], source_index=source_index))
+            if result.duration_seconds is not None:
+                durations.append(result.duration_seconds)
+
+        first = artifacts[0]
+        return DownloadResult(
+            job_id=request.job_id,
+            media_id=plan.media_id,
+            title=plan.title,
+            source="instagram",
+            kind=MediaKind.VIDEO if len(artifacts) == 1 else MediaKind.PLAYLIST,
+            file_path=first.file_path,
+            file_size_bytes=sum(artifact.file_size_bytes for artifact in artifacts),
+            duration_seconds=sum(durations) if len(durations) == len(artifacts) else None,
+            mime_type=first.mime_type,
+            artifacts=tuple(artifacts),
+            inline_video_streamable=first.inline_video_streamable,
+            image_delivery_mode=request.image_delivery_mode,
+        )
+
+    @staticmethod
+    def _validate_instagram_video_expectations(
+        expected_total_slots: int,
+        expected_video_indices: tuple[int, ...],
+    ) -> tuple[int, ...]:
+        if expected_total_slots < 1:
+            raise MediaUnavailableError("Instagram media plan has no slots")
+        if (
+            not expected_video_indices
+            or expected_video_indices != tuple(sorted(set(expected_video_indices)))
+            or any(index < 1 or index > expected_total_slots for index in expected_video_indices)
+        ):
+            raise MediaUnavailableError("Instagram video slot plan is invalid")
+        return expected_video_indices
+
+    def _resolve_instagram_video_children(
+        self,
+        url: str,
+        *,
+        expected_parent_media_id: str,
+        expected_total_slots: int,
+        expected_video_indices: tuple[int, ...],
+    ) -> _InstagramVideoPlan:
+        intent = canonicalize_media_url(url)
+        try:
+            options = self._options.inspect_options(single_video=False)
+            # This path deliberately inspects the extractor's raw playlist. Processing the
+            # entries would ask yt-dlp to treat Instagram photo children as videos.
+            with YoutubeDL(options) as ydl:
+                raw = ydl.extract_info(intent.canonical_url, download=False, process=False)
+                info = self._sanitize(ydl, raw)
+            self._validate_info_urls(info)
+        except MediaBotError:
+            raise
+        except Exception as exc:
+            raise map_ytdlp_error(exc) from exc
+
+        entries = info.get("entries")
+        if (
+            normalize_source(info) != "instagram"
+            or str(info.get("id") or "") != expected_parent_media_id
+            or info.get("_type") not in {"playlist", "multi_video"}
+            or not isinstance(entries, list)
+            or len(entries) != expected_total_slots
+        ):
+            raise MediaUnavailableError(
+                "yt-dlp Instagram discovery does not match the gallery media plan"
+            )
+
+        actual_video_indices: list[int] = []
+        children: list[_InstagramVideoChild] = []
+        seen_media_ids: set[str] = set()
+        for source_index, entry in enumerate(entries, start=1):
+            if not isinstance(entry, Mapping):
+                raise MediaUnavailableError("yt-dlp Instagram discovery returned an invalid entry")
+            if detect_kind(entry) is not MediaKind.VIDEO:
+                continue
+            media_id = str(entry.get("id") or "")
+            if not _INSTAGRAM_MEDIA_ID.fullmatch(media_id) or media_id in seen_media_ids:
+                raise MediaUnavailableError("yt-dlp Instagram discovery returned an invalid child")
+            child_url = f"https://www.instagram.com/p/{media_id}/"
+            self._url_validator.validate(child_url)
+            seen_media_ids.add(media_id)
+            actual_video_indices.append(source_index)
+            children.append(_InstagramVideoChild(media_id=media_id, public_url=child_url))
+
+        if tuple(actual_video_indices) != expected_video_indices:
+            raise MediaUnavailableError(
+                "yt-dlp Instagram video slots do not match the gallery media plan"
+            )
+        logger.info(
+            "instagram_video_children_resolved",
+            total_slots=expected_total_slots,
+            video_slots=actual_video_indices,
+            video_count=len(children),
+        )
+        return _InstagramVideoPlan(
+            media_id=str(info.get("id") or ""),
+            title=str(info.get("title") or "Instagram"),
+            children=tuple(children),
+        )
 
     def health(self) -> ComponentHealth:
         return ComponentHealth(name="yt_dlp", healthy=True, detail=ytdlp_version)

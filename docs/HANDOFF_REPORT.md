@@ -4,6 +4,15 @@ Generated: 2026-08-13
 
 ## Current change addendum
 
+- Patch 1.2.1 fixes mixed Instagram parent discovery when yt-dlp encounters photo carousel children
+  with no video formats before the real video child. The yt-dlp adapter reads raw parent entries
+  with `process=False`, validates the exact gallery-dl slot count and all video ordinals, and then
+  runs strict normal downloads only for validated public video-child URLs. It does not enable
+  `ignoreerrors` or accept arbitrary non-zero extraction results.
+- The production fixture `DZUwLh3jEDk` is represented by a deterministic 17-slot regression: 16
+  gallery images and video slot 11 (`DZUtxnNDJg7`). Photo child `DZUtbhzsvJy` is never selected.
+  Resolution failure occurs before image download, preventing deterministic video-plan failures
+  from causing duplicate gallery image downloads on retry.
 - Version 1.2.0 adds an owner-bound Instagram Photo/Document decision before enqueue. Mixed posts
   retain every source ordinal: gallery-dl supplies validated original images while yt-dlp receives
   only the canonical Instagram post URL for videos. Media groups are deterministic and capped at
@@ -172,12 +181,12 @@ session is present.
 - Ruff lint: passed.
 - Ruff format check: passed for 157 Python files.
 - Strict mypy: passed for 146 source/test files.
-- Targeted gallery-dl/router, Twitter HLS, Telegram delivery/navigation/UI, worker/cleanup, and
-  persistence suite: 155 passed and 2 symlink tests skipped for unavailable Windows privilege.
-- Default test suite: 447 passed, 9 skipped on this Windows host (the destructive Local Bot API
+- Patch 1.2.1 targeted gallery-dl/router, yt-dlp engine, Twitter HLS, and Telegram delivery suite:
+  108 passed and 1 symlink test skipped for unavailable Windows privilege.
+- Default test suite: 450 passed, 9 skipped on this Windows host (the destructive Local Bot API
   upload, 6 Linux-only complete Bash parse cases, and 2 unavailable symlink cases), with 15 external
   contracts deselected.
-- Core branch coverage: 82.43%, above the enforced 80% floor.
+- Core branch coverage: 82.59%, above the enforced 80% floor.
 - Contract runner: 3 offline contract smokes passed and 12 live cases skipped because operator
   fixture URLs/config were absent. Enabling the gallery-dl-specific switch confirmed its four live
   source contracts skip for the same missing operator configuration rather than fail.
@@ -185,9 +194,8 @@ session is present.
   `infrastructure/ytdlp/` imports yt-dlp and Telethon is absent.
 - Opt-in production regression contract: metadata-only inspection of the YouTube Mix URL passed in
   6.93 seconds as video `DGbwtVtthu8`, with canonical webpage URL and Native format options.
-- UTF-8/text integrity: passed for 242 source text files.
-- Deterministic source manifest regenerated with 249 release entries and verified after the final
-  documentation update.
+- UTF-8/text integrity: passed for 243 source text files.
+- Deterministic source manifest regenerated and verified after the final documentation update.
 - SQLite migration, WAL contention, atomic usage, and cancel-safe recovery tests passed.
 - Linux and Windows mocked `tmb update` tests passed for success, release-download failure, and
   checksum failure. Linux additionally passed permission rollback, candidate crash-state rollback,
@@ -203,7 +211,7 @@ session is present.
 - Dependency integrity: `uv run pip check` passed.
 - Dependency audit: `pip-audit` reported no known vulnerabilities.
 - Detect-secrets baseline and explicit tracked/untracked scans passed.
-- Python 1.2.0 sdist and wheel builds passed, including bundled-font/OFL archive inspection and a
+- Python 1.2.1 sdist and wheel builds passed, including bundled-font/OFL archive inspection and a
   clean-wheel installation/resource/decode smoke.
 - The privileged filesystem/SQLite/Docker upgrade test could not start because no
   Docker, Podman, or Nerdctl executable is installed on this host.

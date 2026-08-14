@@ -31,3 +31,18 @@ class DownloadEngine(Protocol):
     def health(self) -> ComponentHealth:
         """Return a local, network-free engine health check."""
         ...
+
+
+class InstagramVideoDownloadEngine(DownloadEngine, Protocol):
+    def download_instagram_video_children(
+        self,
+        request: DownloadRequest,
+        *,
+        expected_parent_media_id: str,
+        expected_total_slots: int,
+        expected_video_indices: tuple[int, ...],
+        progress: ProgressSink | None = None,
+        is_cancelled: CancellationCheck | None = None,
+    ) -> DownloadResult:
+        """Resolve and strictly download every expected Instagram video child."""
+        ...

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 from PIL import Image
 
-from telegram_media_bot.application.ports.download_engine import DownloadEngine
+from telegram_media_bot.application.ports.download_engine import InstagramVideoDownloadEngine
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
@@ -51,6 +52,7 @@ from telegram_media_bot.infrastructure.gallerydl.parser import (
 )
 from telegram_media_bot.infrastructure.gallerydl.runner import GalleryDlRunner
 from telegram_media_bot.infrastructure.media_engine_router import RoutedMediaEngine
+from telegram_media_bot.infrastructure.ytdlp import engine as ytdlp_engine_module
 
 FIXTURES = Path("tests/fixtures/gallerydl")
 
@@ -462,6 +464,32 @@ class _FakeEngine:
     def download(self, request: DownloadRequest, **_kwargs: object) -> DownloadResult:
         raise AssertionError(request)
 
+    def download_instagram_video_children(
+        self,
+        request: DownloadRequest,
+        *,
+        expected_parent_media_id: str,
+        expected_total_slots: int,
+        expected_video_indices: tuple[int, ...],
+        **kwargs: object,
+    ) -> DownloadResult:
+        del expected_parent_media_id, expected_total_slots
+        result = self.download(request, **kwargs)
+        return replace(
+            result,
+            artifacts=tuple(
+                replace(
+                    artifact,
+                    source_index=(
+                        expected_video_indices[index]
+                        if index < len(expected_video_indices)
+                        else None
+                    ),
+                )
+                for index, artifact in enumerate(result.delivery_artifacts)
+            ),
+        )
+
     def health(self) -> ComponentHealth:
         return ComponentHealth("yt_dlp", True, "test")
 
@@ -473,7 +501,7 @@ def test_router_falls_back_only_for_video_only_single_post(settings: Settings) -
     )
     gallery._validator = cast(Any, _AllowValidator())
     ytdlp = _FakeEngine()
-    router = RoutedMediaEngine(gallery, cast(DownloadEngine, ytdlp))
+    router = RoutedMediaEngine(gallery, cast(InstagramVideoDownloadEngine, ytdlp))
 
     info = router.inspect("https://x.com/example/status/8004?s=20")
 
@@ -488,7 +516,7 @@ def test_router_falls_back_for_instagram_reel_ytdl_video_event(settings: Setting
     )
     gallery._validator = cast(Any, _AllowValidator())
     ytdlp = _FakeEngine()
-    router = RoutedMediaEngine(gallery, cast(DownloadEngine, ytdlp))
+    router = RoutedMediaEngine(gallery, cast(InstagramVideoDownloadEngine, ytdlp))
 
     info = router.inspect("https://www.instagram.com/reel/Db4UcovzZnl/")
 
@@ -503,7 +531,7 @@ def test_router_keeps_mixed_instagram_ytdl_post_gallery_owned(settings: Settings
     )
     gallery._validator = cast(Any, _AllowValidator())
     ytdlp = _FakeEngine()
-    router = RoutedMediaEngine(gallery, cast(DownloadEngine, ytdlp))
+    router = RoutedMediaEngine(gallery, cast(InstagramVideoDownloadEngine, ytdlp))
 
     info = router.inspect("https://www.instagram.com/p/IG3/")
 
@@ -544,7 +572,7 @@ def test_router_downloads_mixed_instagram_images_with_gallery_and_video_with_ytd
             )
 
     ytdlp = VideoEngine()
-    router = RoutedMediaEngine(gallery, cast(DownloadEngine, ytdlp))
+    router = RoutedMediaEngine(gallery, cast(InstagramVideoDownloadEngine, ytdlp))
     info = router.inspect("https://www.instagram.com/p/IG4/")
     option = next(
         item for item in info.format_options if item.mode is DownloadMode.ALL_ORIGINAL_MEDIA
@@ -579,6 +607,141 @@ def test_router_downloads_mixed_instagram_images_with_gallery_and_video_with_ytd
     assert "ytdl:" not in repr(result)
 
 
+def test_production_mixed_carousel_resolves_only_the_real_video_child(
+    settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent_url = "https://www.instagram.com/p/DZUwLh3jEDk/"
+    video_url = "https://www.instagram.com/p/DZUtxnNDJg7/"
+    photo_child_id = "DZUtbhzsvJy"
+    entries: list[dict[str, Any]] = []
+    for source_index in range(1, 18):
+        if source_index == 11:
+            entries.append(
+                {
+                    "id": "DZUtxnNDJg7",
+                    "title": "Video child",
+                    "extractor_key": "Instagram",
+                    "vcodec": "avc1.64001f",
+                    "acodec": "mp4a.40.2",
+                    "ext": "mp4",
+                    "formats": [
+                        {
+                            "format_id": "dash-video",
+                            "vcodec": "avc1.64001f",
+                            "acodec": "none",
+                            "ext": "mp4",
+                        }
+                    ],
+                }
+            )
+        else:
+            entries.append(
+                {
+                    "id": photo_child_id if source_index == 1 else f"PHOTO{source_index:02d}",
+                    "title": "Photo child",
+                    "extractor_key": "Instagram",
+                    "formats": [],
+                }
+            )
+
+    class ProductionCarouselYoutubeDL:
+        calls: ClassVar[list[tuple[str, bool, bool]]] = []
+
+        def __init__(self, options: dict[str, Any]) -> None:
+            assert "ignoreerrors" not in options
+            self.options = options
+            self.format_selector = lambda context: iter(context["formats"][-1:])
+
+        def __enter__(self) -> ProductionCarouselYoutubeDL:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def extract_info(
+            self,
+            url: str,
+            *,
+            download: bool,
+            process: bool = True,
+        ) -> dict[str, Any]:
+            self.calls.append((url, download, process))
+            if url == parent_url:
+                assert not download
+                assert not process
+                return {
+                    "_type": "playlist",
+                    "id": "DZUwLh3jEDk",
+                    "title": "Production mixed carousel",
+                    "extractor_key": "Instagram",
+                    "entries": entries,
+                }
+            if url != video_url:
+                raise AssertionError(f"photo child was selected as video: {url}")
+            assert download
+            output = Path(self.options["paths"]["home"]) / "DZUtxnNDJg7.mp4"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"valid-video-child")
+            return {
+                "id": "DZUtxnNDJg7",
+                "title": "Video by fixture",
+                "extractor_key": "Instagram",
+                "webpage_url": video_url,
+                "vcodec": "avc1.64001f",
+                "acodec": "mp4a.40.2",
+                "ext": "mp4",
+                "duration": 18,
+            }
+
+        def sanitize_info(self, raw: Any) -> Any:
+            return raw
+
+    raw_settings = settings.model_dump()
+    raw_settings["security"]["reject_private_network_urls"] = False
+    configured = Settings.model_validate(raw_settings)
+    runner = _FixtureRunner(_fixture("instagram-mixed-seventeen.json"))
+    gallery = GalleryDlEngine(configured, runner=cast(GalleryDlRunner, runner))
+    gallery._validator = cast(Any, _AllowValidator())
+    monkeypatch.setattr(ytdlp_engine_module, "YoutubeDL", ProductionCarouselYoutubeDL)
+    monkeypatch.setattr(ytdlp_engine_module, "is_inline_video_streamable", lambda _path: True)
+    monkeypatch.setattr(
+        ytdlp_engine_module.YtDlpEngine,
+        "_log_selected_media",
+        staticmethod(lambda *_args, **_kwargs: None),
+    )
+    router = RoutedMediaEngine(gallery, ytdlp_engine_module.YtDlpEngine(configured))
+    info = router.inspect(parent_url)
+
+    result = router.download(
+        DownloadRequest(
+            JobId("production-mixed"),
+            parent_url,
+            DownloadMode.ALL_ORIGINAL_MEDIA,
+            configured.storage.downloads_path() / "production-mixed",
+            temp_directory=configured.storage.temp_path() / "production-mixed",
+            image_delivery_mode=ImageDeliveryMode.PHOTO,
+        )
+    )
+
+    assert len(info.assets) == 17
+    assert sum(asset.kind is MediaKind.IMAGE for asset in info.assets) == 16
+    assert [artifact.source_index for artifact in result.delivery_artifacts] == list(range(1, 18))
+    assert [artifact.kind for artifact in result.delivery_artifacts].count(MediaKind.IMAGE) == 16
+    assert [artifact.kind for artifact in result.delivery_artifacts].count(MediaKind.VIDEO) == 1
+    assert result.delivery_artifacts[10].file_path.name == "DZUtxnNDJg7.mp4"
+    assert ProductionCarouselYoutubeDL.calls == [
+        (parent_url, False, False),
+        (video_url, True, True),
+    ]
+    assert len(runner.download_commands) == 1
+    assert "extractor.instagram.videos=false" in runner.download_commands[0]
+    assert photo_child_id not in repr(ProductionCarouselYoutubeDL.calls)
+    assert "cdn.example.invalid" not in repr(result)
+    assert "ytdl:" not in repr(result)
+
+
 def test_router_fails_closed_when_ytdlp_video_count_does_not_match_plan(
     settings: Settings,
     tmp_path: Path,
@@ -608,7 +771,10 @@ def test_router_fails_closed_when_ytdlp_video_count_does_not_match_plan(
                 artifacts=tuple(artifacts),
             )
 
-    router = RoutedMediaEngine(gallery, cast(DownloadEngine, ExtraVideoEngine()))
+    router = RoutedMediaEngine(
+        gallery,
+        cast(InstagramVideoDownloadEngine, ExtraVideoEngine()),
+    )
     info = router.inspect("https://www.instagram.com/p/IG4/")
 
     with pytest.raises(GalleryDlOutputChangedError, match="video count"):
@@ -625,11 +791,15 @@ def test_router_fails_closed_when_ytdlp_video_count_does_not_match_plan(
 
     assert not (tmp_path / "job" / "images").exists()
     assert not (tmp_path / "job" / "videos").exists()
+    assert runner.download_commands == []
 
 
 def test_router_never_turns_social_bulk_url_into_ytdlp_crawl(settings: Settings) -> None:
     ytdlp = _FakeEngine()
-    router = RoutedMediaEngine(GalleryDlEngine(settings), cast(DownloadEngine, ytdlp))
+    router = RoutedMediaEngine(
+        GalleryDlEngine(settings),
+        cast(InstagramVideoDownloadEngine, ytdlp),
+    )
 
     with pytest.raises(GalleryDlUnsupportedUrlError):
         router.inspect("https://www.pinterest.com/example/board/")

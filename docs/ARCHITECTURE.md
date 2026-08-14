@@ -77,8 +77,13 @@ download so signed/expiring asset URLs are never durable.
 The router tries gallery-dl only for its supported social sources. An image-containing result makes
 it owner of the post plan; a typed no-images result selects yt-dlp. For mixed Instagram posts,
 gallery-dl is invoked with `extractor.instagram.videos=false` in an isolated image sub-workspace,
-while yt-dlp receives only the canonical public post URL in a separate video sub-workspace. The
-router requires the exact expected video count, maps videos back to safe source ordinals, and merges
+while yt-dlp first reads the canonical public parent's raw extractor entries with child processing
+disabled. Photo entries are classified without being processed as videos; the adapter requires the
+exact parent identity, total entry count, and video ordinals from the gallery plan, derives only
+validated public Instagram child URLs, and strictly downloads each video in a separate video
+sub-workspace. Video
+resolution completes before gallery image download, so a deterministic plan mismatch cannot cause
+duplicate image downloads on retry. The router maps videos back to safe source ordinals and merges
 all artifacts before delivery. A malformed/bulk URL, authentication error, missing executable,
 rate limit, schema change, count mismatch, or unsafe output fails closed and is never disguised as
 video fallback.

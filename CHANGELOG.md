@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.2.1 - 2026-08-13
+
+### Fixed
+
+- Resolve mixed Instagram carousel videos from yt-dlp's raw, unprocessed parent entries so photo
+  children with no video formats cannot abort discovery before a valid video child is reached.
+- Require the raw yt-dlp entry count and every detected video source ordinal to match gallery-dl's
+  complete media plan before downloading any gallery image; then download only the validated
+  public Instagram video-child URLs through the existing yt-dlp adapter.
+- Preserve strict failure semantics without enabling yt-dlp `ignoreerrors`, and retain all source
+  order, transient-URL isolation, cleanup, Twitter HLS, and exact-byte image behavior from 1.2.0.
+
 ## 1.2.0 - 2026-08-13
 
 ### Added
