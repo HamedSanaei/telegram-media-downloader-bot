@@ -193,6 +193,11 @@ the installed release, so v1.3.0 cannot acquire the corrected stop-before-backup
 its own ordinary update execution. The v1.3.1 standalone updater asset is therefore the required
 one-time path from v1.3.0.
 
+The v1.3.1 runner likewise cannot acquire v1.3.2's corrected verification selection before it runs
+its own post-install doctor. The checksummed v1.3.2 standalone updater is therefore the required
+one-time Linux path from v1.3.1; it changes updater control flow only, not persistent configuration
+or state.
+
 After all network/preflight work, the updater records the exact four-service state, stops only the
 running bot/worker/Local API filesystem writers, and leaves Redis online. It then creates a private,
 atomic archive of configuration, cookies, SQLite/WAL/SHM, and durable Local API state. Downloads and
@@ -200,8 +205,12 @@ temp remain in place but outside the archive; the exact volatile Local API log p
 Top-level application entries are replaced with a rollback snapshot while `.env`, `config.yaml`,
 data, backups, cookies, downloads, Redis, and Local API state remain outside replacement. Before
 candidate writers start, the updater resolves the Compose runtime UID/GID, normalizes private paths,
-performs a real runtime-user write, requires SQLite WAL, verifies the exact version, and runs doctor.
-Candidate services must reach running/healthy state and match the original running set exactly. Any
+performs a real runtime-user write, requires SQLite WAL, and runs a fail-closed offline doctor over
+package/dependency/cookie/static runtime state. Offline mode is explicit and cannot perform Local
+API, Telegram, required-channel, or worker-processing reachability. Candidate services must then
+reach running/healthy state; selected online checks apply only to originally running Local API and
+bot services, followed by an exact original-running-set assertion. The default operator doctor
+retains its full live behavior. Any
 failure after the stop phase restores the prior application/image/permissions/command when changed
 and always restores the original service state. Compose bounds automatic restart attempts to avoid
 an unbounded high-CPU crash loop.

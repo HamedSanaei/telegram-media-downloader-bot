@@ -4,20 +4,59 @@ Generated: 2026-08-15
 
 ## Current change addendum
 
-- Patch v1.3.1 is prepared from released v1.3.0 to correct the Linux updater's production backup
-  race. The v1.3.0 transaction archives `data/telegram-bot-api` while the Local Bot API can still
-  append its log, allowing GNU tar's `file changed as we read it` safeguard to abort the update.
-- The corrected transaction completes candidate network/preflight work first, records all four
-  project services, stops only the running filesystem writers, publishes a private atomic backup,
-  performs offline version/doctor checks, and restores the exact original service state on failure.
-  Redis and its named volume remain online; downloads/temp remain untouched in place.
+- Patch v1.3.2 is prepared after production v1.3.1 reached post-install “offline doctor” with
+  bot/worker/Local API intentionally stopped, but the ordinary doctor still required
+  `local_api_reachable` and `required_channels`. That live/static lifecycle mismatch, not candidate
+  configuration or service restoration, caused the rollback.
+- The updater now has explicit read-only candidate/static, stopped-service offline, and restored-
+  service online phases. Offline checks remain fail-closed for package/dependency/cookie/static
+  runtime state. Post-start reachability is selected only for an originally running `local-api`
+  and/or `bot`, then the existing exact service-state assertion runs.
+- The v1.3.1 backup transaction remains intact: writers stop before tar, Redis remains online, only
+  the exact volatile Local API log is excluded, archives publish atomically, partial archives are
+  removed, and every post-stop failure restores application/image/permissions and the exact
+  original service set. Candidate-preflight SIGINT now exits 130 without a Python traceback or
+  changing the installed release.
 - The authoritative package version, importable `__version__`, lockfile root package, and
-  release-tag architecture assertion agree on `1.3.1` / `v1.3.1`. No configuration, dependency,
+  release-tag architecture assertion agree on `1.3.2` / `v1.3.2`. No configuration, dependency,
   schema, cookie-path, Docker-topology, or application migration is introduced.
-- Linux v1.3.0 must use the checksummed v1.3.1 `tmb-updater.sh` asset once because an installed
-  updater cannot acquire corrected transaction code before executing its own backup. Exact commands
-  are in `docs/INSTALLATION.md`; normal pinned updates resume after v1.3.1. Nothing was committed,
+- Linux v1.3.1 must use the checksummed v1.3.2 `tmb-updater.sh` asset once because an installed
+  updater cannot acquire corrected verification code during its own transaction. Exact commands
+  are in `docs/INSTALLATION.md`; normal pinned updates resume after v1.3.2. Nothing was committed,
   pushed, tagged, published, or deployed during this preparation task.
+
+## v1.3.2 release-quality verification
+
+- Linux and Windows mocked updater recovery suites passed, including candidate-preflight SIGINT,
+  stopped/mixed service states, offline and online doctor failures, backup/health/permission
+  failures, exact restoration, partial-backup deletion, and secret-redacted diagnostics. Complete
+  Bash parsing and ShellCheck passed; PowerShell AST parsing and its recovery suite also passed.
+- Real privileged Docker-in-Docker upgrades passed for the historical v1.0.2 updater, the v1.2.1
+  standalone bootstrap, v1.3.0 with the release v1.3.2 standalone updater, and the exact
+  v1.3.1-to-v1.3.2 standalone bootstrap. The v1.3.0 matrix
+  covered all-running production topology with an active Local API log, backup failure, offline
+  verification failure, post-start online failure, Local API intentionally stopped, bot
+  intentionally stopped, and a bot/Redis mixed state. Offline verification ran successfully with
+  every filesystem writer stopped; successful cases restored/online-verified only the original
+  live endpoints and completed on 1.3.2. Both injected verification failures fully rolled back and
+  leaked none of the injected secrets.
+- The complete non-contract suite passed on both platforms: Windows had 498 passed, nine
+  platform/opt-in skips, 15 contracts deselected, and 82.37% coverage; Linux had 506 passed, only
+  the destructive Local Bot API upload skipped, 15 contracts deselected, and 82.46% coverage. Both
+  Linux symlink-safety regressions passed. Three pre-existing unclosed-SQLite `ResourceWarning`s
+  remain visible but do not fail the suite. The focused cookie/runtime-consumer, CLI, gallery-dl/
+  router, and Twitter HLS selection passed 128 tests with one Windows symlink skip.
+- The explicitly enabled contract selection passed its three fixed public checks; 12 optional
+  operator-maintained source/gallery fixtures were not configured.
+- `uv lock --check`, frozen sync, Ruff lint/format, strict mypy, architecture boundaries, UTF-8
+  integrity, detect-secrets, `pip check`, and `pip-audit` passed. PSScriptAnalyzer reported zero
+  errors and the same 12 established style warnings in unchanged PowerShell code.
+- Clean v1.3.2 wheel/sdist build, bundled license/resource verification, and clean-wheel install
+  passed. The current-source image built as
+  `sha256:74ace27659bf56c68de8887f6b7858c33eec1ee18fc5cc70e40585e1e421b6ff`
+  (401777231 bytes). Compose, package 1.3.2, gallery-dl 1.32.8, canonical-cookie full/offline
+  doctor, ffmpeg/ffprobe, Deno, 7-Zip multipart, native selector/UI, gallery adapter, non-root
+  filesystem, and offline usage-chart Docker smokes all passed.
 
 ## v1.3.1 release-quality verification
 

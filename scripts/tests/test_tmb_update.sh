@@ -72,14 +72,55 @@ if [[ "$*" == *"telegram-media-bot config-check"* ]]; then
   [[ -r "$TMB_CASE_ROOT/data/cookies/cookies.txt" ]] || exit 97
 fi
 if [[ "$*" == *"telegram-media-bot doctor"* ]] \
-  && [[ "${TMB_FAIL_DOCTOR:-0}" == "1" ]] \
-  && [[ ! -e "$TMB_CASE_ROOT/doctor-failed-once" ]]; then
-  touch "$TMB_CASE_ROOT/doctor-failed-once"
+  && [[ "$*" == *"--read-only-runtime"* ]]; then
+  [[ "$*" == *"run --rm --read-only --user 10001:10001"* ]] || exit 89
+  [[ "$*" == *"--tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777"* ]] || exit 90
+  [[ "$*" == *"--offline"* ]] || exit 98
+  [[ "$*" == *"--expected-version 1.0.3"* ]] || exit 99
+  if [[ "${TMB_INTERRUPT_PREFLIGHT:-0}" == "1" ]]; then
+    printf 'Traceback (most recent call last):\nKeyboardInterrupt\n' >&2
+    kill -INT "$PPID"
+    sleep 0.05
+    exit 130
+  fi
+fi
+if [[ "$*" == *"run --rm --no-deps worker telegram-media-bot doctor"* ]] \
+  && [[ "$*" == *"--offline"* ]]; then
+  if grep -Eq '^(bot|worker|local-api)$' "$TMB_CASE_ROOT/running-services"; then
+    printf 'offline verification observed a running writer\n' >&2
+    exit 88
+  fi
+fi
+if [[ "$*" == *"run --rm --no-deps worker telegram-media-bot doctor"* ]] \
+  && [[ "$*" == *"--offline"* ]] \
+  && [[ "${TMB_FAIL_OFFLINE_DOCTOR:-0}" == "1" ]] \
+  && [[ ! -e "$TMB_CASE_ROOT/offline-doctor-failed-once" ]]; then
+  touch "$TMB_CASE_ROOT/offline-doctor-failed-once"
   printf 'database schema compatibility check failed\n' >&2
   printf 'proxy connection %s%s%s%s@example.invalid failed\n' \
     'https://' operator :DO_NOT_LEAK_PROXY_CREDENTIAL >&2
   printf 'BOT_TOKEN=DO_NOT_LEAK_DIAGNOSTIC_SECRET\n' >&2
   exit 98
+fi
+if [[ "$*" == *"run --rm --no-deps worker telegram-media-bot doctor"* ]] \
+  && [[ "$*" == *"--online-service"* ]]; then
+  if [[ "$*" == *"--online-service bot"* ]] \
+    && ! grep -Fxq bot "$TMB_CASE_ROOT/running-services"; then
+    printf 'online bot verification ran before bot restore\n' >&2
+    exit 87
+  fi
+  if [[ "$*" == *"--online-service local-api"* ]] \
+    && ! grep -Fxq local-api "$TMB_CASE_ROOT/running-services"; then
+    printf 'online Local API verification ran before Local API restore\n' >&2
+    exit 86
+  fi
+  if [[ "${TMB_FAIL_ONLINE_DOCTOR:-0}" == "1" ]] \
+    && [[ ! -e "$TMB_CASE_ROOT/online-doctor-failed-once" ]]; then
+    touch "$TMB_CASE_ROOT/online-doctor-failed-once"
+    printf 'restored Telegram endpoint did not become reachable\n' >&2
+    printf 'BOT_TOKEN=DO_NOT_LEAK_ONLINE_DIAGNOSTIC_SECRET\n' >&2
+    exit 85
+  fi
 fi
 if [[ "$*" == *" ps --services --filter status=running"* ]]; then
   cat "$TMB_CASE_ROOT/running-services"
@@ -351,10 +392,13 @@ run_success_case() {
     || fail "backup did not exclude only the audited Local Bot API log"
   grep -q 'docker run --rm --read-only --user 10001:10001 .*config.yaml:/app/config.yaml:ro .*data:/data:ro ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.3 telegram-media-bot config-check --config /app/config.yaml --read-only-runtime' "$log" \
     || fail "prepared-release config check did not use the read-only runtime data contract"
-  local preflight_line
+  local preflight_line candidate_doctor_line
   preflight_line="$(grep -n 'config-check --config /app/config.yaml --read-only-runtime' "$log" | head -n 1 | cut -d: -f1)"
+  candidate_doctor_line="$(grep -n 'doctor --config /app/config.yaml --offline --expected-version 1.0.3 --read-only-runtime' "$log" | head -n 1 | cut -d: -f1)"
   ((preflight_line < stop_line)) \
     || fail "prepared-release config check ran after service stop"
+  ((preflight_line < candidate_doctor_line && candidate_doctor_line < stop_line)) \
+    || fail "candidate offline prerequisites did not finish before service stop"
   grep -q 'docker .* pull' "$log" || fail "updated images were not pulled"
   grep -q 'docker run --rm --user 0 --entrypoint sh' "$log" \
     || fail "runtime permissions were not normalized through the release image"
@@ -362,10 +406,11 @@ run_success_case() {
   start_line="$(grep -n 'docker .* up -d --no-build --force-recreate bot worker local-api' "$log" | head -n 1 | cut -d: -f1)"
   ((permission_line < start_line)) \
     || fail "runtime permission migration did not finish before service start"
-  local doctor_start_line
-  doctor_start_line="$(grep -n 'doctor --config /app/config.yaml' "$log" | head -n 1 | cut -d: -f1)"
-  ((doctor_start_line < start_line)) \
-    || fail "offline doctor did not finish before application services started"
+  local offline_doctor_line online_doctor_line
+  offline_doctor_line="$(grep -n 'run --rm --no-deps worker telegram-media-bot doctor --config /app/config.yaml --offline --expected-version 1.0.3' "$log" | head -n 1 | cut -d: -f1)"
+  online_doctor_line="$(grep -n 'run --rm --no-deps worker telegram-media-bot doctor --config /app/config.yaml --online-service local-api --online-service bot' "$log" | head -n 1 | cut -d: -f1)"
+  ((offline_doctor_line < start_line && start_line < online_doctor_line)) \
+    || fail "offline/start/online verification ordering is wrong"
   [[ -x "$case_root/bin/tmb" ]] \
     || fail "updater did not repair the global tmb command"
   [[ -x "$case_root/scripts/tmb.sh" ]] \
@@ -376,10 +421,10 @@ run_success_case() {
     TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" tmb status >/dev/null
   grep -q 'docker .* up -d --no-build --force-recreate bot worker local-api' "$log" \
     || fail "successful update did not recreate the stack"
-  grep -q 'docker compose .*run --rm --no-deps worker python -c' "$log" \
-    || fail "successful update did not verify the runtime version"
-  grep -q 'docker compose .*run --rm --no-deps worker telegram-media-bot doctor' "$log" \
-    || fail "successful update did not run doctor"
+  grep -q -- '--offline --expected-version 1.0.3' "$log" \
+    || fail "successful update did not verify static prerequisites and package version"
+  grep -q -- '--online-service local-api --online-service bot' "$log" \
+    || fail "successful update did not verify restored live services"
   diff -u <(printf 'bot\nworker\nlocal-api\nredis\n' | sort) \
     <(sort "$case_root/running-services") \
     || fail "successful update did not preserve the exact running service set"
@@ -589,13 +634,13 @@ run_backup_failure_case() {
   fi
 }
 
-run_doctor_failure_case() {
-  local case_root="$TEST_ROOT/doctor-failure"
+run_offline_doctor_failure_case() {
+  local case_root="$TEST_ROOT/offline-doctor-failure"
   local log="$case_root/operations.log" output="$case_root/update-output.log"
   prepare_case "$case_root"
   if (
     cd "$case_root"
-    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" TMB_FAIL_DOCTOR=1 \
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" TMB_FAIL_OFFLINE_DOCTOR=1 \
       TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
       TMB_SOURCE_ROOT="$SOURCE_ROOT" \
       bash scripts/tmb.sh update
@@ -609,7 +654,7 @@ run_doctor_failure_case() {
   diff -u <(printf 'bot\nworker\nlocal-api\nredis\n' | sort) \
     <(sort "$case_root/running-services") \
     || fail "doctor failure did not restore the exact original service state"
-  grep -q 'Update stage failed: offline runtime doctor' "$output" \
+  grep -q 'Update stage failed: offline post-install verification' "$output" \
     || fail "doctor failure did not identify its verification stage"
   grep -q 'database schema compatibility check failed' "$output" \
     || fail "doctor failure hid its safe diagnostic reason"
@@ -622,10 +667,124 @@ run_doctor_failure_case() {
   grep -Fq 'https://[redacted]@example.invalid' "$output" \
     || fail "doctor diagnostics did not retain a useful redacted endpoint"
   local doctor_line candidate_start_line
-  doctor_line="$(grep -n 'doctor --config /app/config.yaml' "$log" | head -n 1 | cut -d: -f1)"
+  doctor_line="$(grep -n 'run --rm --no-deps worker telegram-media-bot doctor .*--offline' "$log" | head -n 1 | cut -d: -f1)"
   candidate_start_line="$(grep -n 'up -d --no-build --force-recreate' "$log" | head -n 1 | cut -d: -f1 || true)"
   [[ -z "$candidate_start_line" || "$doctor_line" -lt "$candidate_start_line" ]] \
     || fail "doctor failure occurred after candidate writers started"
+}
+
+run_online_doctor_failure_case() {
+  local case_root="$TEST_ROOT/online-doctor-failure"
+  local log="$case_root/operations.log" output="$case_root/update-output.log"
+  prepare_case "$case_root"
+  if (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" TMB_FAIL_ONLINE_DOCTOR=1 \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh update
+  ) >"$output" 2>&1; then
+    fail "post-start online doctor failure unexpectedly succeeded"
+  fi
+  grep -q '^TMB_IMAGE=example.invalid/tmb:1.0.2$' "$case_root/.env" \
+    || fail "online doctor failure did not restore the previous image"
+  grep -q '^version = "1.0.2"$' "$case_root/pyproject.toml" \
+    || fail "online doctor failure did not restore the previous application"
+  diff -u <(printf 'bot\nworker\nlocal-api\nredis\n' | sort) \
+    <(sort "$case_root/running-services") \
+    || fail "online doctor failure did not restore the exact original service state"
+  grep -q 'Update stage failed: post-start online verification' "$output" \
+    || fail "online doctor failure did not identify its verification stage"
+  grep -q 'restored Telegram endpoint did not become reachable' "$output" \
+    || fail "online doctor failure hid its safe diagnostic reason"
+  if grep -q 'DO_NOT_LEAK_ONLINE_DIAGNOSTIC_SECRET' "$output"; then
+    fail "online doctor failure leaked a secret in diagnostics"
+  fi
+  local start_line online_line rollback_line
+  start_line="$(grep -n 'up -d --no-build --force-recreate bot worker local-api' "$log" | head -n 1 | cut -d: -f1)"
+  online_line="$(grep -n -- '--online-service local-api --online-service bot' "$log" | head -n 1 | cut -d: -f1)"
+  rollback_line="$(grep -n 'stop bot worker local-api' "$log" | tail -n 1 | cut -d: -f1)"
+  ((start_line < online_line && online_line < rollback_line)) \
+    || fail "online failure did not occur between candidate start and rollback"
+}
+
+run_bot_without_local_api_case() {
+  local case_root="$TEST_ROOT/bot-without-local-api"
+  local log="$case_root/operations.log"
+  prepare_case "$case_root"
+  set_running_services "$case_root" bot worker redis
+  (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh update
+  )
+  grep -q ' stop -t 45 bot worker$' "$log" \
+    || fail "bot/no-Local-API state stopped the wrong writers"
+  grep -q -- '--online-service bot' "$log" \
+    || fail "restored bot was not online-verified"
+  if grep -q -- '--online-service local-api' "$log"; then
+    fail "intentionally stopped Local API was online-verified"
+  fi
+  diff -u <(printf 'bot\nworker\nredis\n' | sort) <(sort "$case_root/running-services") \
+    || fail "bot/no-Local-API state was not preserved"
+}
+
+run_local_api_without_bot_case() {
+  local case_root="$TEST_ROOT/local-api-without-bot"
+  local log="$case_root/operations.log"
+  prepare_case "$case_root"
+  set_running_services "$case_root" worker local-api redis
+  (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh update
+  )
+  grep -q ' stop -t 45 worker local-api$' "$log" \
+    || fail "Local-API/no-bot state stopped the wrong writers"
+  grep -q -- '--online-service local-api' "$log" \
+    || fail "restored Local API was not online-verified"
+  if grep -q -- '--online-service bot' "$log"; then
+    fail "intentionally stopped bot was online-verified"
+  fi
+  diff -u <(printf 'worker\nlocal-api\nredis\n' | sort) <(sort "$case_root/running-services") \
+    || fail "Local-API/no-bot state was not preserved"
+}
+
+run_preflight_interrupt_case() {
+  local case_root="$TEST_ROOT/preflight-interrupt"
+  local log="$case_root/operations.log" output="$case_root/update-output.log" status
+  prepare_case "$case_root"
+  if (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" TMB_INTERRUPT_PREFLIGHT=1 \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh update
+  ) >"$output" 2>&1; then
+    fail "interrupted candidate preflight unexpectedly succeeded"
+  else
+    status=$?
+  fi
+  [[ "$status" -eq 130 ]] || fail "preflight interrupt did not return status 130"
+  grep -q '^Update interrupted by operator\.$' "$output" \
+    || fail "preflight interrupt did not print a concise operator message"
+  grep -q '^Installed release and project service state were unchanged\.$' "$output" \
+    || fail "preflight interrupt did not report the unchanged installation"
+  if grep -Eq 'Traceback|KeyboardInterrupt' "$output"; then
+    fail "preflight interrupt exposed a Python traceback"
+  fi
+  grep -q '^version = "1.0.2"$' "$case_root/pyproject.toml" \
+    || fail "preflight interrupt changed installed application files"
+  diff -u <(printf 'bot\nworker\nlocal-api\nredis\n' | sort) \
+    <(sort "$case_root/running-services") \
+    || fail "preflight interrupt changed service state"
+  if grep -q ' stop -t 45 ' "$log" || grep -q '^tar -czf' "$log"; then
+    fail "preflight interrupt reached downtime or backup"
+  fi
 }
 
 run_all_stopped_case() {
@@ -740,7 +899,11 @@ run_download_failure_case
 run_permission_failure_case
 run_health_failure_case
 run_backup_failure_case
-run_doctor_failure_case
+run_offline_doctor_failure_case
+run_online_doctor_failure_case
+run_bot_without_local_api_case
+run_local_api_without_bot_case
+run_preflight_interrupt_case
 run_all_stopped_case
 run_mixed_service_state_case
 run_real_backup_archive_case

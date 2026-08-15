@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 1.3.2 - 2026-08-15
+
+### Fixed
+
+- Split Linux updater verification into explicit candidate/static, offline post-install, and
+  conditional post-start online phases. The offline phases no longer probe the intentionally
+  stopped Local Bot API, Telegram bot, required channels, or worker processing.
+- Keep offline verification fail-closed for Python/package version, yt-dlp, gallery-dl, canonical
+  cookies, ffmpeg/ffprobe, Deno, Local Bot API static configuration/filesystem/migration state,
+  chart/font resources, and multipart 7-Zip support.
+- Online-verify only services that were running before the update: Local Bot API reachability for a
+  restored `local-api`, Telegram/required-channel reachability for a restored `bot`, plus existing
+  Compose health and exact service-state checks. Offline or online verification failure performs
+  the existing full application/image/permission/service-state rollback.
+- Handle operator SIGINT during candidate preflight with exit status 130 and a concise message,
+  without exposing a child Python `KeyboardInterrupt` traceback or changing the installed release.
+
+### Operations
+
+- Add privileged v1.3.0-to-v1.3.2 regressions for the production all-running topology, offline and
+  online verification failures, Local API/bot intentionally stopped, mixed service states,
+  redacted diagnostics, and exact restoration. The v1.3.1 backup ordering, exact-log exclusion,
+  atomic publication, Redis availability, and project-scoped cleanup contracts remain intact.
+
 ## 1.3.1 - 2026-08-15
 
 ### Fixed

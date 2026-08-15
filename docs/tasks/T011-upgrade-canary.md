@@ -31,6 +31,14 @@ release. Offline version/doctor failures roll back application/image/permissions
 state. Mocked all-stopped/mixed-state tests and privileged v1.3.0 standalone-updater fixtures cover
 active-log success, archive policy, rollback, and bounded secret-redacted diagnostics.
 
+The v1.3.2 patch separates candidate/static and post-install offline verification from conditional
+post-start online checks. Offline doctor remains fail-closed for package/dependencies/cookies/static
+Local API and chart/runtime resources but never checks intentionally stopped services. After exact
+restoration, only an originally running Local API and/or bot is online-verified. Privileged v1.3.0
+fixtures cover the production all-running topology, both verification failure boundaries, bot or
+Local API intentionally stopped, and mixed service states. v1.3.1 uses the checksummed v1.3.2
+standalone updater once because its running updater contains the old phase contract.
+
 ## Deliverables
 
 - Improve the upgrade script to record old/new versions and retain rollback instructions.

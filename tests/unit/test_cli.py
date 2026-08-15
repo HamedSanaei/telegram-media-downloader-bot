@@ -14,6 +14,7 @@ from telegram_media_bot.domain.errors import ConfigurationError
 from telegram_media_bot.domain.models import ComponentHealth
 from telegram_media_bot.infrastructure.analytics import usage_chart_doctor
 from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
+from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
 from telegram_media_bot.infrastructure.ytdlp.engine import YtDlpEngine
 
 
@@ -224,6 +225,206 @@ def test_config_check_parser_supports_read_only_runtime() -> None:
 
     assert args.config == Path("custom.yaml")
     assert args.read_only_runtime is True
+
+
+def test_doctor_parser_supports_explicit_offline_and_online_phases() -> None:
+    offline = cli.build_parser().parse_args(
+        [
+            "doctor",
+            "--config",
+            "custom.yaml",
+            "--offline",
+            "--expected-version",
+            "1.3.2",
+            "--read-only-runtime",
+        ]
+    )
+    online = cli.build_parser().parse_args(
+        [
+            "doctor",
+            "--config",
+            "custom.yaml",
+            "--online-service",
+            "bot",
+            "--online-service",
+            "local-api",
+        ]
+    )
+
+    assert offline.offline is True
+    assert offline.expected_version == "1.3.2"
+    assert offline.read_only_runtime is True
+    assert online.offline is False
+    assert online.online_service == ["bot", "local-api"]
+
+
+def test_offline_doctor_never_calls_live_service_checks(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "_run_static_doctor_checks",
+        lambda _settings, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_default_live_doctor_checks",
+        lambda _settings: pytest.fail("offline doctor ran default live checks"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_selected_live_doctor_checks",
+        lambda _settings, _services: pytest.fail("offline doctor ran selected live checks"),
+    )
+
+    cli._run_doctor(
+        settings,
+        mode=cli.DoctorMode.OFFLINE,
+        expected_version="1.3.2",
+        runtime_filesystem_read_only=True,
+    )
+
+    output = capsys.readouterr().out
+    assert "local_api_reachable" not in output
+    assert "required_channels" not in output
+    assert "bot_reachable" not in output
+
+
+def test_default_doctor_retains_static_and_live_checks(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def static_check(_settings: Settings, **_kwargs: object) -> bool:
+        calls.append("static")
+        return False
+
+    def live_check(_settings: Settings) -> bool:
+        calls.append("live")
+        return False
+
+    monkeypatch.setattr(
+        cli,
+        "_run_static_doctor_checks",
+        static_check,
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_default_live_doctor_checks",
+        live_check,
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_selected_live_doctor_checks",
+        lambda _settings, _services: pytest.fail("default doctor used selected online checks"),
+    )
+
+    cli._run_doctor(settings)
+
+    assert calls == ["static", "live"]
+
+
+def test_offline_doctor_fails_closed_on_expected_package_version(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        GalleryDlEngine,
+        "health",
+        lambda _self: ComponentHealth("gallery_dl", True, "1.32.8"),
+    )
+    monkeypatch.setattr(
+        YtDlpEngine,
+        "health",
+        lambda _self: ComponentHealth("yt_dlp", True, "fixture"),
+    )
+    monkeypatch.setattr(usage_chart_doctor, "check_usage_chart_runtime", lambda: {})
+    monkeypatch.setattr(shutil, "which", lambda _name: "fixture-tool")
+    monkeypatch.setattr(cli, "_binary_version", lambda _path: "fixture")
+    monkeypatch.setattr(cli, "resolve_seven_zip", lambda _path: "fixture-7z")
+
+    with pytest.raises(SystemExit) as raised:
+        cli._run_doctor(
+            settings,
+            mode=cli.DoctorMode.OFFLINE,
+            expected_version="999.0.0",
+        )
+
+    assert raised.value.code == 1
+    assert "FAIL package:" in capsys.readouterr().out
+
+
+def test_online_doctor_runs_only_selected_restored_service_checks(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    raw = settings.model_dump()
+    raw["telegram"]["local_api_base_url"] = "http://local-api:8081"
+    raw["telegram"]["local_api_is_local"] = True
+    raw["telegram"]["local_bot_api"]["enabled"] = True
+    raw["telegram"]["local_bot_api"]["mode"] = "external"
+    raw["telegram"]["required_channels"]["enabled"] = True
+    configured = Settings.model_validate(raw)
+    monkeypatch.setattr(
+        cli,
+        "_run_static_doctor_checks",
+        lambda _settings, **_kwargs: pytest.fail("online doctor ran static checks"),
+    )
+    monkeypatch.setattr(LocalBotApiManager, "endpoint_reachable", lambda _self: True)
+
+    async def healthy_bot(_settings: Settings) -> dict[str, bool]:
+        return {"bot_reachable": True, "required_channels": True}
+
+    monkeypatch.setattr(cli, "_bot_online_diagnostics", healthy_bot)
+
+    cli._run_doctor(
+        configured,
+        mode=cli.DoctorMode.ONLINE,
+        online_services=(
+            cli.DoctorOnlineService.BOT,
+            cli.DoctorOnlineService.LOCAL_API,
+        ),
+    )
+
+    output = capsys.readouterr().out
+    assert "OK   bot_reachable" in output
+    assert "OK   required_channels" in output
+    assert "OK   local_api_configured" in output
+    assert "OK   local_api_reachable" in output
+    assert "yt_dlp" not in output
+    assert "ffmpeg" not in output
+
+
+def test_online_bot_only_does_not_probe_stopped_local_api(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        LocalBotApiManager,
+        "endpoint_reachable",
+        lambda _self: pytest.fail("bot-only online doctor probed Local API"),
+    )
+
+    async def healthy_bot(_settings: Settings) -> dict[str, bool]:
+        return {"bot_reachable": True, "required_channels": True}
+
+    monkeypatch.setattr(cli, "_bot_online_diagnostics", healthy_bot)
+
+    cli._run_doctor(
+        settings,
+        mode=cli.DoctorMode.ONLINE,
+        online_services=(cli.DoctorOnlineService.BOT,),
+    )
+
+    output = capsys.readouterr().out
+    assert "OK   bot_reachable" in output
+    assert "local_api_reachable" not in output
 
 
 @pytest.mark.parametrize(

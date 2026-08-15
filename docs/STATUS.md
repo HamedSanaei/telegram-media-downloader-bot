@@ -4,14 +4,18 @@ Last updated: 2026-08-15
 
 ## Release state
 
-Tasks T001 through T013 are implemented. Patch 1.3.1 is prepared over the released v1.3.0 secure
+Tasks T001 through T013 are implemented. Patch 1.3.2 is prepared over production v1.3.1 and the
+released v1.3.0 secure
 administrator Cookie Management and one canonical runtime cookie file shared by yt-dlp, SoundCloud, every gallery-dl
 provider, `doctor`, and `config-check`. Legacy `gallery_dl.cookies.*` keys remain readable as
 backward-compatible aliases, but every configured alias must resolve to the canonical path; a
 divergent deployment must merge its files before upgrade. The audited production v1.2.2
 configuration defines only `yt_dlp.cookies_file: /data/cookies/cookies.txt`, so it requires no
-cookie-path migration for v1.3.0 or v1.3.1. Patch 1.3.1 corrects the Linux updater's live-backup
-race and does not change application configuration or cookie architecture.
+cookie-path migration for v1.3.0, v1.3.1, or v1.3.2. Patch 1.3.1 corrects the Linux updater's
+live-backup race. Patch 1.3.2 corrects the post-install verification lifecycle so static checks run
+while writers are stopped and live Local API/Telegram checks run only after their originally
+running services are restored. Neither patch changes application configuration or cookie
+architecture.
 
 Patch 1.2.2 fixed updater preflight validation for runtime cookie paths without mutating persistent
 data, patch 1.2.1 fixed strict mixed-carousel video-child discovery, and release 1.2.0 introduced
@@ -87,6 +91,9 @@ recorded in `docs/HANDOFF_REPORT.md` after the release-quality run.
   project services, stops only running filesystem writers, publishes a private atomic backup, and
   restores the exact original service set after backup or later transaction failures. Redis/ARQ
   remains online, while intentionally stopped services remain stopped.
+- Linux updater verification has three explicit phases: read-only candidate static preflight,
+  post-install offline static verification with writers stopped, and post-start live checks selected
+  from the original `local-api`/`bot` service set. The normal `tmb doctor` remains comprehensive.
 - User cancellation is terminal in SQLite before official ARQ abort; cancelled rows are excluded
   from startup recovery, finalized queue keys and job directories are cleaned idempotently, and
   shutdown races do not requeue user-cancelled FFmpeg work.
@@ -120,16 +127,23 @@ recorded in `docs/HANDOFF_REPORT.md` after the release-quality run.
 
 ## Verification
 
-The final v1.3.1 gate run passed 500 Linux non-contract tests (one destructive opt-in skip) at
-82.50% coverage and 492 Windows tests (nine platform/opt-in skips) at 82.37%. Static, security,
-package, Compose, current-source Docker, mocked updater, and real privileged upgrade/rollback gates
-passed. The exact command results, artifact hashes, platform skips, and runtime smokes are recorded
-in `docs/HANDOFF_REPORT.md`. External source contracts remain opt-in and require operator-maintained
-public URLs; the three fixed public contract checks passed and 12 operator fixtures were not
-configured.
+The final v1.3.2 Python suites passed 506 Linux non-contract tests (one destructive opt-in skip) at
+82.46% coverage and 498 Windows tests (nine platform/opt-in skips) at 82.37%. Mocked Linux/Windows
+updater suites and the real privileged historical/production upgrade matrix passed, including both
+offline and online rollback boundaries, mixed service states, and the exact v1.3.1 standalone
+bootstrap to v1.3.2. The exact command results,
+artifact hashes, platform skips, and runtime smokes are recorded in `docs/HANDOFF_REPORT.md`.
+External source contracts remain opt-in and require operator-maintained public URLs; the three fixed
+public contract checks passed and 12 operator fixtures were not configured.
 
 ## Recent fixes
 
+- 2026-08-15: Prepared patch 1.3.2 after production v1.3.1 proved its nominal offline doctor still
+  required `local_api_reachable` and `required_channels` while those services were intentionally
+  stopped. The updater now runs fail-closed static checks offline, conditionally verifies restored
+  Local API/Telegram endpoints online, preserves mixed service states, rolls back at either failure
+  boundary, and exits cleanly on preflight SIGINT. The v1.3.1 atomic backup fix remains unchanged;
+  v1.3.1 requires the checksummed standalone v1.3.2 updater once.
 - 2026-08-15: Prepared patch 1.3.1 for the production Local Bot API log race in the v1.3.0 Linux
   updater. Candidate assets/images now finish before downtime; running bot/worker/Local API writers
   stop before tar; Redis remains online; and the archive atomically includes config, `.env`,

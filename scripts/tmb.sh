@@ -132,6 +132,14 @@ validate_prepared_release() {
     "$prepared_image" \
     telegram-media-bot config-check --config /app/config.yaml \
       --read-only-runtime || return 1
+  run_update_stage "candidate offline prerequisite verification" docker run \
+    --rm --read-only --user "$uid:$gid" \
+    --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+    -v "$ROOT_DIR/config.yaml:/app/config.yaml:ro" \
+    -v "$ROOT_DIR/data:/data:ro" \
+    "$prepared_image" \
+    telegram-media-bot doctor --config /app/config.yaml --offline \
+      --expected-version "$RELEASE_VERSION" --read-only-runtime || return 1
 }
 
 prepare_application_transaction() {
@@ -464,25 +472,24 @@ verify_services_healthy() {
 }
 
 verify_candidate_release_offline() {
-  local runtime_version output_file status
-  output_file="$(mktemp "$RELEASE_TEMPORARY_DIRECTORY/tmb-version.XXXXXX")" || return 1
-  if compose --profile local-api run --rm --no-deps worker \
-    python -c 'import telegram_media_bot; print(telegram_media_bot.__version__)' \
-    >"$output_file" 2>&1; then
-    runtime_version="$(cat "$output_file")"
-    rm -f -- "$output_file"
-  else
-    status=$?
-    print_sanitized_diagnostics "offline runtime version verification" "$output_file"
-    rm -f -- "$output_file"
-    return "$status"
+  run_update_stage "offline post-install verification" compose --profile local-api run \
+    --rm --no-deps worker telegram-media-bot doctor --config /app/config.yaml \
+      --offline --expected-version "$RELEASE_VERSION"
+}
+
+verify_restored_services_online() {
+  local -a doctor_arguments=(
+    telegram-media-bot doctor --config /app/config.yaml
+  )
+  if list_contains local-api "${PREVIOUS_PROJECT_SERVICES[@]}"; then
+    doctor_arguments+=(--online-service local-api)
   fi
-  [[ "${runtime_version##*$'\n'}" == "$RELEASE_VERSION" ]] || {
-    echo "Runtime version does not match release $RELEASE_VERSION." >&2
-    return 1
-  }
-  run_update_stage "offline runtime doctor" compose --profile local-api run \
-    --rm --no-deps worker telegram-media-bot doctor --config /app/config.yaml
+  if list_contains bot "${PREVIOUS_PROJECT_SERVICES[@]}"; then
+    doctor_arguments+=(--online-service bot)
+  fi
+  [[ ${#doctor_arguments[@]} -gt 4 ]] || return 0
+  run_update_stage "post-start online verification" compose --profile local-api run \
+    --rm --no-deps worker "${doctor_arguments[@]}"
 }
 
 project_image_cleanup_enabled() {
@@ -588,6 +595,21 @@ rollback_update() {
   verify_exact_project_service_state "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
 }
 
+handle_update_interrupt() {
+  trap - INT
+  echo "Update interrupted by operator." >&2
+  if [[ "${UPDATE_SERVICE_STATE_TOUCHED:-false}" == "true" ]]; then
+    echo "Restoring the pre-update release and exact service state." >&2
+    rollback_update "$UPDATE_PREVIOUS_IMAGE" || {
+      echo "Interrupted update rollback failed; project writers remain stopped." >&2
+    }
+  else
+    echo "Installed release and project service state were unchanged." >&2
+  fi
+  cleanup_prepared_release
+  exit 130
+}
+
 perform_update() {
   local previous_image="$1" prepared_image
   prepare_verified_release || return 1
@@ -613,6 +635,7 @@ perform_update() {
   start_services true "${PREVIOUS_WRITER_SERVICES[@]}" || return 1
   run_update_stage "updated service health verification" verify_services_healthy \
     "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
+  verify_restored_services_online || return 1
   run_update_stage "updated exact service-state verification" verify_exact_project_service_state \
     "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
   if project_image_cleanup_enabled; then
@@ -716,8 +739,11 @@ run() {
       APPLICATION_ROLLBACK_DIRECTORY=""
       UPDATE_SERVICE_STATE_TOUCHED=false
       UPDATE_APPLICATION_MUTATED=false
+      UPDATE_PREVIOUS_IMAGE="$previous_image"
+      trap handle_update_interrupt INT
       load_running_project_services || return 1
       if perform_update "$previous_image"; then
+        trap - INT
         cleanup_prepared_release
         echo "Update to $RELEASE_VERSION completed successfully."
       else
@@ -728,12 +754,14 @@ run() {
             echo "Update failed after writer stop; restoring the exact original service state." >&2
           fi
           rollback_update "$previous_image" || {
+            trap - INT
             cleanup_prepared_release
             return 1
           }
         else
           echo "Update validation failed before service stop; the installed release was unchanged." >&2
         fi
+        trap - INT
         cleanup_prepared_release
         return 1
       fi

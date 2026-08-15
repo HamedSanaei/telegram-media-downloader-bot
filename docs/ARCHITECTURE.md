@@ -295,9 +295,15 @@ remain untouched in place and outside the archive; only the explicitly audited v
 `data/telegram-bot-api/telegram-bot-api.log` is excluded, never a wildcard class of logs.
 
 Top-level application entries use rollback snapshots while local configuration/state remain outside
-replacement. A same-UID filesystem write and SQLite WAL probe, exact package-version check, and
-dependency doctor all pass before candidate writers start. The updater then starts only writers
-that were running originally and requires health plus an exact four-service state match. Any
+replacement. Verification is explicitly phased. Candidate preflight parses configuration and runs
+the complete static doctor in the prepared read-only image. After installation, a same-UID
+filesystem write and SQLite WAL probe plus the same fail-closed offline doctor verify Python/package
+version, yt-dlp, gallery-dl, canonical cookies, ffmpeg/ffprobe, Deno, Local API static state,
+chart/font resources, and 7-Zip without probing any stopped project service. The updater then starts
+only writers that were running originally, waits for Compose health, and runs selected online checks:
+Local API reachability only for a restored `local-api`, and bot/required-channel Telegram checks only
+for a restored `bot`. It finally requires an exact four-service state match. The ordinary operator
+`doctor` remains the full static-plus-live diagnostic. Any
 post-stop failure restores the prior source, image, usable permissions, command link, and original
 service state; intentionally stopped services remain stopped. Failure output identifies the stage
 and includes only bounded sanitized diagnostics. Image-pin rewrites retain the pre-existing numeric
@@ -306,11 +312,12 @@ owner/group and mode of `.env`, including when an authorized operator invokes th
 
 An installed updater cannot consume corrected transaction code from inside the release archive
 until that old updater finishes its own transaction. Patch releases therefore publish
-`tmb-updater.sh` with its own SHA-256 file. Affected v1.2.1 and v1.3.0 installations verify and
+`tmb-updater.sh` with its own SHA-256 file. Affected v1.2.1, v1.3.0, and v1.3.1 installations verify and
 execute the corresponding release asset once against the existing project root; the normal
 transactional install then places the corrected updater for every later `tmb update`.
 
-Only after offline version/doctor checks, candidate health, and exact Compose service state pass may
+Only after offline static checks, selected post-start online checks, candidate health, and exact
+Compose service state pass may
 the updater clean Docker resources. It removes stopped containers from this Compose project only
 when they use a superseded image, then removes unreferenced image IDs whose repository is exactly
 `ghcr.io/hamedsanaei/telegram-media-downloader-bot`. The current image, images referenced by any

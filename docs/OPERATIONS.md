@@ -23,10 +23,15 @@ Release rollback uses `TMB_RELEASE_TAG=vX.Y.Z tmb update`. The updater validates
 Bash/Compose/config payload and pulls candidate images before stopping writers. It records all four
 project services, stops only the running bot/worker/Local API writers, backs up state, installs
 application entries through a rollback snapshot, repairs runtime ownership/modes, and requires
-same-UID filesystem plus SQLite WAL probes and offline version/doctor checks. Redis and ARQ remain
-online. Candidate services must be running/healthy and match the original service set exactly;
-backup, probe, doctor, crash/restart, timeout, or state mismatch restores the prior transaction and
-service state. Diagnostics name the failed stage and expose only bounded redacted command output.
+same-UID filesystem plus SQLite WAL probes and an explicit offline doctor. Redis and ARQ remain
+online. Offline verification requires Python/package version, yt-dlp, gallery-dl, canonical
+cookies, ffmpeg/ffprobe, Deno, Local API static configuration/filesystem/migration state,
+chart/font resources, and 7-Zip when enabled; it never requires a stopped service or network API.
+After restoration, Local API reachability is checked only if `local-api` was originally running,
+and Telegram plus required channels only if `bot` was originally running. Candidate services must
+be running/healthy and match the original service set exactly; backup, probe, offline/online
+verification, crash/restart, timeout, or state mismatch restores the prior transaction and service
+state. Diagnostics name the failed stage and expose only bounded redacted command output.
 Backup archives exclude downloads/temp and the exact volatile Local API log, but include
 configuration, `.env`, SQLite/WAL/SHM state, cookies, and other Local API state. Archives are private,
 atomically published, and partial files are deleted; Redis continues in its persistent Compose
@@ -46,6 +51,11 @@ For v1.3.0 -> v1.3.1, use the checksummed standalone v1.3.1 updater procedure in
 `docs/INSTALLATION.md`. The installed v1.3.0 updater performs its vulnerable backup before it can
 install new updater code, so an ordinary `tmb update` is not the supported bootstrap for this one
 transition. After v1.3.1 is installed, normal pinned updates resume.
+
+For v1.3.1 -> v1.3.2, use the checksummed standalone v1.3.2 updater procedure in
+`docs/INSTALLATION.md`. The installed v1.3.1 runner cannot acquire the new offline/online phase
+selection during its own transaction, so an ordinary update would reproduce the production failure
+and roll back. No configuration or cookie-path migration is required.
 
 A user cancellation is committed to SQLite as `cancelled` before ARQ abort is requested. Pending or
 running queue work is aborted with ARQ's official API and finalized transient keys are removed.

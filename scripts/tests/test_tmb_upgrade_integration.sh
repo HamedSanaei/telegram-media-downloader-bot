@@ -29,6 +29,8 @@ RUNTIME_UID="$INSTALL_OWNER_UID"
 RUNTIME_GID="$INSTALL_OWNER_GID"
 LOG_WRITER_PID=""
 LOG_WRITER_LAUNCHER_PID=""
+PHASE_LOG="$TEST_ROOT/verification-phases.log"
+: >"$PHASE_LOG"
 
 assert_owner_mode() {
   local path="$1" expected_owner="$2" expected_mode="$3" label="$4" actual
@@ -65,6 +67,10 @@ assert_original_service_state() {
     stopped) expected="" ;;
     redis-only) expected="redis" ;;
     writer-redis) expected="$(printf 'local-api\nredis\n' | sort)" ;;
+    all-running) expected="$(printf 'bot\nworker\nlocal-api\nredis\n' | sort)" ;;
+    no-local-api) expected="$(printf 'bot\nworker\nredis\n' | sort)" ;;
+    no-bot) expected="$(printf 'worker\nlocal-api\nredis\n' | sort)" ;;
+    mixed) expected="$(printf 'bot\nredis\n' | sort)" ;;
     *)
       echo "Unknown initial service state: $INITIAL_SERVICE_STATE" >&2
       return 2
@@ -132,6 +138,15 @@ awk '
   !skipping { print }
 ' "$INSTALL_ROOT/config.yaml" >"$INSTALL_ROOT/config.yaml.without-gallery"
 mv "$INSTALL_ROOT/config.yaml.without-gallery" "$INSTALL_ROOT/config.yaml"
+if [[ "$PREVIOUS_VERSION" =~ ^1\.3\.[01]$ ]]; then
+  sed -i \
+    -e 's|^  local_api_base_url: null$|  local_api_base_url: http://local-api:8081|' \
+    -e 's|^  local_api_is_local: false$|  local_api_is_local: true|' \
+    -e 's|^      state_file: ./data/state/telegram-api-migration.json$|      state_file: /data/state/telegram-api-migration.json|' \
+    -e '/^  local_bot_api:$/ { n; s/enabled: false/enabled: true/; n; s/mode: managed/mode: external/; }' \
+    -e '/^  required_channels:$/ { n; s/enabled: false/enabled: true/; }' \
+    "$INSTALL_ROOT/config.yaml"
+fi
 cat >"$INSTALL_ROOT/.env" <<EOF
 TMB_IMAGE=${IMAGE_REPOSITORY}:${PREVIOUS_VERSION}
 COMPOSE_PROJECT_NAME=${TEST_COMPOSE_PROJECT_NAME}
@@ -213,12 +228,6 @@ REAL_TAR="$(command -v tar)"
 cat >"$BIN_ROOT/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${TMB_TEST_UPDATER_FAILURE_STAGE:-none}" == "doctor" ]] \
-  && [[ "$*" == *"telegram-media-bot doctor"* ]]; then
-  echo "configured queue connectivity check failed" >&2
-  echo "BOT_TOKEN=DO_NOT_LEAK_PRIVILEGED_DOCTOR_SECRET" >&2
-  exit 81
-fi
 real_docker="${TMB_TEST_REAL_DOCKER:-}"
 if [[ -z "$real_docker" ]]; then
   for candidate in /usr/bin/docker /usr/local/bin/docker; do
@@ -229,6 +238,45 @@ if [[ -z "$real_docker" ]]; then
   done
 fi
 [[ -n "$real_docker" ]]
+if [[ "$*" == *"compose"*"run --rm --no-deps worker telegram-media-bot doctor"* ]] \
+  && [[ "$*" == *"--offline"* ]]; then
+  running="$($real_docker compose --project-directory "$TMB_TEST_INSTALL_ROOT" \
+    --profile local-api ps --services --filter status=running)"
+  if grep -Eq '^(bot|worker|local-api)$' <<<"$running"; then
+    echo "offline verification observed a running project writer" >&2
+    exit 84
+  fi
+  printf 'offline-post-install\n' >>"$TMB_TEST_PHASE_LOG"
+  if [[ "${TMB_TEST_UPDATER_FAILURE_STAGE:-none}" == "offline-doctor" ]]; then
+    echo "static runtime prerequisite check failed" >&2
+    echo "BOT_TOKEN=DO_NOT_LEAK_PRIVILEGED_OFFLINE_SECRET" >&2
+    exit 81
+  fi
+fi
+if [[ "$*" == *"compose"*"run --rm --no-deps worker telegram-media-bot doctor"* ]] \
+  && [[ "$*" == *"--online-service"* ]]; then
+  running="$($real_docker compose --project-directory "$TMB_TEST_INSTALL_ROOT" \
+    --profile local-api ps --services --filter status=running)"
+  if [[ "$*" == *"--online-service bot"* ]] && ! grep -Fxq bot <<<"$running"; then
+    echo "online bot verification ran before bot restoration" >&2
+    exit 83
+  fi
+  if [[ "$*" == *"--online-service local-api"* ]] \
+    && ! grep -Fxq local-api <<<"$running"; then
+    echo "online Local API verification ran before Local API restoration" >&2
+    exit 82
+  fi
+  printf 'online-post-start:%s\n' "$*" >>"$TMB_TEST_PHASE_LOG"
+  if [[ "${TMB_TEST_UPDATER_FAILURE_STAGE:-none}" == "online-doctor" ]]; then
+    echo "restored Telegram endpoint check failed" >&2
+    echo "BOT_TOKEN=DO_NOT_LEAK_PRIVILEGED_ONLINE_SECRET" >&2
+    exit 80
+  fi
+  [[ "$*" != *"--online-service local-api"* ]] || echo "OK   local_api_reachable"
+  [[ "$*" != *"--online-service bot"* ]] || echo "OK   bot_reachable"
+  [[ "$*" != *"--online-service bot"* ]] || echo "OK   required_channels"
+  exit 0
+fi
 exec "$real_docker" "$@"
 EOF
 cat >"$BIN_ROOT/tar" <<'EOF'
@@ -251,9 +299,17 @@ case "$INITIAL_SERVICE_STATE" in
   redis-only)
     docker compose --project-directory "$INSTALL_ROOT" --profile local-api up -d redis
     ;;
-  writer-redis)
+  writer-redis|all-running|no-local-api|no-bot|mixed)
     cat >"$INSTALL_ROOT/docker-compose.override.yml" <<'EOF'
 services:
+  bot:
+    command: ["sh", "-c", "while :; do sleep 1; done"]
+    healthcheck:
+      disable: true
+  worker:
+    command: ["sh", "-c", "while :; do sleep 1; done"]
+    healthcheck:
+      disable: true
   local-api:
     command:
       - sh
@@ -264,13 +320,32 @@ services:
     healthcheck:
       disable: true
 EOF
+    case "$INITIAL_SERVICE_STATE" in
+      writer-redis)
+        START_SERVICES=(redis local-api)
+        ;;
+      all-running)
+        START_SERVICES=(redis bot worker local-api)
+        ;;
+      no-local-api)
+        START_SERVICES=(redis bot worker)
+        ;;
+      no-bot)
+        START_SERVICES=(redis worker local-api)
+        ;;
+      mixed)
+        START_SERVICES=(redis bot)
+        ;;
+    esac
     docker compose --project-directory "$INSTALL_ROOT" --profile local-api \
-      up -d redis local-api
-    SERVICE_LOG_SIZE_BEFORE="$(stat -c '%s' \
-      "$INSTALL_ROOT/data/telegram-bot-api/telegram-bot-api.log")"
-    sleep 0.1
-    test "$(stat -c '%s' "$INSTALL_ROOT/data/telegram-bot-api/telegram-bot-api.log")" \
-      -gt "$SERVICE_LOG_SIZE_BEFORE"
+      up -d "${START_SERVICES[@]}"
+    if [[ "$INITIAL_SERVICE_STATE" =~ ^(writer-redis|all-running|no-bot)$ ]]; then
+      SERVICE_LOG_SIZE_BEFORE="$(stat -c '%s' \
+        "$INSTALL_ROOT/data/telegram-bot-api/telegram-bot-api.log")"
+      sleep 0.1
+      test "$(stat -c '%s' "$INSTALL_ROOT/data/telegram-bot-api/telegram-bot-api.log")" \
+        -gt "$SERVICE_LOG_SIZE_BEFORE"
+    fi
     ;;
   *)
     echo "Unknown initial service state: $INITIAL_SERVICE_STATE" >&2
@@ -290,7 +365,7 @@ if [[ "$USE_RELEASE_UPDATER_ASSET" == "1" ]]; then
     "$INSTALL_ROOT/data/cookies" \
     "$INSTALL_ROOT/data/cookies/cookies.txt"
 fi
-if [[ "$INITIAL_SERVICE_STATE" == "writer-redis" ]]; then
+if [[ "$INITIAL_SERVICE_STATE" =~ ^(writer-redis|all-running|no-bot)$ ]]; then
   sudo chown -R "${RUNTIME_UID}:${RUNTIME_GID}" \
     "$INSTALL_ROOT/data/telegram-bot-api"
   sudo chmod 700 "$INSTALL_ROOT/data/telegram-bot-api"
@@ -328,7 +403,8 @@ if [[ "$USE_RELEASE_UPDATER_ASSET" == "1" ]]; then
   chmod 755 "$UPDATER_PATH"
 fi
 
-if [[ "$ACTIVE_LOG_WRITER" == "1" && "$INITIAL_SERVICE_STATE" != "writer-redis" ]]; then
+if [[ "$ACTIVE_LOG_WRITER" == "1" \
+  && ! "$INITIAL_SERVICE_STATE" =~ ^(writer-redis|all-running|no-bot)$ ]]; then
   sudo env \
     "TMB_TEST_LOG_PATH=$INSTALL_ROOT/data/telegram-bot-api/telegram-bot-api.log" \
     "TMB_TEST_WRITER_PID_PATH=$TEST_ROOT/log-writer.pid" \
@@ -361,6 +437,8 @@ if sudo env \
   "TMB_TEST_ASSET_ROOT=$ASSET_ROOT" \
   "TMB_TEST_REAL_DOCKER=$REAL_DOCKER" \
   "TMB_TEST_REAL_TAR=$REAL_TAR" \
+  "TMB_TEST_INSTALL_ROOT=$INSTALL_ROOT" \
+  "TMB_TEST_PHASE_LOG=$PHASE_LOG" \
   "TMB_TEST_UPDATER_FAILURE_STAGE=$FAILURE_STAGE" \
   "TMB_TEST_UPDATER_PATH=$UPDATER_PATH" \
   "TMB_TEST_UPDATE_OUTPUT=$UPDATE_OUTPUT" \
@@ -387,9 +465,20 @@ if [[ "$FAILURE_STAGE" != "none" ]]; then
       assert_update_output 'Update stage failed: consistent persistent-state backup' "$UPDATE_OUTPUT"
       assert_update_output 'persistent filesystem snapshot failed' "$UPDATE_OUTPUT"
       ;;
-    doctor)
-      assert_update_output 'Update stage failed: offline runtime doctor' "$UPDATE_OUTPUT"
-      assert_update_output 'configured queue connectivity check failed' "$UPDATE_OUTPUT"
+    offline-doctor)
+      assert_update_output 'Update stage failed: offline post-install verification' "$UPDATE_OUTPUT"
+      assert_update_output 'static runtime prerequisite check failed' "$UPDATE_OUTPUT"
+      grep -Fxq 'offline-post-install' "$PHASE_LOG"
+      if grep -q '^online-post-start:' "$PHASE_LOG"; then
+        echo "Online verification unexpectedly ran after offline verification failed." >&2
+        exit 1
+      fi
+      ;;
+    online-doctor)
+      assert_update_output 'Update stage failed: post-start online verification' "$UPDATE_OUTPUT"
+      assert_update_output 'restored Telegram endpoint check failed' "$UPDATE_OUTPUT"
+      grep -Fxq 'offline-post-install' "$PHASE_LOG"
+      grep -q '^online-post-start:' "$PHASE_LOG"
       ;;
     *)
       echo "Unknown privileged failure stage: $FAILURE_STAGE" >&2
@@ -411,11 +500,46 @@ if [[ "$FAILURE_STAGE" != "none" ]]; then
   exit 0
 fi
 
-[[ "$UPDATE_STATUS" -eq 0 ]]
+if [[ "$UPDATE_STATUS" -ne 0 ]]; then
+  echo "Privileged updater success path failed with status $UPDATE_STATUS." >&2
+  sed '/DO_NOT_LEAK_PRIVILEGED/d' "$UPDATE_OUTPUT" >&2
+  exit 1
+fi
 cat "$UPDATE_OUTPUT"
 assert_original_service_state
 
-if [[ "$ACTIVE_LOG_WRITER" == "1" && "$INITIAL_SERVICE_STATE" != "writer-redis" ]]; then
+if [[ "$USE_RELEASE_UPDATER_ASSET" == "1" ]]; then
+  grep -Fxq 'offline-post-install' "$PHASE_LOG"
+  case "$INITIAL_SERVICE_STATE" in
+    all-running)
+      grep -Eq '^online-post-start:.*--online-service local-api.*--online-service bot$' \
+        "$PHASE_LOG"
+      ;;
+    no-local-api | mixed)
+      grep -Eq '^online-post-start:.*--online-service bot$' "$PHASE_LOG"
+      if grep -Eq '^online-post-start:.*--online-service local-api' "$PHASE_LOG"; then
+        echo "Online verification probed Local Bot API although it was originally stopped." >&2
+        exit 1
+      fi
+      ;;
+    no-bot | writer-redis)
+      grep -Eq '^online-post-start:.*--online-service local-api$' "$PHASE_LOG"
+      if grep -Eq '^online-post-start:.*--online-service bot' "$PHASE_LOG"; then
+        echo "Online verification probed Telegram although bot was originally stopped." >&2
+        exit 1
+      fi
+      ;;
+    stopped | redis-only)
+      if grep -q '^online-post-start:' "$PHASE_LOG"; then
+        echo "Online verification unexpectedly ran without a restored live service." >&2
+        exit 1
+      fi
+      ;;
+  esac
+fi
+
+if [[ "$ACTIVE_LOG_WRITER" == "1" \
+  && ! "$INITIAL_SERVICE_STATE" =~ ^(writer-redis|all-running|no-bot)$ ]]; then
   sudo kill "$LOG_WRITER_PID"
   wait "$LOG_WRITER_LAUNCHER_PID" || true
   LOG_WRITER_PID=""
@@ -524,7 +648,8 @@ PY
 
 DOCTOR_OUTPUT="$(
   docker compose --project-directory "$INSTALL_ROOT" --profile local-api run --rm --no-deps \
-    worker telegram-media-bot doctor --config /app/config.yaml
+    worker telegram-media-bot doctor --config /app/config.yaml --offline \
+      --expected-version "$RELEASE_VERSION"
 )"
 grep -Eq '^OK +gallery_dl_cookie_instagram$' <<<"$DOCTOR_OUTPUT"
 

@@ -132,15 +132,31 @@ jobs:
             bash scripts/tests/test_tmb_upgrade_integration.sh
           TMB_TEST_PREVIOUS_VERSION=1.3.0 TMB_USE_RELEASE_UPDATER_ASSET=1 \
             TMB_TEST_ACTIVE_LOCAL_API_LOG_WRITER=1 \
-            TMB_TEST_INITIAL_SERVICE_STATE=writer-redis \
+            TMB_TEST_INITIAL_SERVICE_STATE=all-running \
             bash scripts/tests/test_tmb_upgrade_integration.sh
           TMB_TEST_PREVIOUS_VERSION=1.3.0 TMB_USE_RELEASE_UPDATER_ASSET=1 \
             TMB_TEST_UPDATER_FAILURE_STAGE=backup \
-            TMB_TEST_INITIAL_SERVICE_STATE=writer-redis \
+            TMB_TEST_INITIAL_SERVICE_STATE=all-running \
             bash scripts/tests/test_tmb_upgrade_integration.sh
           TMB_TEST_PREVIOUS_VERSION=1.3.0 TMB_USE_RELEASE_UPDATER_ASSET=1 \
-            TMB_TEST_UPDATER_FAILURE_STAGE=doctor \
-            TMB_TEST_INITIAL_SERVICE_STATE=writer-redis \
+            TMB_TEST_UPDATER_FAILURE_STAGE=offline-doctor \
+            TMB_TEST_INITIAL_SERVICE_STATE=all-running \
+            bash scripts/tests/test_tmb_upgrade_integration.sh
+          TMB_TEST_PREVIOUS_VERSION=1.3.0 TMB_USE_RELEASE_UPDATER_ASSET=1 \
+            TMB_TEST_UPDATER_FAILURE_STAGE=online-doctor \
+            TMB_TEST_INITIAL_SERVICE_STATE=all-running \
+            bash scripts/tests/test_tmb_upgrade_integration.sh
+          TMB_TEST_PREVIOUS_VERSION=1.3.0 TMB_USE_RELEASE_UPDATER_ASSET=1 \
+            TMB_TEST_INITIAL_SERVICE_STATE=no-local-api \
+            bash scripts/tests/test_tmb_upgrade_integration.sh
+          TMB_TEST_PREVIOUS_VERSION=1.3.0 TMB_USE_RELEASE_UPDATER_ASSET=1 \
+            TMB_TEST_INITIAL_SERVICE_STATE=no-bot \
+            bash scripts/tests/test_tmb_upgrade_integration.sh
+          TMB_TEST_PREVIOUS_VERSION=1.3.0 TMB_USE_RELEASE_UPDATER_ASSET=1 \
+            TMB_TEST_INITIAL_SERVICE_STATE=mixed \
+            bash scripts/tests/test_tmb_upgrade_integration.sh
+          TMB_TEST_PREVIOUS_VERSION=1.3.1 TMB_USE_RELEASE_UPDATER_ASSET=1 \
+            TMB_TEST_INITIAL_SERVICE_STATE=all-running \
             bash scripts/tests/test_tmb_upgrade_integration.sh
 
   release:

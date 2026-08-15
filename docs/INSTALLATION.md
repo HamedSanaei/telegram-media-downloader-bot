@@ -61,9 +61,12 @@ The Linux `update` runs from an isolated copy and completes release download, ch
 Bash/Compose/config validation, and candidate image pulls before downtime. It records all project
 services, stops only the running filesystem writers, keeps Redis/ARQ online, creates a private
 atomic durable-state backup, and replaces top-level application entries through a rollback
-snapshot. Runtime permissions, same-UID filesystem and SQLite WAL writes, package version, and
-doctor are verified before candidate writers start. Health and the exact original service set are
-then mandatory. Any post-stop failure restores the prior transaction and service state;
+snapshot. Runtime permissions and same-UID filesystem/SQLite WAL writes are followed by an
+explicit offline doctor before candidate writers start. That phase verifies package/runtime and
+static filesystem prerequisites but never probes stopped project services. After restoring only
+the services that were running originally, Compose health, conditional Local API/Telegram checks,
+and the exact original service set are mandatory. Any post-stop failure restores the prior
+transaction and service state;
 intentionally stopped services remain stopped. `config.yaml`, `.env`, SQLite, cookies, Redis,
 Local API state, downloads, and temp content are preserved. `uninstall` removes local state only
 after the literal `DELETE` confirmation.
@@ -117,6 +120,38 @@ Linux bootstrap. The v1.3.1 transaction records the running services itself, so 
 stop them first. Windows v1.3.0 already stops its application writers before `Compress-Archive` and
 may use the ordinary version-pinned PowerShell update. After v1.3.1 is installed, ordinary pinned
 updates are sufficient again.
+
+### Upgrade from v1.3.1 to v1.3.2
+
+The installed Linux v1.3.1 updater contains the offline-doctor regression: after installing a
+candidate it still invokes the ordinary live doctor while bot/worker/Local API writers are stopped.
+It cannot use the corrected v1.3.2 verification lifecycle during that same execution. After the
+v1.3.2 release assets and image are published, use the checksummed standalone updater exactly once:
+
+```bash
+cd /path/to/telegram-media-downloader-bot
+release_tag="v1.3.2"
+project_root="$(pwd -P)"
+bootstrap_dir="$(mktemp -d)"
+chmod 0700 "$bootstrap_dir"
+curl -fsSL \
+  "https://github.com/HamedSanaei/telegram-media-downloader-bot/releases/download/${release_tag}/tmb-updater.sh" \
+  -o "$bootstrap_dir/tmb-updater.sh"
+curl -fsSL \
+  "https://github.com/HamedSanaei/telegram-media-downloader-bot/releases/download/${release_tag}/tmb-updater.sh.sha256" \
+  -o "$bootstrap_dir/tmb-updater.sh.sha256"
+(cd "$bootstrap_dir" && sha256sum --check tmb-updater.sh.sha256)
+sudo env TMB_ROOT_DIR="$project_root" TMB_RELEASE_TAG="$release_tag" \
+  bash "$bootstrap_dir/tmb-updater.sh" update
+rm -rf -- "$bootstrap_dir"
+tmb doctor
+tmb status
+```
+
+The checksum is mandatory. Do not manually stop any project service: the standalone updater records
+the exact original set and must restore only that set. This transition has no configuration,
+cookie-path, database, volume, or Docker-topology migration. After v1.3.2 is installed, ordinary
+version-pinned updates resume unless a later release explicitly documents another bootstrap.
 
 Before restart, the Linux updater resolves `APP_UID`/`APP_GID` from the Compose environment or
 `.env` with fallback `10001:10001`. It repairs `data/`, SQLite/WAL/SHM, downloads, temp, cookies,

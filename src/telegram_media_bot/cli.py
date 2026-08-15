@@ -9,7 +9,10 @@ import subprocess
 import sys
 from contextlib import suppress
 from datetime import UTC, datetime
+from enum import StrEnum
 from getpass import getpass
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as distribution_version
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -23,6 +26,17 @@ from telegram_media_bot.infrastructure.archive.multipart_zip import resolve_seve
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.storage.workspace import sweep_workspaces
 from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
+
+
+class DoctorMode(StrEnum):
+    FULL = "full"
+    OFFLINE = "offline"
+    ONLINE = "online"
+
+
+class DoctorOnlineService(StrEnum):
+    BOT = "bot"
+    LOCAL_API = "local-api"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +59,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", help="Check local runtime prerequisites")
     doctor.add_argument("--config", type=Path, default=None)
+    doctor_mode = doctor.add_mutually_exclusive_group()
+    doctor_mode.add_argument(
+        "--offline",
+        action="store_true",
+        help="Run only checks valid while project services are stopped",
+    )
+    doctor_mode.add_argument(
+        "--online-service",
+        action="append",
+        choices=tuple(DoctorOnlineService),
+        default=[],
+        help="Run live checks for a restored service; may be repeated",
+    )
+    doctor.add_argument(
+        "--expected-version",
+        help="Require this installed package version in offline mode",
+    )
+    doctor.add_argument(
+        "--read-only-runtime",
+        action="store_true",
+        help="Use non-mutating filesystem checks in offline mode",
+    )
 
     cleanup = subparsers.add_parser(
         "cleanup-workspaces",
@@ -123,7 +159,23 @@ def main() -> None:
             print("Configuration is valid.")
         elif args.command == "doctor":
             settings = load_settings(args.config, require_token=False)
-            _run_doctor(settings)
+            if not args.offline and (args.expected_version or args.read_only_runtime):
+                parser.error("--expected-version/--read-only-runtime require --offline")
+            online_services = tuple(DoctorOnlineService(item) for item in args.online_service)
+            mode = (
+                DoctorMode.OFFLINE
+                if args.offline
+                else DoctorMode.ONLINE
+                if online_services
+                else DoctorMode.FULL
+            )
+            _run_doctor(
+                settings,
+                mode=mode,
+                online_services=online_services,
+                expected_version=args.expected_version,
+                runtime_filesystem_read_only=bool(args.read_only_runtime),
+            )
         elif args.command == "cleanup-workspaces":
             settings = load_settings(args.config, require_token=False)
             settings.create_runtime_directories()
@@ -160,7 +212,35 @@ def main() -> None:
         raise SystemExit(2) from exc
 
 
-def _run_doctor(settings: Settings) -> None:
+def _run_doctor(
+    settings: Settings,
+    *,
+    mode: DoctorMode = DoctorMode.FULL,
+    online_services: tuple[DoctorOnlineService, ...] = (),
+    expected_version: str | None = None,
+    runtime_filesystem_read_only: bool = False,
+) -> None:
+    failed = False
+    if mode in {DoctorMode.FULL, DoctorMode.OFFLINE}:
+        failed = _run_static_doctor_checks(
+            settings,
+            expected_version=expected_version,
+            runtime_filesystem_read_only=runtime_filesystem_read_only,
+        )
+    if mode is DoctorMode.FULL:
+        failed = _run_default_live_doctor_checks(settings) or failed
+    elif mode is DoctorMode.ONLINE:
+        failed = _run_selected_live_doctor_checks(settings, online_services) or failed
+    if failed:
+        raise SystemExit(1)
+
+
+def _run_static_doctor_checks(
+    settings: Settings,
+    *,
+    expected_version: str | None,
+    runtime_filesystem_read_only: bool,
+) -> bool:
     javascript_runtime = settings.yt_dlp.javascript_runtime
     executable = "qjs" if javascript_runtime == "quickjs" else javascript_runtime
     checks = {
@@ -168,17 +248,24 @@ def _run_doctor(settings: Settings) -> None:
         "ffprobe": shutil.which("ffprobe"),
         javascript_runtime: shutil.which(executable),
     }
-    print(f"OK   python: {sys.version.split()[0]}")
+    failed = sys.version_info < (3, 14)
+    print(f"{'OK  ' if not failed else 'FAIL'} python: {sys.version.split()[0]}")
+    package_healthy, package_detail = _package_version_health(expected_version)
+    print(f"{'OK  ' if package_healthy else 'FAIL'} package: {package_detail}")
+    failed = failed or not package_healthy
     from telegram_media_bot.infrastructure.ytdlp.engine import YtDlpEngine
 
     engine_health = YtDlpEngine(settings).health()
-    print(f"OK   {engine_health.name}: {engine_health.detail}")
+    print(
+        f"{'OK  ' if engine_health.healthy else 'FAIL'} {engine_health.name}: {engine_health.detail}"
+    )
+    failed = failed or not engine_health.healthy
     from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
 
     gallery_health = GalleryDlEngine(settings).health()
     state = "OK  " if gallery_health.healthy or not settings.gallery_dl.enabled else "FAIL"
     print(f"{state} {gallery_health.name}: {gallery_health.detail}")
-    failed = settings.gallery_dl.enabled and not gallery_health.healthy
+    failed = failed or (settings.gallery_dl.enabled and not gallery_health.healthy)
     cookie_file = settings.effective_cookie_file()
     cookie_readable = _cookie_file_readable(cookie_file)
     print(f"{'OK  ' if cookie_readable else 'FAIL'} yt_dlp_cookie")
@@ -203,7 +290,10 @@ def _run_doctor(settings: Settings) -> None:
             print(f"FAIL {name}: not found")
     local_api = settings.telegram.local_bot_api
     if local_api.enabled:
-        diagnostics = _local_api_diagnostics(settings, require_reachable=True)
+        diagnostics = _local_api_static_diagnostics(
+            settings,
+            probe_directory_writes=not runtime_filesystem_read_only,
+        )
         for name, healthy in diagnostics.items():
             print(f"{'OK  ' if healthy else 'FAIL'} local_api_{name}")
             failed = failed or not healthy
@@ -214,31 +304,82 @@ def _run_doctor(settings: Settings) -> None:
         else:
             failed = True
             print("FAIL 7-Zip: neither configured executable nor compatible alias was found")
-    required_channels = settings.telegram.required_channels
-    if required_channels.enabled:
-        channels_ok = asyncio.run(_required_channels_ready(settings))
+    return failed
+
+
+def _package_version_health(expected_version: str | None) -> tuple[bool, str]:
+    from telegram_media_bot import __version__
+
+    try:
+        installed_version = distribution_version("telegram-media-downloader-bot")
+    except PackageNotFoundError:
+        return False, "distribution metadata unavailable"
+    healthy = installed_version == __version__ and (
+        expected_version is None or installed_version == expected_version
+    )
+    return healthy, installed_version
+
+
+def _run_default_live_doctor_checks(settings: Settings) -> bool:
+    failed = False
+    if settings.telegram.local_bot_api.enabled:
+        reachable = LocalBotApiManager(settings).endpoint_reachable()
+        print(f"{'OK  ' if reachable else 'FAIL'} local_api_reachable")
+        failed = failed or not reachable
+    if settings.telegram.required_channels.enabled:
+        diagnostics = asyncio.run(_bot_online_diagnostics(settings))
+        channels_ok = diagnostics["required_channels"]
         print(f"{'OK  ' if channels_ok else 'FAIL'} required_channels")
         failed = failed or not channels_ok
-    if failed:
-        raise SystemExit(1)
+    return failed
 
 
-async def _required_channels_ready(settings: Settings) -> bool:
+def _run_selected_live_doctor_checks(
+    settings: Settings,
+    online_services: tuple[DoctorOnlineService, ...],
+) -> bool:
+    failed = False
+    selected = set(online_services)
+    if DoctorOnlineService.LOCAL_API in selected:
+        configured = settings.telegram.local_bot_api.enabled
+        print(f"{'OK  ' if configured else 'FAIL'} local_api_configured")
+        reachable = configured and LocalBotApiManager(settings).endpoint_reachable()
+        print(f"{'OK  ' if reachable else 'FAIL'} local_api_reachable")
+        failed = failed or not configured or not reachable
+    if DoctorOnlineService.BOT in selected:
+        diagnostics = asyncio.run(_bot_online_diagnostics(settings))
+        bot_reachable = diagnostics["bot_reachable"]
+        print(f"{'OK  ' if bot_reachable else 'FAIL'} bot_reachable")
+        failed = failed or not bot_reachable
+        if settings.telegram.required_channels.enabled:
+            channels_ok = diagnostics["required_channels"]
+            print(f"{'OK  ' if channels_ok else 'FAIL'} required_channels")
+            failed = failed or not channels_ok
+    return failed
+
+
+async def _bot_online_diagnostics(settings: Settings) -> dict[str, bool]:
+    diagnostics = {"bot_reachable": False, "required_channels": False}
     if settings.telegram.token() in {"", "CHANGE_ME"}:
-        return False
+        return diagnostics
     from telegram_media_bot.telegram.bot_factory import create_bot
 
     bot = create_bot(settings)
     try:
         identity = await bot.get_me()
+        diagnostics["bot_reachable"] = True
+        if not settings.telegram.required_channels.enabled:
+            diagnostics["required_channels"] = True
+            return diagnostics
         for channel in settings.telegram.required_channels.channels:
             member = await bot.get_chat_member(channel.chat_id, identity.id)
             status = getattr(member.status, "value", str(member.status))
             if status not in {"creator", "administrator"}:
-                return False
-        return True
+                return diagnostics
+        diagnostics["required_channels"] = True
+        return diagnostics
     except Exception:
-        return False
+        return diagnostics
     finally:
         await bot.session.close()
 
@@ -268,9 +409,8 @@ def _run_config_check(
     local_api = settings.telegram.local_bot_api
     if not local_api.enabled:
         return
-    diagnostics = _local_api_diagnostics(
+    diagnostics = _local_api_static_diagnostics(
         settings,
-        require_reachable=False,
         probe_directory_writes=not runtime_filesystem_read_only,
     )
     failed = [name for name, healthy in diagnostics.items() if not healthy]
@@ -284,10 +424,9 @@ def _cookie_file_readable(cookie_file: Path | None) -> bool:
     return cookie_file is None or (cookie_file.is_file() and os.access(cookie_file, os.R_OK))
 
 
-def _local_api_diagnostics(
+def _local_api_static_diagnostics(
     settings: Settings,
     *,
-    require_reachable: bool,
     probe_directory_writes: bool = True,
 ) -> dict[str, bool]:
     local_api = settings.telegram.local_bot_api
@@ -330,14 +469,12 @@ def _local_api_diagnostics(
         manager.migration_store.read()
     except LocalBotApiError:
         migration_ok = False
-    reachable_ok = manager.endpoint_reachable() if require_reachable else True
     return {
         "configuration": endpoint_ok,
         "credentials": credentials_ok,
         "directories": directories_ok,
         "executable": executable_ok,
         "migration": migration_ok,
-        "reachable": reachable_ok,
     }
 
 

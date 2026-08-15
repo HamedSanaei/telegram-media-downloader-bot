@@ -250,9 +250,9 @@ def test_release_tag_exactly_matches_project_version() -> None:
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.3.1"
+    assert version == "1.3.2"
     assert __version__ == version
-    assert tag == "v1.3.1"
+    assert tag == "v1.3.2"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
     assert 'if tag != f"v{version}":' in workflow
 
@@ -279,11 +279,16 @@ def test_release_waits_for_published_image_smoke_test_and_attaches_verified_asse
     assert "test_tmb_upgrade_integration.sh" in workflow
     assert "TMB_TEST_PREVIOUS_VERSION=1.2.1" in workflow
     assert "TMB_TEST_PREVIOUS_VERSION=1.3.0" in workflow
+    assert "TMB_TEST_PREVIOUS_VERSION=1.3.1" in workflow
     assert "TMB_USE_RELEASE_UPDATER_ASSET=1" in workflow
     assert "TMB_TEST_ACTIVE_LOCAL_API_LOG_WRITER=1" in workflow
-    assert "TMB_TEST_INITIAL_SERVICE_STATE=writer-redis" in workflow
+    assert "TMB_TEST_INITIAL_SERVICE_STATE=all-running" in workflow
+    assert "TMB_TEST_INITIAL_SERVICE_STATE=no-local-api" in workflow
+    assert "TMB_TEST_INITIAL_SERVICE_STATE=no-bot" in workflow
+    assert "TMB_TEST_INITIAL_SERVICE_STATE=mixed" in workflow
     assert "TMB_TEST_UPDATER_FAILURE_STAGE=backup" in workflow
-    assert "TMB_TEST_UPDATER_FAILURE_STAGE=doctor" in workflow
+    assert "TMB_TEST_UPDATER_FAILURE_STAGE=offline-doctor" in workflow
+    assert "TMB_TEST_UPDATER_FAILURE_STAGE=online-doctor" in workflow
     assert "tmb-updater.sh.sha256" in workflow
     assert "sha256sum --check tmb-updater.sh.sha256" in workflow
     assert "scripts/build_release_archives.sh" in workflow
@@ -345,6 +350,8 @@ def test_linux_update_preflight_uses_prepared_image_and_read_only_runtime_data()
     assert '-v "$ROOT_DIR/config.yaml:/app/config.yaml:ro"' in preflight
     assert '-v "$ROOT_DIR/data:/data:ro"' in preflight
     assert "--read-only-runtime" in preflight
+    assert "--offline" in preflight
+    assert '--expected-version "$RELEASE_VERSION"' in preflight
     assert "/var/run/docker.sock" not in preflight
     assert "/root" not in preflight
     assert updater.index("validate_prepared_release || return 1") < updater.index(
@@ -374,6 +381,14 @@ def test_linux_update_backup_is_offline_atomic_and_preserves_exact_service_state
     assert transaction.index("verify_candidate_release_offline") < transaction.index(
         'start_services true "${PREVIOUS_WRITER_SERVICES[@]}"'
     )
+    assert transaction.index('start_services true "${PREVIOUS_WRITER_SERVICES[@]}"') < (
+        transaction.index("verify_restored_services_online")
+    )
+    assert transaction.index("verify_restored_services_online") < transaction.index(
+        'run_update_stage "updated exact service-state verification"'
+    )
+    assert "--online-service local-api" in updater
+    assert "--online-service bot" in updater
     assert 'temporary_archive="$(mktemp "backups/.tmb-' in backup
     assert 'mv -f -- "$temporary_archive" "$archive"' in backup
     assert "--exclude='data/telegram-bot-api/telegram-bot-api.log'" in backup

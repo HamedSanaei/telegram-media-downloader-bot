@@ -40,6 +40,7 @@
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction |
 | `src/telegram_media_bot/workers/` | ARQ worker settings and job functions, including edit-or-send inspection publication, redacted terminal-failure alerts to configured administrators, retries, receipts, and workspace cleanup |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, composition roots, and fail-fast effective-cookie path identity |
+| `src/telegram_media_bot/cli.py` | Management CLI plus full, fail-closed offline-static, and explicitly service-selected online doctor modes |
 | `tests/unit/` | Fast deterministic tests |
 | `tests/fixtures/` | Versioned configuration and sanitized upstream-metadata fixtures for network-free regression tests |
 | `tests/integration/` | Local integration tests with fakes/Redis where available |
@@ -53,9 +54,9 @@
 | `scripts/check_package_assets.py` | Wheel/sdist font-license inspection and clean-wheel resource/decode smoke |
 | `scripts/check_gallerydl_fixtures.py` | Pinned 1.32.8 normalized-fixture upgrade contract and optional installed-version check |
 | `install.sh`, `install.ps1` | Interactive Docker-first one-line installers and global management command setup |
-| `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup/cleanup command; Linux adds prepared-image/read-only-data preflight, pre-downtime image pulls, exact writer/service-state tracking, private atomic offline backups, isolated transactional replacement, offline version/doctor checks, runtime probes, rollback, `tmb` repair, and guarded project-image reclamation |
+| `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup/cleanup command; Linux adds prepared-image/read-only-data static preflight, pre-downtime image pulls, exact writer/service-state tracking, private atomic offline backups, isolated transactional replacement, offline post-install plus conditional post-start online verification, runtime probes, SIGINT recovery, rollback, `tmb` repair, and guarded project-image reclamation |
 | `scripts/build_release_archives.sh` | Reproducible tar/ZIP assets, checksummed standalone updater bootstrap, v1.0.2-safe executable Linux updater packaging, and an explicit deterministic epoch for current-tree integration fixtures |
-| `scripts/tests/` | Mocked recovery plus opt-in privileged release-upgrade tests for exact service restoration, active Local API logs, archive inclusion/exclusion, redacted failures, runtime identity, filesystem/SQLite permissions, and Compose bind contracts |
+| `scripts/tests/` | Mocked recovery plus opt-in privileged release-upgrade tests for phased offline/online verification, exact mixed service restoration, active Local API logs, archive inclusion/exclusion, redacted failures, SIGINT, runtime identity, filesystem/SQLite permissions, and Compose bind contracts |
 | `.github/workflows/ci.yml` | Quality/security gates, Compose validation, shared-cache Docker build, runtime dependency doctor, native-selector/remux, CLI, and multipart smoke tests |
 | `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication using the CI cache, runtime doctor/native-selector/remux/CLI/multipart smoke tests, and reproducible release assets |
 
