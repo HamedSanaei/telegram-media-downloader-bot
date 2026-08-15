@@ -279,27 +279,38 @@ The worker exposes internal-only `/health`, `/ready`, and Prometheus `/metrics` 
 covers Redis, SQLite, writable storage, Telegram, ffmpeg, and the engine. Compose does not publish
 the port to the host by default; the worker container health check consumes it internally.
 
-Linux release updates run from an isolated script copy and validate the complete staged Bash,
-Compose, configuration, and executable-mode payload before stopping writers. Preflight pulls the
-prepared image and runs its configuration checker with a read-only container root, read-only
-`config.yaml`, and the project's persistent data bind mounted read-only at `/data`. This mirrors
-runtime path visibility and UID/GID without permitting changes to cookies, SQLite, downloads, or
-Local Bot API state. File readability remains strict; directory diagnostics use non-mutating
-accessibility checks until the existing same-UID write and SQLite WAL probes run after service
-stop. Top-level application entries use rollback snapshots, while local configuration/state remain
-outside replacement. A same-UID filesystem write and SQLite WAL probe must pass before candidate
-startup. Container
-running/health state is then mandatory; any post-stop failure restores the prior source, image,
-usable permissions, command link, and previous service set. Image-pin rewrites retain the
-pre-existing numeric owner/group and mode of `.env`, including when an authorized operator invokes
-the updater through `sudo`.
+Linux release updates run from an isolated script copy. While the current stack is still available,
+they download and checksum the source assets, validate the complete staged Bash/Compose/config
+payload, pull every candidate Compose image, and run the prepared image's configuration checker
+with a read-only container root, read-only `config.yaml`, and the project's persistent data bind
+mounted read-only at `/data`. This mirrors runtime path visibility and UID/GID without permitting
+changes to cookies, SQLite, downloads, or Local Bot API state.
 
-The v1.2.1 installed updater cannot consume a corrected updater from its release archive before its
-old preflight. Patch releases therefore publish `tmb-updater.sh` with its own SHA-256 file. Affected
-v1.2.1 installations verify and execute that asset once against the existing project root; the
-normal transactional install then places the corrected updater for every later `tmb update`.
+The updater records the exact running set of `bot`, `worker`, `local-api`, and `redis`, then stops
+only running filesystem writers (`bot`, `worker`, and `local-api`). Redis remains online in its
+persistent named volume. The resulting private backup is written to a same-directory temporary
+archive and atomically renamed only after tar succeeds. It includes `config.yaml`, `.env`, cookies,
+SQLite state including present WAL/SHM files, and durable Local Bot API state. Downloads and temp
+remain untouched in place and outside the archive; only the explicitly audited volatile
+`data/telegram-bot-api/telegram-bot-api.log` is excluded, never a wildcard class of logs.
 
-Only after candidate health, exact runtime version, dependency doctor, and Compose status pass may
+Top-level application entries use rollback snapshots while local configuration/state remain outside
+replacement. A same-UID filesystem write and SQLite WAL probe, exact package-version check, and
+dependency doctor all pass before candidate writers start. The updater then starts only writers
+that were running originally and requires health plus an exact four-service state match. Any
+post-stop failure restores the prior source, image, usable permissions, command link, and original
+service state; intentionally stopped services remain stopped. Failure output identifies the stage
+and includes only bounded sanitized diagnostics. Image-pin rewrites retain the pre-existing numeric
+owner/group and mode of `.env`, including when an authorized operator invokes the updater through
+`sudo`.
+
+An installed updater cannot consume corrected transaction code from inside the release archive
+until that old updater finishes its own transaction. Patch releases therefore publish
+`tmb-updater.sh` with its own SHA-256 file. Affected v1.2.1 and v1.3.0 installations verify and
+execute the corresponding release asset once against the existing project root; the normal
+transactional install then places the corrected updater for every later `tmb update`.
+
+Only after offline version/doctor checks, candidate health, and exact Compose service state pass may
 the updater clean Docker resources. It removes stopped containers from this Compose project only
 when they use a superseded image, then removes unreferenced image IDs whose repository is exactly
 `ghcr.io/hamedsanaei/telegram-media-downloader-bot`. The current image, images referenced by any

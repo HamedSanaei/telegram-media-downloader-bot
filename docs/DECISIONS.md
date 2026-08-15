@@ -188,13 +188,23 @@ v1.2.1 runs this step from its already-installed script, v1.2.2 also publishes a
 checksummed updater bootstrap. It is executed once without replacing configuration or persistent
 state, then the transactional update installs the fixed command for subsequent releases.
 
+The same bootstrapping rule applies to the v1.3.0 backup-order defect: updater code is itself part of
+the installed release, so v1.3.0 cannot acquire the corrected stop-before-backup transaction through
+its own ordinary update execution. The v1.3.1 standalone updater asset is therefore the required
+one-time path from v1.3.0.
+
+After all network/preflight work, the updater records the exact four-service state, stops only the
+running bot/worker/Local API filesystem writers, and leaves Redis online. It then creates a private,
+atomic archive of configuration, cookies, SQLite/WAL/SHM, and durable Local API state. Downloads and
+temp remain in place but outside the archive; the exact volatile Local API log path is excluded.
 Top-level application entries are replaced with a rollback snapshot while `.env`, `config.yaml`,
 data, backups, cookies, downloads, Redis, and Local API state remain outside replacement. Before
-the candidate image starts, the updater resolves the Compose runtime UID/GID, normalizes private
-writable paths, performs a real runtime-user write, opens SQLite, and requires WAL mode. Candidate
-services must reach running/healthy state; a crash/restart state or timeout stops them and restores
-the prior application, image, usable permissions, command link, and previously running service set.
-Compose bounds automatic restart attempts to avoid an unbounded high-CPU crash loop.
+candidate writers start, the updater resolves the Compose runtime UID/GID, normalizes private paths,
+performs a real runtime-user write, requires SQLite WAL, verifies the exact version, and runs doctor.
+Candidate services must reach running/healthy state and match the original running set exactly. Any
+failure after the stop phase restores the prior application/image/permissions/command when changed
+and always restores the original service state. Compose bounds automatic restart attempts to avoid
+an unbounded high-CPU crash loop.
 
 ## ADR-019: Ordinary MP4 is a native codec contract
 

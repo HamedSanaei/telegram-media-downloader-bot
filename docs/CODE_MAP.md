@@ -53,9 +53,9 @@
 | `scripts/check_package_assets.py` | Wheel/sdist font-license inspection and clean-wheel resource/decode smoke |
 | `scripts/check_gallerydl_fixtures.py` | Pinned 1.32.8 normalized-fixture upgrade contract and optional installed-version check |
 | `install.sh`, `install.ps1` | Interactive Docker-first one-line installers and global management command setup |
-| `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup/cleanup command; Linux adds prepared-image/read-only-data preflight, ownership-preserving image-pin updates, isolated transactional replacement, runtime probes, health verification, rollback, `tmb` repair, and guarded project-image reclamation |
-| `scripts/build_release_archives.sh` | Reproducible tar/ZIP assets, checksummed standalone updater bootstrap, and v1.0.2-safe executable Linux updater packaging |
-| `scripts/tests/` | Mocked recovery plus opt-in privileged release-upgrade tests for configured runtime identity, exact filesystem/SQLite permissions, and Compose bind contracts |
+| `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup/cleanup command; Linux adds prepared-image/read-only-data preflight, pre-downtime image pulls, exact writer/service-state tracking, private atomic offline backups, isolated transactional replacement, offline version/doctor checks, runtime probes, rollback, `tmb` repair, and guarded project-image reclamation |
+| `scripts/build_release_archives.sh` | Reproducible tar/ZIP assets, checksummed standalone updater bootstrap, v1.0.2-safe executable Linux updater packaging, and an explicit deterministic epoch for current-tree integration fixtures |
+| `scripts/tests/` | Mocked recovery plus opt-in privileged release-upgrade tests for exact service restoration, active Local API logs, archive inclusion/exclusion, redacted failures, runtime identity, filesystem/SQLite permissions, and Compose bind contracts |
 | `.github/workflows/ci.yml` | Quality/security gates, Compose validation, shared-cache Docker build, runtime dependency doctor, native-selector/remux, CLI, and multipart smoke tests |
 | `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication using the CI cache, runtime doctor/native-selector/remux/CLI/multipart smoke tests, and reproducible release assets |
 

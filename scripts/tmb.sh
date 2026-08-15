@@ -8,6 +8,8 @@ ARCHIVE_NAME="telegram-media-downloader-bot.tar.gz"
 IMAGE_REPOSITORY="${TMB_IMAGE_REPOSITORY:-ghcr.io/hamedsanaei/telegram-media-downloader-bot}"
 TMB_BIN_DIR="${TMB_BIN_DIR:-/usr/local/bin}"
 UPDATE_HEALTH_TIMEOUT_SECONDS="${TMB_UPDATE_HEALTH_TIMEOUT_SECONDS:-180}"
+PROJECT_SERVICES=(bot worker local-api redis)
+FILESYSTEM_WRITER_SERVICES=(bot worker local-api)
 cd "$ROOT_DIR"
 
 release_url() {
@@ -16,6 +18,44 @@ release_url() {
   else
     printf '%s/latest/download/%s' "$RELEASE_ROOT" "$1"
   fi
+}
+
+print_sanitized_diagnostics() {
+  local stage="$1" output_file="$2"
+  echo "Update stage failed: $stage" >&2
+  if [[ -s "$output_file" ]]; then
+    echo "Sanitized diagnostic output (last 40 lines):" >&2
+    tail -n 40 "$output_file" |
+      awk '
+        {
+          line = $0
+          lower = tolower(line)
+          if (lower ~ /(bot[_-]?token|api[_-]?hash|authorization|password|(^|[^[:alpha:]])secret([^[:alpha:]]|$)|cookie[^[:space:]]*(value|content)|tmb_[a-z0-9_]*=)/ ||
+              lower ~ /^[^[:space:]]+[[:space:]]+(true|false)([[:space:]]+[^[:space:]]+){5}/) {
+            print "[redacted sensitive diagnostic line]"
+            next
+          }
+          gsub(/https:\/\/[^\/@:[:space:]]+:[^\/@[:space:]]+@/, "https://[redacted]@", line)
+          gsub(/http:\/\/[^\/@:[:space:]]+:[^\/@[:space:]]+@/, "http://[redacted]@", line)
+          print substr(line, 1, 500)
+        }
+      ' >&2
+  fi
+}
+
+run_update_stage() {
+  local stage="$1" output_file status
+  shift
+  output_file="$(mktemp "${RELEASE_TEMPORARY_DIRECTORY:-${TMPDIR:-/tmp}}/tmb-stage.XXXXXX")" || return 1
+  if "$@" >"$output_file" 2>&1; then
+    rm -f -- "$output_file"
+    return 0
+  else
+    status=$?
+  fi
+  print_sanitized_diagnostics "$stage" "$output_file"
+  rm -f -- "$output_file"
+  return "$status"
 }
 
 prepare_verified_release() {
@@ -78,28 +118,20 @@ validate_prepared_release() {
   local prepared_image="$IMAGE_REPOSITORY:$RELEASE_VERSION" uid gid
   uid="$(runtime_identity APP_UID 10001)"
   gid="$(runtime_identity APP_GID 10001)"
-  docker compose \
+  run_update_stage "candidate Compose validation" docker compose \
     --project-directory "$ROOT_DIR" \
     --env-file "$ROOT_DIR/.env" \
     -f "$RELEASE_STAGING_DIRECTORY/docker-compose.yml" \
-    --profile local-api config >/dev/null || {
-    echo "Verified release contains an invalid Compose definition." >&2
-    return 1
-  }
-  docker pull "$prepared_image" >/dev/null || {
-    echo "Unable to pull the prepared release image for validation." >&2
-    return 1
-  }
-  docker run --rm --read-only --user "$uid:$gid" \
+    --profile local-api config || return 1
+  run_update_stage "candidate image pull" docker pull "$prepared_image" || return 1
+  run_update_stage "candidate configuration preflight" docker run \
+    --rm --read-only --user "$uid:$gid" \
     --tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777 \
     -v "$ROOT_DIR/config.yaml:/app/config.yaml:ro" \
     -v "$ROOT_DIR/data:/data:ro" \
     "$prepared_image" \
     telegram-media-bot config-check --config /app/config.yaml \
-      --read-only-runtime >/dev/null || {
-    echo "Existing config.yaml is not valid for the prepared release." >&2
-    return 1
-  }
+      --read-only-runtime || return 1
 }
 
 prepare_application_transaction() {
@@ -294,27 +326,83 @@ repair_tmb_command() {
 
 backup() {
   mkdir -p backups
-  local stamp item
+  local stamp item archive temporary_archive suffix=0
   local -a backup_items=(config.yaml .env)
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  archive="backups/tmb-${stamp}.tar.gz"
+  while [[ -e "$archive" ]]; do
+    suffix=$((suffix + 1))
+    archive="backups/tmb-${stamp}-${suffix}.tar.gz"
+  done
+  temporary_archive="$(mktemp "backups/.tmb-${stamp}.XXXXXX.tar.gz")" || return 1
   for item in data/state data/cookies data/telegram-bot-api; do
     if [[ -e "$item" ]]; then
       backup_items+=("$item")
     fi
   done
-  tar -czf "backups/tmb-${stamp}.tar.gz" "${backup_items[@]}" || return 1
-  echo "Backup created: backups/tmb-${stamp}.tar.gz"
+  if ! (
+    umask 077
+    tar -czf "$temporary_archive" \
+      --exclude='data/telegram-bot-api/telegram-bot-api.log' \
+      "${backup_items[@]}"
+  ); then
+    rm -f -- "$temporary_archive"
+    return 1
+  fi
+  chmod 600 "$temporary_archive" || {
+    rm -f -- "$temporary_archive"
+    return 1
+  }
+  mv -f -- "$temporary_archive" "$archive" || {
+    rm -f -- "$temporary_archive"
+    return 1
+  }
+  echo "Backup created: $archive"
 }
 
-load_running_application_services() {
+load_running_project_services() {
   local service output
   output="$(compose --profile local-api ps --services --filter status=running)" || return 1
-  PREVIOUS_SERVICES=()
+  PREVIOUS_PROJECT_SERVICES=()
+  PREVIOUS_WRITER_SERVICES=()
   while IFS= read -r service; do
     case "$service" in
-      bot|worker|local-api) PREVIOUS_SERVICES+=("$service") ;;
+      bot|worker|local-api|redis) PREVIOUS_PROJECT_SERVICES+=("$service") ;;
+    esac
+    case "$service" in
+      bot|worker|local-api) PREVIOUS_WRITER_SERVICES+=("$service") ;;
     esac
   done <<<"$output"
+}
+
+list_contains() {
+  local needle="$1" item
+  shift
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+verify_exact_project_service_state() {
+  local output service should_run is_running
+  local -a running_services=()
+  output="$(compose --profile local-api ps --services --filter status=running)" || return 1
+  while IFS= read -r service; do
+    case "$service" in
+      bot|worker|local-api|redis) running_services+=("$service") ;;
+    esac
+  done <<<"$output"
+  for service in "${PROJECT_SERVICES[@]}"; do
+    should_run=false
+    is_running=false
+    list_contains "$service" "$@" && should_run=true
+    list_contains "$service" "${running_services[@]}" && is_running=true
+    if [[ "$should_run" != "$is_running" ]]; then
+      echo "Service-state mismatch for $service (expected running: $should_run)." >&2
+      return 1
+    fi
+  done
 }
 
 start_services() {
@@ -375,19 +463,26 @@ verify_services_healthy() {
   return 1
 }
 
-verify_runtime_release() {
-  local runtime_version
-  runtime_version="$(
-    compose --profile local-api run --rm --no-deps worker \
-      python -c 'import telegram_media_bot; print(telegram_media_bot.__version__)'
-  )" || return 1
+verify_candidate_release_offline() {
+  local runtime_version output_file status
+  output_file="$(mktemp "$RELEASE_TEMPORARY_DIRECTORY/tmb-version.XXXXXX")" || return 1
+  if compose --profile local-api run --rm --no-deps worker \
+    python -c 'import telegram_media_bot; print(telegram_media_bot.__version__)' \
+    >"$output_file" 2>&1; then
+    runtime_version="$(cat "$output_file")"
+    rm -f -- "$output_file"
+  else
+    status=$?
+    print_sanitized_diagnostics "offline runtime version verification" "$output_file"
+    rm -f -- "$output_file"
+    return "$status"
+  fi
   [[ "${runtime_version##*$'\n'}" == "$RELEASE_VERSION" ]] || {
     echo "Runtime version does not match release $RELEASE_VERSION." >&2
     return 1
   }
-  compose --profile local-api run --rm --no-deps worker \
-    telegram-media-bot doctor --config /app/config.yaml >/dev/null || return 1
-  compose --profile local-api ps >/dev/null || return 1
+  run_update_stage "offline runtime doctor" compose --profile local-api run \
+    --rm --no-deps worker telegram-media-bot doctor --config /app/config.yaml
 }
 
 project_image_cleanup_enabled() {
@@ -475,49 +570,84 @@ cleanup_project_resources() {
 
 rollback_update() {
   local previous_image="$1"
-  shift
-  if [[ $# -gt 0 ]]; then
-    compose --profile local-api stop "$@" >/dev/null 2>&1 || true
+  compose --profile local-api stop "${FILESYSTEM_WRITER_SERVICES[@]}" >/dev/null 2>&1 || true
+  if [[ "$UPDATE_APPLICATION_MUTATED" == "true" ]]; then
+    set_configured_image "$previous_image" || return 1
+    rollback_application_files || return 1
+    normalize_runtime_permissions "$previous_image" || {
+      echo "Rollback could not restore usable runtime permissions; services remain stopped." >&2
+      return 1
+    }
+    repair_tmb_command || {
+      echo "Rollback could not restore the tmb command; services remain stopped." >&2
+      return 1
+    }
   fi
-  set_configured_image "$previous_image"
-  rollback_application_files || true
-  normalize_runtime_permissions "$previous_image" || {
-    echo "Rollback could not restore usable runtime permissions; services remain stopped." >&2
-    return 1
-  }
-  repair_tmb_command || {
-    echo "Rollback could not restore the tmb command; services remain stopped." >&2
-    return 1
-  }
-  start_services false "$@" || return 1
-  verify_services_healthy "$@" || return 1
+  start_services false "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
+  verify_services_healthy "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
+  verify_exact_project_service_state "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
 }
 
 perform_update() {
-  local previous_image="$1"
-  shift
+  local previous_image="$1" prepared_image
   prepare_verified_release || return 1
   validate_prepared_release || return 1
+  prepared_image="$IMAGE_REPOSITORY:$RELEASE_VERSION"
+  run_update_stage "candidate Compose image pull" env TMB_IMAGE="$prepared_image" \
+    docker compose --project-directory "$ROOT_DIR" --env-file "$ROOT_DIR/.env" \
+      -f "$RELEASE_STAGING_DIRECTORY/docker-compose.yml" --profile local-api pull || return 1
   prepare_application_transaction || return 1
-  backup || return 1
-  if [[ $# -gt 0 ]]; then
-    compose --profile local-api stop -t 45 "$@" || return 1
+  UPDATE_SERVICE_STATE_TOUCHED=true
+  if [[ ${#PREVIOUS_WRITER_SERVICES[@]} -gt 0 ]]; then
+    run_update_stage "filesystem-writer service stop" compose --profile local-api stop -t 45 \
+      "${PREVIOUS_WRITER_SERVICES[@]}" || return 1
   fi
-  UPDATE_STOPPED=true
+  run_update_stage "consistent persistent-state backup" backup || return 1
+  UPDATE_APPLICATION_MUTATED=true
   install_prepared_release || return 1
   normalize_runtime_permissions "$previous_image" || return 1
   probe_runtime_writes "$previous_image" || return 1
-  set_configured_image "$IMAGE_REPOSITORY:$RELEASE_VERSION"
-  compose --profile local-api pull || return 1
-  start_services true "$@" || return 1
-  verify_services_healthy "$@" || return 1
-  repair_tmb_command || return 1
-  verify_runtime_release || return 1
+  set_configured_image "$prepared_image" || return 1
+  run_update_stage "tmb command repair" repair_tmb_command || return 1
+  verify_candidate_release_offline || return 1
+  start_services true "${PREVIOUS_WRITER_SERVICES[@]}" || return 1
+  run_update_stage "updated service health verification" verify_services_healthy \
+    "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
+  run_update_stage "updated exact service-state verification" verify_exact_project_service_state \
+    "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
   if project_image_cleanup_enabled; then
     cleanup_project_resources false || {
       echo "Update succeeded, but old project image cleanup failed; retry with tmb cleanup." >&2
     }
   fi
+}
+
+perform_consistent_manual_backup() {
+  local backup_status=0 restore_status=0 stop_status=0
+  PREVIOUS_PROJECT_SERVICES=()
+  PREVIOUS_WRITER_SERVICES=()
+  load_running_project_services || return 1
+  if [[ ${#PREVIOUS_WRITER_SERVICES[@]} -gt 0 ]]; then
+    compose --profile local-api stop -t 45 "${PREVIOUS_WRITER_SERVICES[@]}" || stop_status=$?
+  fi
+  if [[ "$stop_status" -ne 0 ]]; then
+    start_services false "${PREVIOUS_PROJECT_SERVICES[@]}" || true
+    verify_exact_project_service_state "${PREVIOUS_PROJECT_SERVICES[@]}" || true
+    return "$stop_status"
+  fi
+  backup || backup_status=$?
+  start_services false "${PREVIOUS_PROJECT_SERVICES[@]}" || restore_status=$?
+  if [[ "$restore_status" -eq 0 ]]; then
+    verify_services_healthy "${PREVIOUS_PROJECT_SERVICES[@]}" || restore_status=$?
+  fi
+  if [[ "$restore_status" -eq 0 ]]; then
+    verify_exact_project_service_state "${PREVIOUS_PROJECT_SERVICES[@]}" || restore_status=$?
+  fi
+  if [[ "$restore_status" -ne 0 ]]; then
+    echo "Backup service-state restoration failed." >&2
+    return "$restore_status"
+  fi
+  return "$backup_status"
 }
 
 menu() {
@@ -578,20 +708,26 @@ run() {
     update)
       local previous_image
       previous_image="$(configured_image)"
-      PREVIOUS_SERVICES=()
+      PREVIOUS_PROJECT_SERVICES=()
+      PREVIOUS_WRITER_SERVICES=()
       RELEASE_TEMPORARY_DIRECTORY=""
       APPLICATION_ENTRIES=()
       APPLICATION_TRANSACTION_DIRECTORY=""
       APPLICATION_ROLLBACK_DIRECTORY=""
-      UPDATE_STOPPED=false
-      load_running_application_services || return 1
-      if perform_update "$previous_image" "${PREVIOUS_SERVICES[@]}"; then
+      UPDATE_SERVICE_STATE_TOUCHED=false
+      UPDATE_APPLICATION_MUTATED=false
+      load_running_project_services || return 1
+      if perform_update "$previous_image"; then
         cleanup_prepared_release
         echo "Update to $RELEASE_VERSION completed successfully."
       else
-        if [[ "$UPDATE_STOPPED" == "true" ]]; then
-          echo "Update failed after service stop; rolling back application, image, and permissions." >&2
-          rollback_update "$previous_image" "${PREVIOUS_SERVICES[@]}" || {
+        if [[ "$UPDATE_SERVICE_STATE_TOUCHED" == "true" ]]; then
+          if [[ "$UPDATE_APPLICATION_MUTATED" == "true" ]]; then
+            echo "Update failed after installation began; rolling back application, image, permissions, and service state." >&2
+          else
+            echo "Update failed after writer stop; restoring the exact original service state." >&2
+          fi
+          rollback_update "$previous_image" || {
             cleanup_prepared_release
             return 1
           }
@@ -618,7 +754,7 @@ run() {
         "${workspace_cleanup_arguments[@]}"
       cleanup_project_resources "$dry_run"
       ;;
-    backup) backup ;;
+    backup) perform_consistent_manual_backup ;;
     uninstall)
       compose --profile local-api down
       read -r -p "Delete config and data too? Type DELETE to confirm: " answer

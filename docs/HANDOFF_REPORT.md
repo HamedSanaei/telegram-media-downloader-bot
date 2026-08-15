@@ -1,22 +1,60 @@
 # Handoff verification report
 
-Generated: 2026-08-14
+Generated: 2026-08-15
 
 ## Current change addendum
 
-- Release v1.3.0 is prepared from v1.2.2 with the secure administrator Cookie Management feature
-  and canonical-cookie runtime contract described below. The authoritative package version,
-  importable `__version__`, lockfile root package, and release-tag architecture assertion all agree
-  on `1.3.0` / `v1.3.0`.
-- Production configuration was confirmed to contain only
-  `yt_dlp.cookies_file: /data/cookies/cookies.txt`; no `gallery_dl.cookies.*` path diverges, so the
-  production v1.2.2 -> v1.3.0 update needs no cookie migration. Deployments that do contain
-  divergent legacy paths must merge their records into one combined file and make the aliases null
-  or identical before startup.
-- The exact post-publication production update is
-  `TMB_RELEASE_TAG=v1.3.0 tmb update`, followed by `tmb doctor` and `tmb status`; no standalone
-  updater bootstrap is needed from v1.2.2. The release has intentionally not been committed,
-  pushed, tagged, published, or deployed as part of this preparation task.
+- Patch v1.3.1 is prepared from released v1.3.0 to correct the Linux updater's production backup
+  race. The v1.3.0 transaction archives `data/telegram-bot-api` while the Local Bot API can still
+  append its log, allowing GNU tar's `file changed as we read it` safeguard to abort the update.
+- The corrected transaction completes candidate network/preflight work first, records all four
+  project services, stops only the running filesystem writers, publishes a private atomic backup,
+  performs offline version/doctor checks, and restores the exact original service state on failure.
+  Redis and its named volume remain online; downloads/temp remain untouched in place.
+- The authoritative package version, importable `__version__`, lockfile root package, and
+  release-tag architecture assertion agree on `1.3.1` / `v1.3.1`. No configuration, dependency,
+  schema, cookie-path, Docker-topology, or application migration is introduced.
+- Linux v1.3.0 must use the checksummed v1.3.1 `tmb-updater.sh` asset once because an installed
+  updater cannot acquire corrected transaction code before executing its own backup. Exact commands
+  are in `docs/INSTALLATION.md`; normal pinned updates resume after v1.3.1. Nothing was committed,
+  pushed, tagged, published, or deployed during this preparation task.
+
+## v1.3.1 release-quality verification
+
+- `uv lock --check` and frozen dev sync passed on CPython 3.14.5. Ruff lint and format (165
+  files), strict mypy (154 source/test files), architecture boundaries, and UTF-8 integrity (252
+  files) passed. Detect-secrets, `pip check`, and `pip-audit` found no release blocker or known
+  dependency vulnerability; the editable project itself is the expected audit skip.
+- ShellCheck 0.11.0 and complete Bash parsing passed. The mocked Linux recovery suite passed its
+  successful update, preflight/checksum/download/permission/health/backup/doctor failure,
+  all-stopped, mixed-state, exact archive-policy, and project-scoped cleanup cases. PowerShell AST
+  parsing and the Windows recovery suite passed; PSScriptAnalyzer reported no errors (style
+  warnings remain in unchanged Windows scripts).
+- The focused gallery-dl/router, Twitter HLS, canonical-cookie consumer, administrator cookie,
+  Telegram delivery, and worker selection passed 150 tests; the single Windows symlink test was
+  unavailable. The complete non-contract suite passed on both platforms: Windows had 492 passed,
+  nine platform/opt-in skips, 15 contracts deselected, and 82.37% coverage; Linux had 500 passed,
+  only the destructive Local Bot API upload skipped, 15 contracts deselected, and 82.50% coverage.
+  Both Linux symlink-safety cases passed. Three pre-existing unclosed-SQLite `ResourceWarning`s
+  remain visible but do not fail the suite.
+- The explicitly enabled contract selection passed its three fixed public checks. Twelve optional
+  gallery/source fixtures skipped because their operator environment variables were not set.
+- Real privileged Docker-in-Docker upgrades passed from v1.0.2 and via the standalone updater from
+  v1.2.1. The v1.3.0 standalone-updater matrix passed with Redis plus a Local Bot API service
+  continuously appending its real log: successful upgrade, injected backup failure, and injected
+  offline-doctor failure. The success archive was private, omitted only the audited volatile log
+  and existing download/temp files, and retained config, `.env`, cookies, SQLite, and Local Bot API
+  state. Both failure paths removed partial archives, retained the installed version/image/config/
+  cookies, redacted injected secrets, and restored the exact original Local API plus Redis state.
+- Compose validation and a current-source image build passed. The local verification image is
+  `sha256:bd68a673de1992809a9b204c0385d4b5b78ba8f355547485ecd70ac1d8f5da27`
+  (401767192 bytes). Runtime smokes passed for package version 1.3.1, gallery-dl 1.32.8,
+  deterministic gallery/native/UI selection, UID 10001, writable downloads, ffmpeg/ffprobe,
+  multipart 7-Zip, all canonical cookie doctor checks, and offline read-only usage charts.
+- Wheel/sdist asset checks, clean-wheel installation/resource/decode smoke, deterministic source
+  archive comparison, generated checksums, source manifest verification, and `git diff --check`
+  passed. Final package/archive sizes and SHA-256 values are reported outside the self-containing
+  source archive.
 
 ## v1.3.0 release-quality verification
 

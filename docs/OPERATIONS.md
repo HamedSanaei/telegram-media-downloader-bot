@@ -11,21 +11,26 @@
 ```
 
 Windows equivalents use `manage.ps1`. The stack contains bot, worker, and persistent Redis. SQLite,
-downloads, temporary files, upgrade reports, and cookies live below `./data`; only configuration and
-cookies should be backed up as sensitive material.
+downloads, temporary files, upgrade reports, and cookies live below `./data`. Configuration and
+cookies are sensitive; the managed update backup also captures the durable SQLite and Local Bot API
+state described below.
 
 Production operators can instead use the Docker-first one-line installers and the shared `tmb`
 menu/command documented in `docs/INSTALLATION.md`. The release topology additionally runs the
 official pinned Local Bot API in a dedicated Compose service.
 
 Release rollback uses `TMB_RELEASE_TAG=vX.Y.Z tmb update`. The updater validates the full staged
-Bash/Compose/config payload before stopping writers, backs up state, installs application entries
-through a rollback snapshot, repairs runtime ownership/modes, and requires same-UID filesystem plus
-SQLite WAL probes. Redis and ARQ state remain online. Candidate services must be running/healthy;
-crash/restart state, timeout, probe failure, or pull failure restores the prior application, image,
-usable permissions, `tmb` command, and previous service set.
-Backup archives exclude downloads/temp but include configuration, SQLite/WAL state, cookies, and
-Local API state; Redis continues to use its persistent Compose volume.
+Bash/Compose/config payload and pulls candidate images before stopping writers. It records all four
+project services, stops only the running bot/worker/Local API writers, backs up state, installs
+application entries through a rollback snapshot, repairs runtime ownership/modes, and requires
+same-UID filesystem plus SQLite WAL probes and offline version/doctor checks. Redis and ARQ remain
+online. Candidate services must be running/healthy and match the original service set exactly;
+backup, probe, doctor, crash/restart, timeout, or state mismatch restores the prior transaction and
+service state. Diagnostics name the failed stage and expose only bounded redacted command output.
+Backup archives exclude downloads/temp and the exact volatile Local API log, but include
+configuration, `.env`, SQLite/WAL/SHM state, cookies, and other Local API state. Archives are private,
+atomically published, and partial files are deleted; Redis continues in its persistent Compose
+volume.
 
 An affected v1.2.1 installation must use the checksummed standalone v1.2.2 updater once because its
 installed script cannot replace itself before the faulty old preflight. The exact verification and
@@ -36,6 +41,11 @@ For v1.2.2 -> v1.3.0, use `TMB_RELEASE_TAG=v1.3.0 tmb update` after the release 
 deployment with only `yt_dlp.cookies_file: /data/cookies/cookies.txt` needs no cookie-path
 migration. Divergent legacy `gallery_dl.cookies.*` files must be merged into that combined file and
 their aliases made null or identical before the update; `config-check` rejects split cookie state.
+
+For v1.3.0 -> v1.3.1, use the checksummed standalone v1.3.1 updater procedure in
+`docs/INSTALLATION.md`. The installed v1.3.0 updater performs its vulnerable backup before it can
+install new updater code, so an ordinary `tmb update` is not the supported bootstrap for this one
+transition. After v1.3.1 is installed, normal pinned updates resume.
 
 A user cancellation is committed to SQLite as `cancelled` before ARQ abort is requested. Pending or
 running queue work is aborted with ARQ's official API and finalized transient keys are removed.

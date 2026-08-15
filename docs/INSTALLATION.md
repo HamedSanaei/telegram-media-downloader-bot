@@ -57,14 +57,16 @@ tmb backup
 tmb uninstall
 ```
 
-`update` runs from an isolated copy, validates every staged Bash script plus Compose and config
-before stopping writers, keeps Redis/ARQ online, backs up durable state, and replaces top-level
-application entries through a rollback snapshot. It repairs runtime permissions, requires actual
-same-UID filesystem and SQLite WAL writes, pulls/starts the candidate, and verifies container
-health before repairing and executing the global command. Any post-stop failure restores the prior
-source, image, usable permissions, command link, and exact previous service set. `config.yaml`,
-`.env`, SQLite, cookies, Redis, Local API state, and downloads are preserved. `uninstall` removes
-local state only after the literal `DELETE` confirmation.
+The Linux `update` runs from an isolated copy and completes release download, checksum, staged
+Bash/Compose/config validation, and candidate image pulls before downtime. It records all project
+services, stops only the running filesystem writers, keeps Redis/ARQ online, creates a private
+atomic durable-state backup, and replaces top-level application entries through a rollback
+snapshot. Runtime permissions, same-UID filesystem and SQLite WAL writes, package version, and
+doctor are verified before candidate writers start. Health and the exact original service set are
+then mandatory. Any post-stop failure restores the prior transaction and service state;
+intentionally stopped services remain stopped. `config.yaml`, `.env`, SQLite, cookies, Redis,
+Local API state, downloads, and temp content are preserved. `uninstall` removes local state only
+after the literal `DELETE` confirmation.
 
 ### Upgrade from v1.2.2 to v1.3.0
 
@@ -83,6 +85,38 @@ deployment. If any legacy `gallery_dl.cookies.*` value points elsewhere, first m
 from those files into the canonical combined file, then set every alias to null or to the same
 canonical path. The v1.3.0 configuration check deliberately fails divergent paths instead of
 leaving a runtime consumer on stale credentials.
+
+### Upgrade from v1.3.0 to v1.3.1
+
+The Linux v1.3.0 updater takes its backup before stopping the Local Bot API writer, and it cannot
+replace that running updater with corrected code before the vulnerable step. After v1.3.1 and its
+assets are published, use the checksummed standalone updater exactly once:
+
+```bash
+cd /path/to/telegram-media-downloader-bot
+release_tag="v1.3.1"
+project_root="$(pwd -P)"
+bootstrap_dir="$(mktemp -d)"
+chmod 0700 "$bootstrap_dir"
+curl -fsSL \
+  "https://github.com/HamedSanaei/telegram-media-downloader-bot/releases/download/${release_tag}/tmb-updater.sh" \
+  -o "$bootstrap_dir/tmb-updater.sh"
+curl -fsSL \
+  "https://github.com/HamedSanaei/telegram-media-downloader-bot/releases/download/${release_tag}/tmb-updater.sh.sha256" \
+  -o "$bootstrap_dir/tmb-updater.sh.sha256"
+(cd "$bootstrap_dir" && sha256sum --check tmb-updater.sh.sha256)
+sudo env TMB_ROOT_DIR="$project_root" TMB_RELEASE_TAG="$release_tag" \
+  bash "$bootstrap_dir/tmb-updater.sh" update
+rm -rf -- "$bootstrap_dir"
+tmb doctor
+tmb status
+```
+
+The checksum is mandatory. Do not substitute the installed v1.3.0 `tmb update` for this one-time
+Linux bootstrap. The v1.3.1 transaction records the running services itself, so do not manually
+stop them first. Windows v1.3.0 already stops its application writers before `Compress-Archive` and
+may use the ordinary version-pinned PowerShell update. After v1.3.1 is installed, ordinary pinned
+updates are sufficient again.
 
 Before restart, the Linux updater resolves `APP_UID`/`APP_GID` from the Compose environment or
 `.env` with fallback `10001:10001`. It repairs `data/`, SQLite/WAL/SHM, downloads, temp, cookies,
@@ -128,9 +162,11 @@ Run this only after v1.2.2 assets are published and from the directory containin
 `config.yaml`. The checksum is mandatory. This changes neither the configuration nor cookie bytes;
 ordinary `tmb update` is sufficient again after v1.2.2 is installed.
 
-Backups contain `config.yaml`, `.env`, SQLite/state, cookies, and Local API state. Large
-`data/downloads` and disposable `data/temp` content are preserved in place during update but
-excluded from archives to avoid duplicating multi-gigabyte media.
+Backups contain `config.yaml`, `.env`, SQLite/state including present WAL/SHM files, cookies, and
+durable Local API state. Large `data/downloads` and disposable `data/temp` content are preserved in
+place during update but excluded from archives to avoid duplicating multi-gigabyte media. The exact
+volatile `data/telegram-bot-api/telegram-bot-api.log` path is also excluded; no broad log wildcard is
+used. Linux archives are mode `0600`, published by atomic rename, and incomplete files are removed.
 
 For a release rollback, select the previous tag and run the same verified updater:
 

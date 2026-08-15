@@ -1,16 +1,17 @@
 # Project status
 
-Last updated: 2026-08-14
+Last updated: 2026-08-15
 
 ## Release state
 
-Tasks T001 through T013 are implemented. Release 1.3.0 is prepared with secure administrator Cookie
-Management and one canonical runtime cookie file shared by yt-dlp, SoundCloud, every gallery-dl
+Tasks T001 through T013 are implemented. Patch 1.3.1 is prepared over the released v1.3.0 secure
+administrator Cookie Management and one canonical runtime cookie file shared by yt-dlp, SoundCloud, every gallery-dl
 provider, `doctor`, and `config-check`. Legacy `gallery_dl.cookies.*` keys remain readable as
 backward-compatible aliases, but every configured alias must resolve to the canonical path; a
 divergent deployment must merge its files before upgrade. The audited production v1.2.2
 configuration defines only `yt_dlp.cookies_file: /data/cookies/cookies.txt`, so it requires no
-cookie-path migration for v1.3.0.
+cookie-path migration for v1.3.0 or v1.3.1. Patch 1.3.1 corrects the Linux updater's live-backup
+race and does not change application configuration or cookie architecture.
 
 Patch 1.2.2 fixed updater preflight validation for runtime cookie paths without mutating persistent
 data, patch 1.2.1 fixed strict mixed-carousel video-child discovery, and release 1.2.0 introduced
@@ -82,9 +83,10 @@ recorded in `docs/HANDOFF_REPORT.md` after the release-quality run.
   scoped GHA BuildKit cache for the expensive Telegram API compilation stage.
 - Failed interactive configuration writes remove their secret-bearing temporary file; the exact
   temporary filename is also ignored by Git.
-- `tmb update` now preserves Redis/ARQ state, backs up SQLite/WAL only after graceful writer
-  shutdown, verifies releases in staging, and restores exactly the previously running application
-  services on download/checksum/pull failure.
+- Linux `tmb update` now completes release/network preflight before downtime, records all four
+  project services, stops only running filesystem writers, publishes a private atomic backup, and
+  restores the exact original service set after backup or later transaction failures. Redis/ARQ
+  remains online, while intentionally stopped services remain stopped.
 - User cancellation is terminal in SQLite before official ARQ abort; cancelled rows are excluded
   from startup recovery, finalized queue keys and job directories are cleaned idempotently, and
   shutdown races do not requeue user-cancelled FFmpeg work.
@@ -118,15 +120,23 @@ recorded in `docs/HANDOFF_REPORT.md` after the release-quality run.
 
 ## Verification
 
-The final v1.3.0 gate run passed 499 Linux non-contract tests (one destructive opt-in skip) at
-82.50% coverage and 491 Windows tests (nine platform/opt-in skips) at 82.37%. All static, security,
-package, Compose, and current-source Docker gates passed. The exact command results, artifact
-hashes, platform skips, and runtime cookie smoke are recorded in `docs/HANDOFF_REPORT.md`. External
-source contracts remain opt-in and require operator-maintained public URLs; the three fixed public
-contract checks passed and 12 operator fixtures were not configured.
+The final v1.3.1 gate run passed 500 Linux non-contract tests (one destructive opt-in skip) at
+82.50% coverage and 492 Windows tests (nine platform/opt-in skips) at 82.37%. Static, security,
+package, Compose, current-source Docker, mocked updater, and real privileged upgrade/rollback gates
+passed. The exact command results, artifact hashes, platform skips, and runtime smokes are recorded
+in `docs/HANDOFF_REPORT.md`. External source contracts remain opt-in and require operator-maintained
+public URLs; the three fixed public contract checks passed and 12 operator fixtures were not
+configured.
 
 ## Recent fixes
 
+- 2026-08-15: Prepared patch 1.3.1 for the production Local Bot API log race in the v1.3.0 Linux
+  updater. Candidate assets/images now finish before downtime; running bot/worker/Local API writers
+  stop before tar; Redis remains online; and the archive atomically includes config, `.env`,
+  cookies, SQLite/WAL/SHM, and durable Local API state while excluding only the exact volatile log.
+  Backup and offline-doctor failures restore the prior transaction and exact service state with
+  bounded secret-redacted diagnostics. The release keeps the checksummed standalone updater asset
+  as the required one-time v1.3.0 bootstrap.
 - 2026-08-14: Prepared v1.3.0 with secure administrator cookie management over the existing canonical
   `yt_dlp.cookies_file`: domain-based multi-service detection, deterministic domain/path/name
   deduplication, exact unrelated-line preservation, restricted atomic backups/replacement,

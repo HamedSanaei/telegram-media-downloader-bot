@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 1.3.1 - 2026-08-15
+
+### Fixed
+
+- Stop only the bot, worker, and Local Bot API services that were running before taking the Linux
+  update backup. This prevents a concurrently written Local Bot API log from making GNU tar abort
+  with `file changed as we read it` while Redis remains online in its persistent named volume.
+- Make update backups private and atomic, remove incomplete archives on failure, and exclude only
+  the audited volatile `data/telegram-bot-api/telegram-bot-api.log` path. Configuration, `.env`,
+  cookies, SQLite including WAL/SHM, and other Local Bot API state remain in the archive;
+  downloads/temp remain untouched in place under the existing contract.
+- Restore the exact original project-service state after writer-stop, backup, installation,
+  permission, offline-doctor, startup-health, or state-verification failures. Services intentionally
+  stopped before the update remain stopped.
+
+### Operations
+
+- Download, checksum, validate, and pre-pull the candidate before downtime; run version and doctor
+  checks before candidate writers start; and expose bounded, secret-redacted diagnostics only for
+  the failed stage.
+- Add mocked and privileged regressions for moving Local Bot API logs, backup archive policy,
+  backup/doctor rollback, all-stopped and mixed service states, and the checksummed standalone
+  updater path required to bootstrap an affected v1.3.0 installation.
+
 ## 1.3.0 - 2026-08-14
 
 ### Added

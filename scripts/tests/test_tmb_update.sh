@@ -3,11 +3,17 @@ set -euo pipefail
 
 SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
-trap 'rm -rf -- "$TEST_ROOT"' EXIT
+trap '[[ "${TMB_KEEP_TEST_ROOT:-0}" == "1" ]] || rm -rf -- "$TEST_ROOT"' EXIT
 
 fail() {
   echo "tmb update test failed: $1" >&2
   exit 1
+}
+
+set_running_services() {
+  local case_root="$1"
+  shift
+  printf '%s\n' "$@" | sed '/^$/d' >"$case_root/running-services"
 }
 
 prepare_case() {
@@ -50,6 +56,8 @@ EOF
   printf 'cookies-v1-state' >"$case_root/data/cookies/cookies.txt"
   printf 'local-api-v1-state' >"$case_root/data/telegram-bot-api/state.bin"
   printf 'runtime-media-v1' >"$case_root/data/downloads/large.mp4"
+  printf 'volatile-local-api-log' >"$case_root/data/telegram-bot-api/telegram-bot-api.log"
+  set_running_services "$case_root" bot worker local-api redis
 
   cat >"$case_root/fake-bin/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -63,8 +71,19 @@ if [[ "$*" == *"telegram-media-bot config-check"* ]]; then
   [[ "${TMB_PREFLIGHT_COOKIE_UNREADABLE:-0}" != "1" ]] || exit 96
   [[ -r "$TMB_CASE_ROOT/data/cookies/cookies.txt" ]] || exit 97
 fi
+if [[ "$*" == *"telegram-media-bot doctor"* ]] \
+  && [[ "${TMB_FAIL_DOCTOR:-0}" == "1" ]] \
+  && [[ ! -e "$TMB_CASE_ROOT/doctor-failed-once" ]]; then
+  touch "$TMB_CASE_ROOT/doctor-failed-once"
+  printf 'database schema compatibility check failed\n' >&2
+  printf 'proxy connection %s%s%s%s@example.invalid failed\n' \
+    'https://' operator :DO_NOT_LEAK_PROXY_CREDENTIAL >&2
+  printf 'BOT_TOKEN=DO_NOT_LEAK_DIAGNOSTIC_SECRET\n' >&2
+  exit 98
+fi
 if [[ "$*" == *" ps --services --filter status=running"* ]]; then
-  printf 'bot\nworker\nlocal-api\nredis\n'
+  cat "$TMB_CASE_ROOT/running-services"
+  exit 0
 fi
 if [[ "$*" == *" ps -a -q"* ]]; then
   printf 'stopped-project-container\n'
@@ -109,7 +128,49 @@ case "$*" in
   *" ps -q bot") printf 'bot-container\n' ;;
   *" ps -q worker") printf 'worker-container\n' ;;
   *" ps -q local-api") printf 'local-api-container\n' ;;
+  *" ps -q redis") printf 'redis-container\n' ;;
 esac
+if [[ " $* " == *" stop "* ]]; then
+  temporary="$TMB_CASE_ROOT/running-services.next"
+  cp "$TMB_CASE_ROOT/running-services" "$temporary"
+  after_stop=false
+  skip_timeout=false
+  for argument in "$@"; do
+    if [[ "$after_stop" == "false" ]]; then
+      [[ "$argument" == "stop" ]] && after_stop=true
+      continue
+    fi
+    if [[ "$argument" == "-t" ]]; then
+      skip_timeout=true
+      continue
+    fi
+    if [[ "$skip_timeout" == "true" ]]; then
+      skip_timeout=false
+      continue
+    fi
+    case "$argument" in
+      bot|worker|local-api|redis)
+        sed -i "/^${argument}$/d" "$temporary"
+        ;;
+    esac
+  done
+  mv "$temporary" "$TMB_CASE_ROOT/running-services"
+fi
+if [[ " $* " == *" up "* ]]; then
+  after_up=false
+  for argument in "$@"; do
+    if [[ "$after_up" == "false" ]]; then
+      [[ "$argument" == "up" ]] && after_up=true
+      continue
+    fi
+    case "$argument" in
+      bot|worker|local-api|redis)
+        grep -Fxq "$argument" "$TMB_CASE_ROOT/running-services" \
+          || printf '%s\n' "$argument" >>"$TMB_CASE_ROOT/running-services"
+        ;;
+    esac
+  done
+fi
 if [[ "$*" == *"run --rm --user 0 --entrypoint sh"* ]] \
   && [[ "${TMB_FAIL_PERMISSIONS:-0}" == "1" ]] \
   && [[ ! -e "$TMB_CASE_ROOT/permission-failed-once" ]]; then
@@ -155,7 +216,16 @@ EOF
   cat >"$case_root/fake-bin/tar" <<'EOF'
 #!/usr/bin/env bash
 printf 'tar %s\n' "$*" >>"$TMB_TEST_LOG"
+if [[ "${TMB_USE_REAL_TAR:-0}" == "1" ]]; then
+  exec /usr/bin/tar "$@"
+fi
 if [[ "$1" == "-czf" ]]; then
+  if [[ "${TMB_FAIL_BACKUP:-0}" == "1" ]]; then
+    printf 'filesystem snapshot read failed\n' >&2
+    printf 'BOT_TOKEN=DO_NOT_LEAK_BACKUP_SECRET\n' >&2
+    printf 'partial-backup' >"$2"
+    exit 73
+  fi
   mkdir -p "$(dirname "$2")"
   printf 'backup' >"$2"
   exit 0
@@ -270,12 +340,15 @@ run_success_case() {
   if grep -q 'tar .*data/downloads' "$log"; then
     fail "large runtime downloads were copied into the backup"
   fi
-  local stop_line backup_line download_line permission_line start_line
+  local stop_line backup_line download_line permission_line start_line pull_line
   stop_line="$(grep -n 'docker .* stop -t 45 bot worker local-api' "$log" | head -n 1 | cut -d: -f1)"
   backup_line="$(grep -n '^tar -czf' "$log" | head -n 1 | cut -d: -f1)"
   download_line="$(grep -n '^curl ' "$log" | head -n 1 | cut -d: -f1)"
-  ((download_line < backup_line && backup_line < stop_line)) \
+  pull_line="$(grep -n 'docker compose .* --profile local-api pull' "$log" | head -n 1 | cut -d: -f1)"
+  ((download_line < pull_line && pull_line < stop_line && stop_line < backup_line)) \
     || fail "release validation, backup, and service-stop ordering is wrong"
+  grep -q -- "--exclude=data/telegram-bot-api/telegram-bot-api.log" "$log" \
+    || fail "backup did not exclude only the audited Local Bot API log"
   grep -q 'docker run --rm --read-only --user 10001:10001 .*config.yaml:/app/config.yaml:ro .*data:/data:ro ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.3 telegram-media-bot config-check --config /app/config.yaml --read-only-runtime' "$log" \
     || fail "prepared-release config check did not use the read-only runtime data contract"
   local preflight_line
@@ -289,6 +362,10 @@ run_success_case() {
   start_line="$(grep -n 'docker .* up -d --no-build --force-recreate bot worker local-api' "$log" | head -n 1 | cut -d: -f1)"
   ((permission_line < start_line)) \
     || fail "runtime permission migration did not finish before service start"
+  local doctor_start_line
+  doctor_start_line="$(grep -n 'doctor --config /app/config.yaml' "$log" | head -n 1 | cut -d: -f1)"
+  ((doctor_start_line < start_line)) \
+    || fail "offline doctor did not finish before application services started"
   [[ -x "$case_root/bin/tmb" ]] \
     || fail "updater did not repair the global tmb command"
   [[ -x "$case_root/scripts/tmb.sh" ]] \
@@ -303,6 +380,9 @@ run_success_case() {
     || fail "successful update did not verify the runtime version"
   grep -q 'docker compose .*run --rm --no-deps worker telegram-media-bot doctor' "$log" \
     || fail "successful update did not run doctor"
+  diff -u <(printf 'bot\nworker\nlocal-api\nredis\n' | sort) \
+    <(sort "$case_root/running-services") \
+    || fail "successful update did not preserve the exact running service set"
   grep -q 'docker image rm sha256:old-unused' "$log" \
     || fail "unused old project image was not removed after verification"
   grep -q 'docker rm stopped-project-container' "$log" \
@@ -440,7 +520,7 @@ run_permission_failure_case() {
   fi
   grep -q '^TMB_IMAGE=example.invalid/tmb:1.0.2$' "$case_root/.env" \
     || fail "permission failure did not restore the previous image"
-  grep -q 'docker .* up -d --no-build bot worker local-api' "$log" \
+  grep -q 'docker .* up -d --no-build bot worker local-api redis' "$log" \
     || fail "permission failure did not restart the previous services after rollback"
   grep -q '^version = "1.0.2"$' "$case_root/pyproject.toml" \
     || fail "permission failure installed new source before rollback"
@@ -465,11 +545,170 @@ run_health_failure_case() {
     || fail "health failure did not restore the previous application"
   grep -q 'docker .* stop bot' "$log" \
     || fail "crash-looping candidate service was not stopped"
-  grep -q 'docker .* up -d --no-build bot worker local-api' "$log" \
+  grep -q 'docker .* up -d --no-build bot worker local-api redis' "$log" \
     || fail "health failure did not restart the previous service set"
   if grep -q 'docker image rm' "$log"; then
     fail "health failure removed rollback images"
   fi
+}
+
+run_backup_failure_case() {
+  local case_root="$TEST_ROOT/backup-failure"
+  local log="$case_root/operations.log" output="$case_root/update-output.log"
+  prepare_case "$case_root"
+  cp "$case_root/.env" "$case_root/env.expected"
+  cp "$case_root/config.yaml" "$case_root/config.expected"
+  cp "$case_root/pyproject.toml" "$case_root/pyproject.expected"
+  if (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" TMB_FAIL_BACKUP=1 \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh update
+  ) >"$output" 2>&1; then
+    fail "persistent-state backup failure unexpectedly succeeded"
+  fi
+  cmp "$case_root/env.expected" "$case_root/.env" \
+    || fail "backup failure changed the image pin"
+  cmp "$case_root/config.expected" "$case_root/config.yaml" \
+    || fail "backup failure changed config.yaml"
+  cmp "$case_root/pyproject.expected" "$case_root/pyproject.toml" \
+    || fail "backup failure changed installed application files"
+  diff -u <(printf 'bot\nworker\nlocal-api\nredis\n' | sort) \
+    <(sort "$case_root/running-services") \
+    || fail "backup failure did not restore the exact original service state"
+  grep -q 'Update stage failed: consistent persistent-state backup' "$output" \
+    || fail "backup failure did not identify its verification stage"
+  grep -q 'filesystem snapshot read failed' "$output" \
+    || fail "backup failure hid its safe diagnostic reason"
+  if grep -q 'DO_NOT_LEAK_BACKUP_SECRET' "$output"; then
+    fail "backup failure leaked a secret in diagnostics"
+  fi
+  if find "$case_root/backups" -maxdepth 1 -type f -name '.tmb-*' | grep -q .; then
+    fail "backup failure left a partial archive"
+  fi
+}
+
+run_doctor_failure_case() {
+  local case_root="$TEST_ROOT/doctor-failure"
+  local log="$case_root/operations.log" output="$case_root/update-output.log"
+  prepare_case "$case_root"
+  if (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" TMB_FAIL_DOCTOR=1 \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh update
+  ) >"$output" 2>&1; then
+    fail "offline doctor failure unexpectedly succeeded"
+  fi
+  grep -q '^TMB_IMAGE=example.invalid/tmb:1.0.2$' "$case_root/.env" \
+    || fail "doctor failure did not restore the previous image"
+  grep -q '^version = "1.0.2"$' "$case_root/pyproject.toml" \
+    || fail "doctor failure did not restore the previous application"
+  diff -u <(printf 'bot\nworker\nlocal-api\nredis\n' | sort) \
+    <(sort "$case_root/running-services") \
+    || fail "doctor failure did not restore the exact original service state"
+  grep -q 'Update stage failed: offline runtime doctor' "$output" \
+    || fail "doctor failure did not identify its verification stage"
+  grep -q 'database schema compatibility check failed' "$output" \
+    || fail "doctor failure hid its safe diagnostic reason"
+  if grep -q 'DO_NOT_LEAK_DIAGNOSTIC_SECRET' "$output"; then
+    fail "doctor failure leaked a secret in diagnostics"
+  fi
+  if grep -q 'DO_NOT_LEAK_PROXY_CREDENTIAL' "$output"; then
+    fail "doctor failure leaked proxy credentials in diagnostics"
+  fi
+  grep -Fq 'https://[redacted]@example.invalid' "$output" \
+    || fail "doctor diagnostics did not retain a useful redacted endpoint"
+  local doctor_line candidate_start_line
+  doctor_line="$(grep -n 'doctor --config /app/config.yaml' "$log" | head -n 1 | cut -d: -f1)"
+  candidate_start_line="$(grep -n 'up -d --no-build --force-recreate' "$log" | head -n 1 | cut -d: -f1 || true)"
+  [[ -z "$candidate_start_line" || "$doctor_line" -lt "$candidate_start_line" ]] \
+    || fail "doctor failure occurred after candidate writers started"
+}
+
+run_all_stopped_case() {
+  local case_root="$TEST_ROOT/all-stopped"
+  local log="$case_root/operations.log"
+  prepare_case "$case_root"
+  set_running_services "$case_root"
+  (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh update
+  )
+  [[ ! -s "$case_root/running-services" ]] \
+    || fail "all-stopped update started services that were intentionally stopped"
+  if grep -q ' stop -t 45 ' "$log" || grep -q ' up -d --no-build ' "$log"; then
+    fail "all-stopped update changed service state"
+  fi
+}
+
+run_mixed_service_state_case() {
+  local case_root="$TEST_ROOT/mixed-state"
+  local log="$case_root/operations.log"
+  prepare_case "$case_root"
+  set_running_services "$case_root" worker redis
+  (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh update
+  )
+  grep -q ' stop -t 45 worker$' "$log" \
+    || fail "mixed-state update did not stop only the running writer"
+  grep -q ' up -d --no-build --force-recreate worker$' "$log" \
+    || fail "mixed-state update did not restart only the original writer"
+  if grep -Eq ' stop .*redis|force-recreate .*(bot|local-api|redis)' "$log"; then
+    fail "mixed-state update changed an intentionally preserved service"
+  fi
+  diff -u <(printf 'worker\nredis\n' | sort) <(sort "$case_root/running-services") \
+    || fail "mixed-state update did not preserve the exact running service set"
+}
+
+run_real_backup_archive_case() {
+  local case_root="$TEST_ROOT/real-backup"
+  local log="$case_root/operations.log" archive listing
+  prepare_case "$case_root"
+  set_running_services "$case_root"
+  printf 'wal-sentinel' >"$case_root/data/state/jobs.sqlite3-wal"
+  printf 'shm-sentinel' >"$case_root/data/state/jobs.sqlite3-shm"
+  printf 'temp-sentinel' >"$case_root/data/temp/existing.part"
+  (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" TMB_USE_REAL_TAR=1 \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      bash scripts/tmb.sh backup
+  )
+  archive="$(find "$case_root/backups" -maxdepth 1 -type f -name 'tmb-*.tar.gz' \
+    -print | head -n 1)"
+  [[ -n "$archive" && "$(stat -c '%a' "$archive")" == "600" ]] \
+    || fail "real backup was not atomically published with mode 0600"
+  listing="$(/usr/bin/tar -tzf "$archive")"
+  for expected in \
+    config.yaml \
+    .env \
+    data/state/jobs.sqlite3 \
+    data/state/jobs.sqlite3-wal \
+    data/state/jobs.sqlite3-shm \
+    data/cookies/cookies.txt \
+    data/telegram-bot-api/state.bin; do
+    grep -Fxq "$expected" <<<"$listing" \
+      || fail "real backup omitted $expected"
+  done
+  for excluded in \
+    data/telegram-bot-api/telegram-bot-api.log \
+    data/downloads/large.mp4 \
+    data/temp/existing.part; do
+    if grep -Fxq "$excluded" <<<"$listing"; then
+      fail "real backup unexpectedly included $excluded"
+    fi
+  done
 }
 
 run_cleanup_dry_run_case() {
@@ -500,5 +739,10 @@ run_checksum_failure_case
 run_download_failure_case
 run_permission_failure_case
 run_health_failure_case
+run_backup_failure_case
+run_doctor_failure_case
+run_all_stopped_case
+run_mixed_service_state_case
+run_real_backup_archive_case
 run_cleanup_dry_run_case
 echo "Linux tmb update recovery tests passed."

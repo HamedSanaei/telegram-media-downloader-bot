@@ -250,9 +250,9 @@ def test_release_tag_exactly_matches_project_version() -> None:
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.3.0"
+    assert version == "1.3.1"
     assert __version__ == version
-    assert tag == "v1.3.0"
+    assert tag == "v1.3.1"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
     assert 'if tag != f"v{version}":' in workflow
 
@@ -278,7 +278,12 @@ def test_release_waits_for_published_image_smoke_test_and_attaches_verified_asse
     assert "--network none --read-only" in workflow
     assert "test_tmb_upgrade_integration.sh" in workflow
     assert "TMB_TEST_PREVIOUS_VERSION=1.2.1" in workflow
+    assert "TMB_TEST_PREVIOUS_VERSION=1.3.0" in workflow
     assert "TMB_USE_RELEASE_UPDATER_ASSET=1" in workflow
+    assert "TMB_TEST_ACTIVE_LOCAL_API_LOG_WRITER=1" in workflow
+    assert "TMB_TEST_INITIAL_SERVICE_STATE=writer-redis" in workflow
+    assert "TMB_TEST_UPDATER_FAILURE_STAGE=backup" in workflow
+    assert "TMB_TEST_UPDATER_FAILURE_STAGE=doctor" in workflow
     assert "tmb-updater.sh.sha256" in workflow
     assert "sha256sum --check tmb-updater.sh.sha256" in workflow
     assert "scripts/build_release_archives.sh" in workflow
@@ -316,7 +321,7 @@ def test_management_cleanup_is_project_scoped_and_runs_after_update_verification
         assert "docker system prune" not in script
         assert "docker volume prune" not in script
 
-    assert linux.index("verify_runtime_release || return 1") < linux.index(
+    assert linux.index("verify_candidate_release_offline || return 1") < linux.index(
         "cleanup_project_resources false"
     )
     assert windows.index('"telegram-media-bot", "doctor"') < windows.index(
@@ -334,7 +339,8 @@ def test_linux_update_preflight_uses_prepared_image_and_read_only_runtime_data()
     assert 'docker pull "$prepared_image"' in preflight
     assert 'uid="$(runtime_identity APP_UID 10001)"' in preflight
     assert 'gid="$(runtime_identity APP_GID 10001)"' in preflight
-    assert 'docker run --rm --read-only --user "$uid:$gid"' in preflight
+    assert 'run_update_stage "candidate configuration preflight" docker run' in preflight
+    assert '--rm --read-only --user "$uid:$gid"' in preflight
     assert "--tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777" in preflight
     assert '-v "$ROOT_DIR/config.yaml:/app/config.yaml:ro"' in preflight
     assert '-v "$ROOT_DIR/data:/data:ro"' in preflight
@@ -342,11 +348,41 @@ def test_linux_update_preflight_uses_prepared_image_and_read_only_runtime_data()
     assert "/var/run/docker.sock" not in preflight
     assert "/root" not in preflight
     assert updater.index("validate_prepared_release || return 1") < updater.index(
-        "backup || return 1"
+        'run_update_stage "consistent persistent-state backup" backup'
     )
     assert updater.index("validate_prepared_release || return 1") < updater.index(
-        "compose --profile local-api stop -t 45"
+        'run_update_stage "filesystem-writer service stop"'
     )
+
+
+def test_linux_update_backup_is_offline_atomic_and_preserves_exact_service_state() -> None:
+    updater = Path("scripts/tmb.sh").read_text(encoding="utf-8")
+    transaction = updater.split("perform_update() {", maxsplit=1)[1].split("\n}", maxsplit=1)[0]
+    backup = updater.split("backup() {", maxsplit=1)[1].split("\n}", maxsplit=1)[0]
+
+    assert "PROJECT_SERVICES=(bot worker local-api redis)" in updater
+    assert "FILESYSTEM_WRITER_SERVICES=(bot worker local-api)" in updater
+    assert transaction.index("prepare_verified_release") < transaction.index(
+        'run_update_stage "filesystem-writer service stop"'
+    )
+    assert transaction.index('run_update_stage "filesystem-writer service stop"') < (
+        transaction.index('run_update_stage "consistent persistent-state backup" backup')
+    )
+    assert transaction.index('run_update_stage "consistent persistent-state backup" backup') < (
+        transaction.index("UPDATE_APPLICATION_MUTATED=true")
+    )
+    assert transaction.index("verify_candidate_release_offline") < transaction.index(
+        'start_services true "${PREVIOUS_WRITER_SERVICES[@]}"'
+    )
+    assert 'temporary_archive="$(mktemp "backups/.tmb-' in backup
+    assert 'mv -f -- "$temporary_archive" "$archive"' in backup
+    assert "--exclude='data/telegram-bot-api/telegram-bot-api.log'" in backup
+    assert "--exclude='*.log'" not in backup
+    assert "data/downloads" not in backup
+    assert "data/temp" not in backup
+    assert "verify_exact_project_service_state" in updater
+    assert "PREVIOUS_PROJECT_SERVICES" in updater
+    assert "PREVIOUS_WRITER_SERVICES" in updater
 
 
 def test_runtime_image_guarantees_compatible_7zip_commands_and_shared_identity() -> None:

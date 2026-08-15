@@ -28,7 +28,11 @@ chmod 755 \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_tmb_update.sh" \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_tmb_upgrade_integration.sh"
 
-COMMIT_EPOCH="$(git show -s --format=%ct "$COMMIT")"
+COMMIT_EPOCH="${TMB_RELEASE_ARCHIVE_EPOCH:-$(git show -s --format=%ct "$COMMIT")}"
+[[ "$COMMIT_EPOCH" =~ ^[0-9]+$ ]] || {
+  echo "Release archive epoch must be an integer Unix timestamp." >&2
+  exit 2
+}
 tar \
   --sort=name \
   --mtime="@$COMMIT_EPOCH" \

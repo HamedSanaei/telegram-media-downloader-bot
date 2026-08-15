@@ -21,6 +21,16 @@ The v1.2.2 privileged regression derives its final filesystem and SQLite WAL pro
 state, downloads, temp, cookies, Local Bot API state, and backups for both the v1.0.2 legacy updater
 and the checksummed v1.2.1 standalone-updater bootstrap.
 
+The v1.3.1 reliability patch makes the Linux backup itself a transaction boundary. Candidate
+download/checksum/config/image work completes before downtime; only previously running
+bot/worker/Local API filesystem writers stop; and Redis remains online. A mode-0600 temporary tar
+is atomically renamed only after success, includes configuration/cookies/SQLite WAL state and
+durable Local API state, excludes only the exact volatile Local API log, and never archives
+downloads/temp. Backup failure restores the original service set without changing the installed
+release. Offline version/doctor failures roll back application/image/permissions and the same exact
+state. Mocked all-stopped/mixed-state tests and privileged v1.3.0 standalone-updater fixtures cover
+active-log success, archive policy, rollback, and bounded secret-redacted diagnostics.
+
 ## Deliverables
 
 - Improve the upgrade script to record old/new versions and retain rollback instructions.
