@@ -179,9 +179,13 @@ def _run_doctor(settings: Settings) -> None:
     state = "OK  " if gallery_health.healthy or not settings.gallery_dl.enabled else "FAIL"
     print(f"{state} {gallery_health.name}: {gallery_health.detail}")
     failed = settings.gallery_dl.enabled and not gallery_health.healthy
+    cookie_file = settings.effective_cookie_file()
+    cookie_readable = _cookie_file_readable(cookie_file)
+    print(f"{'OK  ' if cookie_readable else 'FAIL'} yt_dlp_cookie")
+    failed = failed or not cookie_readable
     for source in sorted(settings.gallery_dl.enabled_platforms):
-        cookie = settings.gallery_dl.cookie_for(source, settings.yt_dlp.cookies_file)
-        readable = cookie is None or (cookie.is_file() and os.access(cookie, os.R_OK))
+        cookie = settings.gallery_dl.cookie_for(source, cookie_file)
+        readable = _cookie_file_readable(cookie)
         print(f"{'OK  ' if readable else 'FAIL'} gallery_dl_cookie_{source}")
         failed = failed or not readable
     from telegram_media_bot.infrastructure.analytics.usage_chart_doctor import (
@@ -245,18 +249,21 @@ def _run_config_check(
     runtime_filesystem_read_only: bool = False,
 ) -> None:
     gallery_failures: list[str] = []
+    cookie_file = settings.effective_cookie_file()
+    if not _cookie_file_readable(cookie_file):
+        gallery_failures.append("yt_dlp_cookie")
     if settings.gallery_dl.enabled:
         from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
 
         if not GalleryDlEngine(settings).health().healthy:
             gallery_failures.append("gallery_dl_runtime")
         for source in sorted(settings.gallery_dl.enabled_platforms):
-            cookie = settings.gallery_dl.cookie_for(source, settings.yt_dlp.cookies_file)
-            if cookie is not None and not (cookie.is_file() and os.access(cookie, os.R_OK)):
+            cookie = settings.gallery_dl.cookie_for(source, cookie_file)
+            if not _cookie_file_readable(cookie):
                 gallery_failures.append(f"gallery_dl_cookie_{source}")
     if gallery_failures:
         raise ConfigurationError(
-            "Gallery-dl configuration checks failed: " + ", ".join(gallery_failures)
+            "Cookie/runtime configuration checks failed: " + ", ".join(gallery_failures)
         )
     local_api = settings.telegram.local_bot_api
     if not local_api.enabled:
@@ -271,6 +278,10 @@ def _run_config_check(
         raise ConfigurationError(
             f"Local Bot API configuration checks failed: {', '.join(sorted(failed))}"
         )
+
+
+def _cookie_file_readable(cookie_file: Path | None) -> bool:
+    return cookie_file is None or (cookie_file.is_file() and os.access(cookie_file, os.R_OK))
 
 
 def _local_api_diagnostics(

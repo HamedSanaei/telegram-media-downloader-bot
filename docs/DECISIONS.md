@@ -341,3 +341,28 @@ fail closed. Stable asset IDs derive from provider, post identity, order, kind, 
 temporary URL—and downloads re-inspect from the canonical post URL. Original images are signature
 validated and delivered as photo/media group when compatible, otherwise as documents; ZIP and
 oversize delivery reuse the existing archive/multipart boundaries.
+
+## ADR-028: Administrators merge cookies through one atomic canonical-file adapter
+
+**Status:** accepted
+
+Cookie administration is exposed only in the bot's private role-aware panel and is injected through
+an application port. The infrastructure adapter manages the already configured
+`yt_dlp.cookies_file`; no new cookie path, database schema, worker message, or container mount is
+introduced. yt-dlp and all gallery-dl providers use one resolved effective path. Existing
+`gallery_dl.cookies` keys remain readable only as compatibility aliases: when non-null, every alias
+and `yt_dlp.cookies_file` must resolve to the same file or configuration fails before startup. A
+single legacy gallery alias is promoted to the effective path for yt-dlp and all gallery providers.
+
+Uploads are bounded in memory and parsed as strict seven-field Netscape records. Filename and MIME
+metadata are ignored. Supported service ownership is derived from normalized domain suffixes, and
+the merge key is case-folded domain plus exact path and name. The last uploaded duplicate wins;
+matching existing records are replaced, new keys are appended in first-seen upload order, duplicate
+records for detected services collapse deterministically, and every unrelated raw line remains
+unchanged.
+
+Before modification, the adapter creates a private same-filesystem hard-link backup. It then writes
+and fsyncs a same-directory temporary file, preserves the canonical file's numeric owner/group/mode,
+and atomically replaces the path. Current readers retain their open inode and subsequent jobs open
+the new file. Error reporting contains only stable Persian messages and exception class names—never
+cookie values, names, domains, contents, upload filenames, or filesystem paths.

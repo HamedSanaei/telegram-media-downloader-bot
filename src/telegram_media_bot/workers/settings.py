@@ -57,10 +57,10 @@ async def startup(ctx: dict[str, Any]) -> None:
         ytdlp_engine = YtDlpEngine(settings)
         gallery_engine = GalleryDlEngine(settings)
         gallery_health = await asyncio.to_thread(gallery_engine.health)
+        cookie_file = settings.effective_cookie_file()
         gallery_cookie_readability = {
             source: (
-                (cookie := settings.gallery_dl.cookie_for(source, settings.yt_dlp.cookies_file))
-                is None
+                (cookie := settings.gallery_dl.cookie_for(source, cookie_file)) is None
                 or cookie.is_file()
             )
             for source in sorted(settings.gallery_dl.enabled_platforms)

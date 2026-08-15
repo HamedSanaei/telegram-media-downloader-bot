@@ -94,11 +94,39 @@ def test_v1_0_x_configuration_defaults_gallery_dl_without_manual_rewrite() -> No
 
     assert settings.gallery_dl.enabled
     assert settings.gallery_dl.max_assets_per_job == 30
-    assert (
-        settings.gallery_dl.cookie_for("instagram", settings.yt_dlp.cookies_file)
-        == settings.yt_dlp.cookies_file
-    )
-    assert settings.gallery_dl.cookie_for("twitter", settings.yt_dlp.cookies_file) is None
+    canonical = settings.effective_cookie_file()
+    assert canonical is not None
+    for source in ("instagram", "tiktok", "twitter", "pinterest"):
+        assert settings.gallery_dl.cookie_for(source, canonical) == canonical
+
+
+def test_legacy_gallery_cookie_alias_is_promoted_to_the_canonical_file(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    cookie = tmp_path / "combined.txt"
+    raw = settings.model_dump()
+    raw["yt_dlp"]["cookies_file"] = None
+    raw["gallery_dl"]["cookies"]["twitter"] = str(cookie)
+
+    configured = Settings.model_validate(raw)
+    canonical = configured.effective_cookie_file()
+
+    assert canonical == cookie.resolve()
+    for source in ("instagram", "tiktok", "twitter", "pinterest"):
+        assert configured.gallery_dl.cookie_for(source, canonical) == canonical
+
+
+def test_divergent_runtime_cookie_files_are_rejected(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    raw = settings.model_dump()
+    raw["yt_dlp"]["cookies_file"] = str(tmp_path / "combined.txt")
+    raw["gallery_dl"]["cookies"]["instagram"] = str(tmp_path / "instagram.txt")
+
+    with pytest.raises(ValidationError, match="one canonical cookie file"):
+        Settings.model_validate(raw)
 
 
 def test_unknown_configuration_key_is_rejected(tmp_path: Path) -> None:

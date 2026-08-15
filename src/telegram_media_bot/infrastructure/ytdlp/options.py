@@ -153,8 +153,8 @@ class YtDlpOptionsFactory:
             "windowsfilenames": True,
             "js_runtimes": {ytdlp.javascript_runtime: {}},
         }
-        if ytdlp.cookies_file and ytdlp.cookies_file.exists():
-            options["cookiefile"] = str(ytdlp.cookies_file)
+        if cookie_file := self._settings.effective_cookie_file():
+            options["cookiefile"] = str(cookie_file)
         proxy = ytdlp.effective_proxy()
         if proxy is not None:
             options["proxy"] = proxy

@@ -9,6 +9,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup
 
+from telegram_media_bot.application.ports.cookie_management import CookieManager
 from telegram_media_bot.application.ports.job_queue import JobQueue
 from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.application.ports.usage_analytics import UsageChartRenderer
@@ -89,6 +90,7 @@ def build_router(
     users: UserRepository,
     usage_analytics: UsageAnalyticsService | None = None,
     usage_chart_renderer: UsageChartRenderer | None = None,
+    cookie_manager: CookieManager | None = None,
 ) -> Router:
     router = Router(name="main")
     router.message.outer_middleware(CorrelationMiddleware())
@@ -861,6 +863,7 @@ def build_router(
             submit_url=submit_url,
             analytics=usage_analytics,
             chart_renderer=usage_chart_renderer,
+            cookie_manager=cookie_manager,
         )
     )
 

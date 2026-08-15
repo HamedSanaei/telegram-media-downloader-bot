@@ -163,3 +163,31 @@ class CollectionTooLargeError(MediaTooLargeError):
 
 class ImageFormatUnsupportedError(ImageValidationError):
     pass
+
+
+class CookieManagementError(MediaBotError):
+    """Base class for controlled cookie-management failures."""
+
+
+class InvalidCookieFileError(CookieManagementError):
+    pass
+
+
+class EmptyCookieFileError(InvalidCookieFileError):
+    pass
+
+
+class UnsupportedCookieDomainsError(InvalidCookieFileError):
+    pass
+
+
+class CookieFileTooLargeError(InvalidCookieFileError):
+    pass
+
+
+class CookieStoreUnavailableError(CookieManagementError):
+    pass
+
+
+class CookieStoreWriteError(CookieManagementError):
+    pass

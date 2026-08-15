@@ -149,6 +149,23 @@ generated timestamp, six KPI cards, named three-series legend, numeric Y axis, a
 dates, zero baseline, and selected bar values. English avoids introducing untested Arabic shaping
 or BiDi behavior; Telegram captions remain Persian.
 
+Cookie management follows `telegram -> application cookie-management port -> infrastructure
+Netscape file adapter`. Only private messages from a currently configured administrator reach the
+adapter. Telegram documents are streamed into a bounded in-memory buffer, so no upload filename or
+temporary file becomes a trust boundary. The adapter updates the existing `yt_dlp.cookies_file`;
+it does not introduce another runtime cookie source. The settings model resolves one effective
+cookie path for yt-dlp (including SoundCloud) and every gallery-dl provider. Legacy non-null
+`gallery_dl.cookies` entries are compatibility aliases and must resolve to that same path; divergent
+stores fail configuration validation. Consumers reopen the canonical path for subsequent jobs, so
+atomic replacement needs no container restart.
+
+The adapter strictly parses the Netscape seven-field format and maps normalized domain suffixes to
+project-owned service identities. It serializes updates under a process lock, creates an atomic
+hard-link backup in the private `.cookie-backups` directory, writes/fsyncs a same-directory
+temporary file with the original owner/group/mode, and uses `os.replace`. Unrelated raw lines are
+retained byte-for-byte; neither the application result nor structured logs contains cookie names,
+values, domains, filenames, contents, or backup paths.
+
 ## File isolation
 
 Each job uses:
@@ -309,7 +326,8 @@ Source detection remains inside the yt-dlp adapter. The worker consumes normaliz
 Instagram collections are the approved automatic multi-artifact flow, image entries are discarded,
 and ordered video artifacts are delivered separately. With `force_mp4`, the adapter selects the
 best native MP4 video and M4A audio and only merges/remuxes them; without it, the source-selected
-container is preserved. Cookies remain an optional read-only operator file. Telegram handlers
+container is preserved. Cookies remain an optional restricted operator file, writable only by the
+runtime identity when administrator cookie management is enabled. Telegram handlers
 contain no extractor/domain-name dispatch chain.
 
 ## YouTube URL intent boundary

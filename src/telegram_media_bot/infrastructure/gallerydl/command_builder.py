@@ -46,9 +46,9 @@ def provider_for_single_item(url: str, enabled: frozenset[str]) -> str:
 
 
 class GalleryDlCommandBuilder:
-    def __init__(self, settings: GalleryDlSection, legacy_instagram_cookie: Path | None) -> None:
+    def __init__(self, settings: GalleryDlSection, canonical_cookie_file: Path | None) -> None:
         self._settings = settings
-        self._legacy_instagram_cookie = legacy_instagram_cookie
+        self._canonical_cookie_file = canonical_cookie_file
 
     def inspection(self, url: str) -> tuple[str, list[str]]:
         provider = provider_for_single_item(url, self._settings.enabled_platforms)
@@ -91,7 +91,7 @@ class GalleryDlCommandBuilder:
             "--sleep-request",
             str(self._settings.sleep_request_seconds),
         ]
-        cookie = self._settings.cookie_for(provider, self._legacy_instagram_cookie)
+        cookie = self._settings.cookie_for(provider, self._canonical_cookie_file)
         if cookie is not None:
             args.extend(("--cookies", str(cookie)))
         return args

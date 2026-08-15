@@ -1,7 +1,7 @@
 # Security model
 
-Untrusted inputs include Telegram messages, URLs, DNS answers, redirects, remote metadata, titles,
-thumbnails, extensions, playlist entries, and upstream error strings.
+Untrusted inputs include Telegram messages and documents, URLs, DNS answers, redirects, remote
+metadata, titles, thumbnails, extensions, playlist entries, and upstream error strings.
 
 ## Controls
 
@@ -23,6 +23,11 @@ thumbnails, extensions, playlist entries, and upstream error strings.
   Redis, Local API, or installer traffic and is not included in logs or CLI health output.
 - Interactive configuration uses atomic replacement and removes its secret-bearing temporary file
   on success or validation failure; `config.yaml.tmp` is ignored as defense in depth.
+- Cookie administration requires a current administrator in private chat, ignores upload filenames,
+  applies an in-memory 2 MiB stream bound, validates strict Netscape records, and atomically updates
+  the existing canonical path only after creating a restricted backup. Configuration rejects
+  divergent consumer paths, so stale source-specific cookie state cannot bypass an admin update.
+  Logs and replies expose no cookie names, values, domains, contents, filenames, or paths.
 - User persistence stores only Bot API profile fields and aggregate usage. No phone, email, contact,
   user-session, SMS, or two-factor credential is collected.
 - Delivery limits are checked before Telegram; ambiguous uploads enter `delivery_uncertain` rather

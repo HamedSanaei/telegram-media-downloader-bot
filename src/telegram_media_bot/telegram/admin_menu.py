@@ -14,6 +14,9 @@ ADMIN_DOWNLOAD_BUTTON = "⬇️ دانلود مدیا"
 ADMIN_WEEKLY_REPORT_BUTTON = "📊 گزارش هفتگی"
 ADMIN_MONTHLY_REPORT_BUTTON = "📈 گزارش ماهانه"
 ADMIN_FULL_REPORT_BUTTON = "📋 گزارش کامل استفاده"
+ADMIN_COOKIE_MANAGEMENT_BUTTON = "🍪 مدیریت کوکی‌ها"  # noqa: RUF001
+ADMIN_COOKIE_UPLOAD_BUTTON = "⬆️ بارگذاری cookies.txt"
+ADMIN_COOKIE_DOWNLOAD_BUTTON = "⬇️ دریافت cookies.txt کامل"
 ADMIN_REFRESH_MENU_BUTTON = "🔄 تازه‌سازی منو"
 ADMIN_CANCEL_DOWNLOAD_BUTTON = "❌ لغو"
 ADMIN_BACK_TO_MENU_BUTTON = "🏠 منوی مدیریت"
@@ -25,6 +28,9 @@ ADMIN_MANAGEMENT_BUTTONS = frozenset(
         ADMIN_WEEKLY_REPORT_BUTTON,
         ADMIN_MONTHLY_REPORT_BUTTON,
         ADMIN_FULL_REPORT_BUTTON,
+        ADMIN_COOKIE_MANAGEMENT_BUTTON,
+        ADMIN_COOKIE_UPLOAD_BUTTON,
+        ADMIN_COOKIE_DOWNLOAD_BUTTON,
         ADMIN_REFRESH_MENU_BUTTON,
         ADMIN_CANCEL_DOWNLOAD_BUTTON,
         ADMIN_BACK_TO_MENU_BUTTON,
@@ -36,6 +42,10 @@ class AdminDownloadState(StatesGroup):
     awaiting_url = State()
 
 
+class AdminCookieState(StatesGroup):
+    awaiting_upload = State()
+
+
 def build_admin_main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -45,7 +55,22 @@ def build_admin_main_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=ADMIN_MONTHLY_REPORT_BUTTON),
             ],
             [KeyboardButton(text=ADMIN_FULL_REPORT_BUTTON)],
+            [KeyboardButton(text=ADMIN_COOKIE_MANAGEMENT_BUTTON)],
             [KeyboardButton(text=ADMIN_REFRESH_MENU_BUTTON)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        selective=True,
+        one_time_keyboard=False,
+    )
+
+
+def build_admin_cookie_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=ADMIN_COOKIE_UPLOAD_BUTTON)],
+            [KeyboardButton(text=ADMIN_COOKIE_DOWNLOAD_BUTTON)],
+            [KeyboardButton(text=ADMIN_BACK_TO_MENU_BUTTON)],
         ],
         resize_keyboard=True,
         is_persistent=True,

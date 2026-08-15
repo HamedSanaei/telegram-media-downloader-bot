@@ -4,6 +4,83 @@ Generated: 2026-08-14
 
 ## Current change addendum
 
+- Release v1.3.0 is prepared from v1.2.2 with the secure administrator Cookie Management feature
+  and canonical-cookie runtime contract described below. The authoritative package version,
+  importable `__version__`, lockfile root package, and release-tag architecture assertion all agree
+  on `1.3.0` / `v1.3.0`.
+- Production configuration was confirmed to contain only
+  `yt_dlp.cookies_file: /data/cookies/cookies.txt`; no `gallery_dl.cookies.*` path diverges, so the
+  production v1.2.2 -> v1.3.0 update needs no cookie migration. Deployments that do contain
+  divergent legacy paths must merge their records into one combined file and make the aliases null
+  or identical before startup.
+- The exact post-publication production update is
+  `TMB_RELEASE_TAG=v1.3.0 tmb update`, followed by `tmb doctor` and `tmb status`; no standalone
+  updater bootstrap is needed from v1.2.2. The release has intentionally not been committed,
+  pushed, tagged, published, or deployed as part of this preparation task.
+
+## v1.3.0 release-quality verification
+
+- `uv lock --check` and frozen dev sync passed on Python 3.14.5. Ruff lint, Ruff format (165
+  files), strict mypy (154 source/test files), architecture boundaries, UTF-8 integrity, `pip
+  check`, detect-secrets, and `pip-audit` all passed. ShellCheck and complete Bash parsing passed;
+  PowerShell AST parsing and the Windows updater recovery suite passed. PSScriptAnalyzer reported
+  no errors (12 established style warnings).
+- The named cookie/config/consumer gate passed 191 tests on Windows with seven platform skips. It
+  covers service-scoped preservation, deterministic replacement, malformed/unsupported input,
+  rollback, export/authorization/redaction, canonical yt-dlp/gallery-dl commands, next-job inode
+  replacement, and matching `doctor`/`config-check` paths.
+- The complete non-contract suite passed on both supported test platforms: Windows had 491 passed,
+  nine platform/opt-in skips, 15 contracts deselected, and 82.37% coverage; Linux had 499 passed,
+  only the destructive Local Bot API upload skipped, 15 contracts deselected, and 82.50% coverage.
+  Both Linux symlink-safety tests passed. Three pre-existing unclosed-SQLite `ResourceWarning`s
+  remain visible but do not fail the suite.
+- The explicitly enabled contract selection passed its three fixed public checks. Twelve optional
+  source/gallery fixtures skipped because their operator environment variables were not set. The
+  example extractor SDK passed its default test with its optional contract deselected.
+- The `telegram_media_downloader_bot-1.3.0` wheel and sdist built successfully. Bundled
+  font/OFL/gallery notices and a clean-wheel install/import/resource/decode smoke passed; final
+  artifact sizes and SHA-256 values are reported outside the self-containing source archive.
+- Compose validation and the current-source Linux image build passed. The local verification image
+  is `sha256:394ef5bf2a27b0c6874492739d59576c7873eda02cb05360b02ba7040a132505`
+  (401768493 bytes, runtime user `appuser`). Runtime smokes passed for package version 1.3.0,
+  gallery-dl 1.32.8, UID 10001, ffmpeg/ffprobe, multipart 7-Zip, gallery/native/UI selection, and
+  offline usage charts.
+- A real UID-10001 container merge replaced only the Instagram test record, retained the unrelated
+  YouTube record, preserved owner/mode `10001:0600`, and created one restricted backup. Read-only
+  config preflight passed and `doctor` reported the same canonical file for yt-dlp plus Instagram,
+  TikTok, Twitter/X, and Pinterest.
+
+- A pre-release runtime audit found that the first cookie-management implementation updated
+  `yt_dlp.cookies_file`, while only gallery-dl Instagram inherited that path by default; TikTok,
+  Twitter/X, and Pinterest could receive no cookie or a divergent legacy source path. yt-dlp also
+  omitted its configured path when the file was absent. Admin replacement therefore was not yet a
+  complete runtime propagation contract.
+- Settings now resolve one effective cookie path for yt-dlp (including YouTube/SoundCloud), every
+  gallery-dl provider, the bot-side cookie manager, worker diagnostics, `doctor`, and
+  `config-check`. Legacy gallery keys remain compatible only as identical aliases; a single legacy
+  path is promoted globally and divergent paths fail before startup. Both Compose processes use the
+  same read-only configuration and writable `/data` bind.
+- Network-free real-adapter regressions construct yt-dlp and gallery-dl engines before an atomic
+  admin-style merge, then prove the next inspection opens the replacement inode and observes the
+  new YouTube/Instagram record while retaining the other service. Doctor/config-check probe the
+  exact same effective path for yt-dlp and all four gallery providers.
+- The private administrator panel now manages the existing canonical `yt_dlp.cookies_file` through
+  a framework-free application port. Bounded Netscape uploads are classified from cookie domains,
+  and only detected-service records are merged; unrelated raw lines remain byte-identical.
+  Duplicate domain/path/name keys resolve deterministically in favor of the last uploaded record.
+- Cookie updates are serialized in the bot process, make a private same-filesystem hard-link backup,
+  fsync a same-directory temporary file, preserve owner/group/mode, and use atomic replacement.
+  Complete-file export and upload are restricted to a currently configured administrator in private
+  chat. Filenames, domains, cookie names/values/content, paths, and raw exceptions are absent from
+  logs and ordinary admin responses.
+- Cookie-manager, Telegram handler, configuration, doctor, Docker-path, yt-dlp, gallery-dl, and
+  real-router regressions pass on CPython 3.14.5 under Linux: 177 focused tests and the complete
+  default suite of 499 passed, 1 destructive Local Bot API case skipped, and 15 external contracts
+  deselected. Branch coverage is 82.51% against the 80% gate. The current-source runtime-image smoke
+  also verified UID-10001 writes, backup creation, exact unrelated-service preservation, mode
+  preservation, all five doctor cookie checks, and one canonical path in every generated command.
+  The explicitly enabled contract suite passed its 3 fixed public checks; 12 operator-fixture
+  contracts skipped because their optional environment variables were not configured.
 - CI follow-up aligns the privileged fixture's configured `APP_UID/GID` with the installer and uses
   that same identity for its final direct filesystem/SQLite probe. WSL2 diagnostics before update,
   after update, and before the probe showed legacy state moving from `root:root` `0500`/`0400` to
@@ -171,7 +248,7 @@ This release keeps the application insulated from yt-dlp internals while adding:
 - real two-step MP4/WebM then quality selection, exact-height availability, native/transcoded labels,
   selected-stream sizes, MP3 audio, and native-only non-transcoding `best_original`;
 - automatic highest-quality MP4 delivery for Instagram posts, Reels, video Stories, Highlights,
-  and ordered multi-video collections, with optional local read-only cookies;
+  and ordered multi-video collections, with an optional restricted local cookie file;
 - dynamic `@bot_username` attribution on every direct file, artifact, ZIP volume, and manifest;
 - permanent SQLite/WAL user profiles, daily usage, delivered bytes, and job-id-based idempotent
   outcome accounting;

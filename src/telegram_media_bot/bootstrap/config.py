@@ -410,11 +410,10 @@ class GalleryDlSection(StrictModel):
             raise ValueError("gallery_dl.enabled_platforms contains an unsupported platform")
         return normalized
 
-    def cookie_for(self, source: str, legacy_instagram_cookie: Path | None) -> Path | None:
-        configured = cast(Path | None, getattr(self.cookies, source, None))
-        if source == "instagram" and configured is None:
-            return legacy_instagram_cookie
-        return configured
+    def cookie_for(self, source: str, canonical_cookie_file: Path | None) -> Path | None:
+        if source not in self.enabled_platforms:
+            return None
+        return canonical_cookie_file
 
 
 class SecuritySection(StrictModel):
@@ -474,6 +473,31 @@ class Settings(StrictModel):
     persistence: PersistenceSection
     observability: ObservabilitySection
     operations: OperationsSection = Field(default_factory=OperationsSection)
+
+    @model_validator(mode="after")
+    def validate_cookie_file_identity(self) -> Settings:
+        configured = self._configured_cookie_files()
+        identities = {path.expanduser().resolve() for path in configured}
+        if len(identities) > 1:
+            raise ValueError(
+                "yt_dlp.cookies_file and gallery_dl.cookies entries must reference "
+                "one canonical cookie file"
+            )
+        return self
+
+    def effective_cookie_file(self) -> Path | None:
+        configured = self._configured_cookie_files()
+        return configured[0].expanduser().resolve() if configured else None
+
+    def _configured_cookie_files(self) -> tuple[Path, ...]:
+        candidates = (
+            self.yt_dlp.cookies_file,
+            self.gallery_dl.cookies.instagram,
+            self.gallery_dl.cookies.tiktok,
+            self.gallery_dl.cookies.twitter,
+            self.gallery_dl.cookies.pinterest,
+        )
+        return tuple(path for path in candidates if path is not None)
 
     def database_path(self) -> Path:
         return self.storage.state_path() / self.persistence.database_filename

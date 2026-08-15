@@ -46,6 +46,13 @@ selection, queue, worker, delivery, and cleanup flow used by every user. Weekly/
 complete text reports exclude administrator IDs from public KPIs at query time without deleting
 their durable jobs or usage events.
 
+The private administrator panel also manages the configured canonical Netscape cookie file. It
+accepts bounded Telegram documents, detects supported services from domains rather than filenames,
+merges only those service records, and permits an authorized private-chat export of the complete
+current file. Every yt-dlp job—including YouTube and SoundCloud—and every gallery-dl provider opens
+that same effective path for each new job. Cookie values and file contents never enter logs,
+durable jobs, or notifications.
+
 For explicitly enabled large-file delivery, results up to the Local Bot API ceiling are uploaded
 directly. Every larger result is emitted as bounded multi-volume ZIP documents through the
 configured 4096 MB aggregate ceiling.

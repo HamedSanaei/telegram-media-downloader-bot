@@ -54,6 +54,10 @@ def test_app_containers_are_read_only_and_drop_capabilities() -> None:
     assert common["security_opt"] == ["no-new-privileges:true"]
     assert common["restart"] == "on-failure:5"
     assert any(mount.startswith("/tmp:") for mount in common["tmpfs"])
+    assert "./config.yaml:/app/config.yaml:ro" in common["volumes"]
+    assert "./data:/data" in common["volumes"]
+    for service_name in ("bot", "worker"):
+        assert compose["services"][service_name]["volumes"] == common["volumes"]
     assert compose["services"]["worker"]["cpus"] == "${TMB_WORKER_CPUS:-0}"
 
 
@@ -246,9 +250,9 @@ def test_release_tag_exactly_matches_project_version() -> None:
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.2.2"
+    assert version == "1.3.0"
     assert __version__ == version
-    assert tag == "v1.2.2"
+    assert tag == "v1.3.0"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
     assert 'if tag != f"v{version}":' in workflow
 

@@ -187,21 +187,22 @@ def test_bulk_or_redirect_urls_are_rejected(url: str) -> None:
         provider_for_single_item(url, frozenset({"instagram", "tiktok", "twitter", "pinterest"}))
 
 
-def test_command_is_argv_only_and_cookie_is_source_isolated(
+def test_command_is_argv_only_and_every_provider_uses_the_canonical_cookie(
     settings: Settings, tmp_path: Path
 ) -> None:
+    canonical = tmp_path / "combined.txt"
     raw = settings.model_dump()
-    raw["gallery_dl"]["cookies"] = {
-        "instagram": str(tmp_path / "ig.txt"),
-        "twitter": str(tmp_path / "x.txt"),
-    }
+    raw["yt_dlp"]["cookies_file"] = str(canonical)
+    raw["gallery_dl"]["cookies"]["twitter"] = str(canonical)
     configured = Settings.model_validate(raw)
-    commands = GalleryDlCommandBuilder(configured.gallery_dl, None)
+    commands = GalleryDlCommandBuilder(configured.gallery_dl, configured.effective_cookie_file())
 
     _provider, instagram = commands.inspection("https://instagram.com/p/abc123/")
+    _provider, tiktok = commands.inspection("https://tiktok.com/@example/photo/123")
     _provider, twitter = commands.inspection("https://x.com/example/status/123")
+    _provider, pinterest = commands.inspection("https://pinterest.com/pin/123/")
 
-    for args in (instagram, twitter):
+    for args in (instagram, tiktok, twitter, pinterest):
         assert args[:3] == [sys.executable, "-m", "gallery_dl"]
         assert "--config-ignore" in args
         assert "--no-input" in args
@@ -210,17 +211,23 @@ def test_command_is_argv_only_and_cookie_is_source_isolated(
         assert "--no-download" in args
         option_index = args.index("-o")
         assert args[option_index : option_index + 2] == ["-o", "output.jsonl=true"]
-    assert str(tmp_path / "ig.txt") in instagram
-    assert str(tmp_path / "x.txt") not in instagram
-    assert str(tmp_path / "x.txt") in twitter
-    assert str(tmp_path / "ig.txt") not in twitter
+        assert args[args.index("--cookies") + 1] == str(canonical.resolve())
 
 
-def test_legacy_instagram_cookie_is_not_shared(settings: Settings, tmp_path: Path) -> None:
-    legacy = tmp_path / "legacy.txt"
-    commands = GalleryDlCommandBuilder(settings.gallery_dl, legacy)
-    assert str(legacy) in commands.inspection("https://instagram.com/p/abc123/")[1]
-    assert str(legacy) not in commands.inspection("https://x.com/example/status/123")[1]
+def test_canonical_cookie_is_shared_with_every_gallery_provider(
+    settings: Settings, tmp_path: Path
+) -> None:
+    canonical = tmp_path / "combined.txt"
+    commands = GalleryDlCommandBuilder(settings.gallery_dl, canonical)
+
+    for url in (
+        "https://instagram.com/p/abc123/",
+        "https://tiktok.com/@example/photo/123",
+        "https://x.com/example/status/123",
+        "https://pinterest.com/pin/123/",
+    ):
+        args = commands.inspection(url)[1]
+        assert args[args.index("--cookies") + 1] == str(canonical)
 
 
 def test_instagram_image_download_explicitly_disables_gallery_video_downloads(

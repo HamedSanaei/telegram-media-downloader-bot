@@ -1,0 +1,359 @@
+from __future__ import annotations
+
+import os
+import stat
+import tempfile
+import threading
+import time
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+
+from telegram_media_bot.domain.cookies import (
+    MAX_COOKIE_UPLOAD_BYTES,
+    CookieService,
+    CookieUpdateSummary,
+)
+from telegram_media_bot.domain.errors import (
+    CookieFileTooLargeError,
+    CookieManagementError,
+    CookieStoreUnavailableError,
+    CookieStoreWriteError,
+    EmptyCookieFileError,
+    InvalidCookieFileError,
+    UnsupportedCookieDomainsError,
+)
+
+_MAX_COMBINED_COOKIE_BYTES = 8 * 1024 * 1024
+_HEADER = "# Netscape HTTP Cookie File"
+_HTTP_ONLY_PREFIX = "#HttpOnly_"
+_SERVICE_DOMAINS: tuple[tuple[CookieService, tuple[str, ...]], ...] = (
+    (CookieService.YOUTUBE, ("youtube.com", "youtu.be", "google.com", "googlevideo.com")),
+    (CookieService.INSTAGRAM, ("instagram.com",)),
+    (CookieService.TIKTOK, ("tiktok.com",)),
+    (CookieService.TWITTER, ("twitter.com", "x.com")),
+    (CookieService.PINTEREST, ("pinterest.com", "pin.it")),
+    (CookieService.SOUNDCLOUD, ("soundcloud.com",)),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _CookieRecord:
+    domain: str
+    path: str
+    name: str
+    service: CookieService | None
+    content: str
+
+    @property
+    def key(self) -> tuple[str, str, str]:
+        return (self.domain, self.path, self.name)
+
+
+@dataclass(frozen=True, slots=True)
+class _CookieLine:
+    raw: str
+    content: str
+    ending: str
+    record: _CookieRecord | None
+
+
+class NetscapeCookieManager:
+    """Merge supported-service cookies into one canonical Netscape file."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path.expanduser().resolve()
+        self._lock = threading.Lock()
+
+    def merge(self, uploaded: bytes) -> CookieUpdateSummary:
+        if len(uploaded) > MAX_COOKIE_UPLOAD_BYTES:
+            raise CookieFileTooLargeError("uploaded cookie file exceeds the safe limit")
+        with self._lock:
+            try:
+                current, metadata = self._read_store_snapshot()
+                try:
+                    current_lines = _parse_document(current, upload=False)
+                except InvalidCookieFileError as exc:
+                    raise CookieStoreUnavailableError(
+                        "canonical cookie file is not valid Netscape data"
+                    ) from exc
+                uploaded_lines = _parse_document(uploaded, upload=True)
+                merged, summary = _merge_documents(current_lines, uploaded_lines)
+                backup = self._create_atomic_backup(metadata)
+                try:
+                    self._replace_atomically(merged, metadata)
+                except Exception:
+                    # The canonical path is unchanged until os.replace succeeds. Keep the durable
+                    # backup for operator recovery when any pre-replacement step fails.
+                    raise
+                _fsync_directory(backup.parent)
+                return summary
+            except CookieManagementError:
+                raise
+            except OSError as exc:
+                raise CookieStoreWriteError("cookie store update failed") from exc
+
+    def export_combined(self) -> bytes:
+        with self._lock:
+            return self._read_store_snapshot()[0]
+
+    def _read_store_snapshot(self) -> tuple[bytes, os.stat_result]:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(self._path, flags)
+        except OSError as exc:
+            raise CookieStoreUnavailableError("canonical cookie file is unavailable") from exc
+        try:
+            with os.fdopen(descriptor, "rb") as stream:
+                metadata = os.fstat(stream.fileno())
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise CookieStoreUnavailableError("canonical cookie path is not a regular file")
+                if metadata.st_size > _MAX_COMBINED_COOKIE_BYTES:
+                    raise CookieStoreUnavailableError(
+                        "canonical cookie file exceeds the safe limit"
+                    )
+                content = stream.read(_MAX_COMBINED_COOKIE_BYTES + 1)
+                if len(content) > _MAX_COMBINED_COOKIE_BYTES:
+                    raise CookieStoreUnavailableError(
+                        "canonical cookie file exceeds the safe limit"
+                    )
+            path_metadata = self._path.lstat()
+            if self._path.is_symlink() or not _same_snapshot(metadata, path_metadata):
+                raise CookieStoreUnavailableError("canonical cookie path changed during read")
+            return content, metadata
+        except CookieManagementError:
+            raise
+        except OSError as exc:
+            raise CookieStoreUnavailableError("canonical cookie file is unreadable") from exc
+
+    def _create_atomic_backup(self, metadata: os.stat_result) -> Path:
+        backup_directory = self._path.parent / ".cookie-backups"
+        if backup_directory.exists():
+            backup_metadata = backup_directory.lstat()
+            if not stat.S_ISDIR(backup_metadata.st_mode) or backup_directory.is_symlink():
+                raise CookieStoreWriteError("cookie backup path is unsafe")
+        else:
+            backup_directory.mkdir(mode=0o700)
+        backup_directory.chmod(0o700)
+        backup = backup_directory / (f"{self._path.name}.{time.time_ns()}.{uuid.uuid4().hex}.bak")
+        try:
+            os.link(self._path, backup, follow_symlinks=False)
+            if not _same_snapshot(metadata, backup.stat(follow_symlinks=False)):
+                raise CookieStoreWriteError("canonical cookie path changed before backup")
+            _preserve_owner(backup, metadata)
+            backup.chmod(stat.S_IMODE(metadata.st_mode))
+            _fsync_directory(backup_directory)
+        except CookieStoreWriteError:
+            backup.unlink(missing_ok=True)
+            raise
+        except OSError as exc:
+            backup.unlink(missing_ok=True)
+            raise CookieStoreWriteError("atomic cookie backup failed") from exc
+        return backup
+
+    def _replace_atomically(self, content: bytes, metadata: os.stat_result) -> None:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{self._path.name}.",
+            suffix=".tmp",
+            dir=self._path.parent,
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            _preserve_owner(temporary, metadata)
+            temporary.chmod(stat.S_IMODE(metadata.st_mode))
+            current_metadata = self._path.stat(follow_symlinks=False)
+            if self._path.is_symlink() or not _same_snapshot(metadata, current_metadata):
+                raise CookieStoreWriteError("canonical cookie path changed before replacement")
+            _atomic_replace(temporary, self._path)
+            _fsync_directory(self._path.parent)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def _parse_document(data: bytes, *, upload: bool) -> list[_CookieLine]:
+    if upload and len(data) > MAX_COOKIE_UPLOAD_BYTES:
+        raise CookieFileTooLargeError("uploaded cookie file exceeds the safe limit")
+    if upload and not data.strip():
+        raise EmptyCookieFileError("cookie upload is empty")
+    if b"\x00" in data:
+        raise InvalidCookieFileError("cookie file contains a null byte")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise InvalidCookieFileError("cookie file is not valid UTF-8") from exc
+    chunks = text.splitlines(keepends=True)
+    if text and not chunks:
+        chunks = [text]
+    lines: list[_CookieLine] = []
+    header_found = False
+    first_nonempty_seen = False
+    records = 0
+    unsupported = False
+    for chunk in chunks:
+        content, ending = _split_line_ending(chunk)
+        if content and not first_nonempty_seen:
+            first_nonempty_seen = True
+            header_found = content.removeprefix("\ufeff").startswith(_HEADER)
+        record = _parse_record(content)
+        if record is not None:
+            records += 1
+            unsupported = unsupported or record.service is None
+        lines.append(_CookieLine(raw=chunk, content=content, ending=ending, record=record))
+    if not header_found:
+        raise InvalidCookieFileError("Netscape cookie header is missing")
+    if upload and records == 0:
+        raise EmptyCookieFileError("cookie upload contains no records")
+    if upload and unsupported:
+        raise UnsupportedCookieDomainsError("cookie upload contains an unsupported domain")
+    return lines
+
+
+def _parse_record(content: str) -> _CookieRecord | None:
+    if not content or (content.startswith("#") and not content.startswith(_HTTP_ONLY_PREFIX)):
+        return None
+    fields = content.split("\t")
+    if len(fields) != 7:
+        raise InvalidCookieFileError("cookie record must contain seven tab-separated fields")
+    raw_domain, include_subdomains, path, secure, expires, name, _value = fields
+    domain = raw_domain.removeprefix(_HTTP_ONLY_PREFIX)
+    normalized_domain = domain.casefold()
+    if (
+        not normalized_domain
+        or "://" in normalized_domain
+        or "/" in normalized_domain
+        or any(character.isspace() for character in normalized_domain)
+    ):
+        raise InvalidCookieFileError("cookie domain is invalid")
+    if include_subdomains.casefold() not in {"true", "false"}:
+        raise InvalidCookieFileError("cookie include-subdomains flag is invalid")
+    if secure.casefold() not in {"true", "false"}:
+        raise InvalidCookieFileError("cookie secure flag is invalid")
+    if not path.startswith("/") or any(ord(character) < 32 for character in path):
+        raise InvalidCookieFileError("cookie path is invalid")
+    if not name or any(ord(character) < 32 for character in name):
+        raise InvalidCookieFileError("cookie name is invalid")
+    try:
+        if int(expires) < 0:
+            raise ValueError
+    except ValueError as exc:
+        raise InvalidCookieFileError("cookie expiry is invalid") from exc
+    return _CookieRecord(
+        domain=normalized_domain,
+        path=path,
+        name=name,
+        service=_service_for_domain(normalized_domain),
+        content=content,
+    )
+
+
+def _merge_documents(
+    current_lines: list[_CookieLine], uploaded_lines: list[_CookieLine]
+) -> tuple[bytes, CookieUpdateSummary]:
+    uploaded_records: dict[tuple[str, str, str], _CookieRecord] = {}
+    upload_order: list[tuple[str, str, str]] = []
+    detected: set[CookieService] = set()
+    for line in uploaded_lines:
+        record = line.record
+        if record is None or record.service is None:
+            continue
+        detected.add(record.service)
+        if record.key not in uploaded_records:
+            upload_order.append(record.key)
+        uploaded_records[record.key] = record
+
+    existing_keys = {
+        line.record.key
+        for line in current_lines
+        if line.record is not None and line.record.service in detected
+    }
+    seen_detected: set[tuple[str, str, str]] = set()
+    output: list[str] = []
+    default_ending = next((line.ending for line in current_lines if line.ending), "\n")
+    for line in current_lines:
+        record = line.record
+        if record is None or record.service not in detected:
+            output.append(line.raw)
+            continue
+        if record.key in seen_detected:
+            continue
+        seen_detected.add(record.key)
+        replacement = uploaded_records.get(record.key)
+        if replacement is None:
+            output.append(line.raw)
+        else:
+            output.append(replacement.content + line.ending)
+
+    for key in upload_order:
+        if key in existing_keys:
+            continue
+        if output and not output[-1].endswith(("\n", "\r")):
+            output.append(default_ending)
+        output.append(uploaded_records[key].content + default_ending)
+
+    services = tuple(service for service in CookieService if service in detected)
+    summary = CookieUpdateSummary(
+        services=services,
+        replaced=sum(key in existing_keys for key in upload_order),
+        added=sum(key not in existing_keys for key in upload_order),
+    )
+    return "".join(output).encode("utf-8"), summary
+
+
+def _service_for_domain(domain: str) -> CookieService | None:
+    hostname = domain.lstrip(".")
+    for service, suffixes in _SERVICE_DOMAINS:
+        if any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in suffixes):
+            return service
+    return None
+
+
+def _split_line_ending(chunk: str) -> tuple[str, str]:
+    if chunk.endswith("\r\n"):
+        return chunk[:-2], "\r\n"
+    if chunk.endswith(("\n", "\r")):
+        return chunk[:-1], chunk[-1]
+    return chunk, ""
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name != "posix":
+        return
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _preserve_owner(path: Path, metadata: os.stat_result) -> None:
+    chown = getattr(os, "chown", None)
+    if os.name == "posix" and chown is not None:
+        chown(path, metadata.st_uid, metadata.st_gid, follow_symlinks=False)
+
+
+def _atomic_replace(source: Path, destination: Path) -> None:
+    os.replace(source, destination)
+
+
+def _same_snapshot(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev,
+        left.st_ino,
+        left.st_size,
+        left.st_mtime_ns,
+        stat.S_IMODE(left.st_mode),
+        left.st_uid,
+        left.st_gid,
+    ) == (
+        right.st_dev,
+        right.st_ino,
+        right.st_size,
+        right.st_mtime_ns,
+        stat.S_IMODE(right.st_mode),
+        right.st_uid,
+        right.st_gid,
+    )

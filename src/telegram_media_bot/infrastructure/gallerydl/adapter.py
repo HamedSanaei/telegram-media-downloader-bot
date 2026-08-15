@@ -74,7 +74,7 @@ class GalleryDlEngine:
         self._runner = runner or GalleryDlRunner()
         self._commands = GalleryDlCommandBuilder(
             settings.gallery_dl,
-            settings.yt_dlp.cookies_file,
+            settings.effective_cookie_file(),
         )
         self._gate = threading.BoundedSemaphore(settings.gallery_dl.max_concurrent_processes)
         self._validator = PublicUrlValidator(

@@ -53,9 +53,10 @@ Upload percentages cover bytes streamed from the tracked file into Local Bot API
 are read, only an elapsed-time heartbeat is shown while Telegram processes the request; Bot API
 exposes no trustworthy percentage for that phase.
 
-Cookies should be mounted read-only. A missing cookie file is simply not passed to yt-dlp; `doctor`
-and operator startup review should confirm whether authenticated sources need it. Proxy credentials,
-tokens, cookies, and authorization values are redacted from structured logs.
+The canonical cookie file should be restricted to the runtime owner with mode `0600` and must be
+writable when administrator cookie management is enabled. A configured missing or unreadable file
+fails `config-check`/`doctor`; yt-dlp no longer silently drops the configured path. Proxy
+credentials, tokens, cookies, and authorization values are redacted from structured logs.
 
 `telegram.required_channels.enabled` requires a non-empty unique channel list. Every entry has an
 integer `chat_id`, display `title`, and HTTPS `t.me` join URL. The bot must be administrator in each
@@ -82,7 +83,7 @@ is configured under `media.instagram`: automatic downloads always use `best_orig
 `NATIVE_ONLY`. When `force_mp4: true`, the best native `ext=mp4` video and `ext=m4a` audio are
 selected and only merged/remuxed. When `force_mp4: false`, no container is hard-coded and the
 source-selected container/codecs are preserved. Image entries are ignored, and the ordered video
-count/aggregate size are bounded. Authenticated content uses the optional local read-only cookies
+count/aggregate size are bounded. Authenticated content uses the optional canonical local cookie
 file.
 
 `telegram.upload_as_document: true` accepts native media without requiring Telegram's inline-video
@@ -121,11 +122,13 @@ migration state machine are documented in `docs/LOCAL_BOT_API.md`.
 `instagram`, `tiktok`, `twitter`, and `pinterest`. Arbitrary gallery-dl option dictionaries are not
 accepted.
 
-Cookie paths are source-specific under `gallery_dl.cookies`. A null Instagram value reuses the
-existing `yt_dlp.cookies_file` path, so `/data/cookies/cookies.txt` deployments require no manual
-rewrite. That fallback is never passed to TikTok, Twitter/X, or Pinterest. Files are read-only
-inputs: they are neither copied nor mutated, and `config-check`/`doctor` report only per-source
-readability—not contents or paths. Relative explicit paths resolve from the config directory.
+`yt_dlp.cookies_file` is the canonical combined Netscape file used by yt-dlp, SoundCloud, Instagram,
+TikTok, Twitter/X, and Pinterest. The older keys under `gallery_dl.cookies` remain compatibility
+aliases only. Leave them null, or point every non-null entry to the exact same canonical file;
+divergent paths fail fast. If `yt_dlp.cookies_file` is null and exactly one effective legacy path is
+configured, that path is promoted for every consumer. Files are opened afresh by each job, and
+`config-check`/`doctor` validate the same effective path without reporting its contents or path.
+Relative explicit paths resolve from the config directory.
 
 Image validation defaults to 20,000 pixels per dimension and 100,000,000 total pixels. Telegram
 albums are capped at 10 items per request and collections are chunked without reordering or a

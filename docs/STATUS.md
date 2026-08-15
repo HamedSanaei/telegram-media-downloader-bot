@@ -4,14 +4,18 @@ Last updated: 2026-08-14
 
 ## Release state
 
-Tasks T001 through T013 are implemented. Patch 1.2.2 fixes updater preflight validation for
-runtime cookie paths without weakening gallery-dl checks or mutating persistent data. A checksummed
-updater asset provides the required one-time bootstrap from v1.2.1. Patch 1.2.1 fixes mixed
-Instagram video-child discovery without changing the v1.2.0 Photo/File or administrator-alert
-contracts. Release v1.2.0 adds
-explicit Instagram Photo/File confirmation and lossless mixed-post delivery while preserving the
-v1.1.1 video-only fallback. The v1 flow
-is URL validation -> queued inspection ->
+Tasks T001 through T013 are implemented. Release 1.3.0 is prepared with secure administrator Cookie
+Management and one canonical runtime cookie file shared by yt-dlp, SoundCloud, every gallery-dl
+provider, `doctor`, and `config-check`. Legacy `gallery_dl.cookies.*` keys remain readable as
+backward-compatible aliases, but every configured alias must resolve to the canonical path; a
+divergent deployment must merge its files before upgrade. The audited production v1.2.2
+configuration defines only `yt_dlp.cookies_file: /data/cookies/cookies.txt`, so it requires no
+cookie-path migration for v1.3.0.
+
+Patch 1.2.2 fixed updater preflight validation for runtime cookie paths without mutating persistent
+data, patch 1.2.1 fixed strict mixed-carousel video-child discovery, and release 1.2.0 introduced
+Instagram Photo/File delivery plus redacted administrator failure alerts. The v1 flow is URL
+validation -> queued inspection ->
 owner-bound semantic selection -> durable download job -> throttled progress/cancellation -> typed
 Telegram delivery -> terminal state and cleanup.
 
@@ -20,7 +24,7 @@ dashboard and package-bundled licensed Noto Sans resource. Visual-region, packag
 non-root Docker smoke checks prevent blank chart labels. Existing v1.0.0 through v1.0.9
 configuration and durable runtime state remain upgrade-compatible.
 
-The current unreleased patch also restores Twitter/X HLS planning for the upstream audio-only MP4
+The gallery bundle implementation also preserves Twitter/X HLS planning for the upstream audio-only MP4
 metadata shape that omits `acodec`. It preserves the exact inspected H.264/AAC format pair through
 SQLite/ARQ and downloads it with stream-copy remux; planning failures now retain the normalized
 source and use a distinct operator category without logging URLs or raw extractor dictionaries.
@@ -41,10 +45,8 @@ alert for every uniquely configured administrator after retries are exhausted. C
 intermediate retries, URLs, user/chat IDs, filenames, paths, and raw exceptions stay outside the
 alert contract, and one unreachable administrator cannot affect other alerts or job cleanup.
 
-All deterministic Python, architecture, security, fixture-contract, package, and Windows updater
-gates pass for T013. Docker/Compose runtime execution remains pending on this review host because
-the Docker CLI is not installed; CI contains equivalent version, config-ignore, UID/cookie,
-dependency, license, adapter-fixture, doctor, cleanup, and Compose smokes.
+Final v1.3.0 Python, architecture, security, package, contract, Compose, and Docker results are
+recorded in `docs/HANDOFF_REPORT.md` after the release-quality run.
 
 ## Implemented production controls
 
@@ -108,13 +110,28 @@ dependency, license, adapter-fixture, doctor, cleanup, and Compose smokes.
 - Administrators see a persistent `/start`/`menu` management keyboard, while ordinary users never
   receive management buttons. Admin URLs use the ordinary inspection/download pipeline, every
   management action is reauthorized, and reports exclude current admin IDs without altering jobs.
+- Private-chat cookie management validates bounded Netscape documents, detects supported services
+  without trusting filenames, atomically merges only matching service records into the canonical
+  cookie file, and exports the complete file only to a currently configured administrator. yt-dlp,
+  SoundCloud, and every gallery-dl provider use that one effective path on their next job; divergent
+  legacy source aliases fail before startup.
 
 ## Verification
 
-The final exact command results and coverage are recorded in `docs/HANDOFF_REPORT.md` after the last
-gate run. External contracts remain opt-in and require operator-maintained public URLs.
+The final v1.3.0 gate run passed 499 Linux non-contract tests (one destructive opt-in skip) at
+82.50% coverage and 491 Windows tests (nine platform/opt-in skips) at 82.37%. All static, security,
+package, Compose, and current-source Docker gates passed. The exact command results, artifact
+hashes, platform skips, and runtime cookie smoke are recorded in `docs/HANDOFF_REPORT.md`. External
+source contracts remain opt-in and require operator-maintained public URLs; the three fixed public
+contract checks passed and 12 operator fixtures were not configured.
 
 ## Recent fixes
+
+- 2026-08-14: Prepared v1.3.0 with secure administrator cookie management over the existing canonical
+  `yt_dlp.cookies_file`: domain-based multi-service detection, deterministic domain/path/name
+  deduplication, exact unrelated-line preservation, restricted atomic backups/replacement,
+  private-chat full export, bounded in-memory Telegram uploads, secret-free failure logging, and
+  one fail-fast effective cookie path shared by every real yt-dlp/gallery-dl consumer.
 
 - 2026-08-14: Corrected the v1.2.2 privileged-updater fixture to use the configured Compose runtime
   UID/GID for its final write/SQLite probe. Real WSL2/Docker diagnostics proved both historical
@@ -251,7 +268,7 @@ gate run. External contracts remain opt-in and require operator-maintained publi
   destructive real >200 MB upload test still requires an explicitly configured local bot/chat and
   remains skipped in the default suite.
 - Instagram Stories/Highlights that require authentication depend on a current operator-supplied
-  read-only cookies file; upstream login challenges can still invalidate it.
+  restricted canonical cookies file; upstream login challenges can still invalidate it.
 - Castbox and Spotify are not implemented; both remain outside the generic v1 engine policy.
 - Multi-volume output requires 7-Zip on the server and on the recipient device. Real >2 GB and
   >3.9 GB tests are destructive opt-in tests and remain skipped in the default suite.

@@ -32,6 +32,11 @@ installed script cannot replace itself before the faulty old preflight. The exac
 execution sequence is documented in `docs/INSTALLATION.md`; no `gallery_dl` configuration edit is
 required.
 
+For v1.2.2 -> v1.3.0, use `TMB_RELEASE_TAG=v1.3.0 tmb update` after the release is published. A
+deployment with only `yt_dlp.cookies_file: /data/cookies/cookies.txt` needs no cookie-path
+migration. Divergent legacy `gallery_dl.cookies.*` files must be merged into that combined file and
+their aliases made null or identical before the update; `config-check` rejects split cookie state.
+
 A user cancellation is committed to SQLite as `cancelled` before ARQ abort is requested. Pending or
 running queue work is aborted with ARQ's official API and finalized transient keys are removed.
 Startup reconciliation converts legacy `cancel_requested=1` queued/running/retrying rows to
@@ -79,8 +84,15 @@ Only IDs in `telegram.admin_ids` can use:
 - `/block USER_ID` and `/unblock USER_ID`: durable dynamic policy.
 - `/resolve JOB_ID`: mark an operator-reviewed `delivery_uncertain` job terminal so a new request is
   permitted; it never resends automatically.
+- **Cookie Management** in the private reply-keyboard panel: merge a bounded Netscape document into
+  the canonical cookie file or download the complete current file. Service detection ignores the
+  uploaded filename, and summaries expose only service labels plus replaced/added record counts.
+  The next yt-dlp or gallery-dl job opens that same effective file; no process restart is needed.
 
 No command returns URLs, tokens, cookies, proxy data, internal exception text, or file paths.
+The explicit full-cookie download is the sole exception and is restricted to a current
+administrator in a private bot chat; operators must delete or secure the resulting Telegram
+document according to their credential policy.
 
 Each final inspection/download failure and every `delivery_uncertain` result is also sent privately
 to every unique configured administrator. Intermediate retries, cancellations, and successful jobs

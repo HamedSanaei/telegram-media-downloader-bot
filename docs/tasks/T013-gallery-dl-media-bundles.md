@@ -13,8 +13,9 @@ existing multipart archive path.
 
 - No `gallery_dl` import outside the isolated adapter and no raw vendor JSON or signed CDN URL in
   durable state.
-- Single-item URL validation, source-specific cookies, bounded subprocess output/time/concurrency,
-  process-group cancellation, safe workspace confinement, and Pillow signature validation.
+- Single-item URL validation, one canonical cookie file shared with yt-dlp (superseding the original
+  source-specific design), bounded subprocess output/time/concurrency, process-group cancellation,
+  safe workspace confinement, and Pillow signature validation.
 - Sanitized 1.32.8 fixtures cover image, mixed, video-fallback, authentication, schema-change, and
   limit behavior without network access.
 - Existing config and durable jobs remain readable; gallery-dl settings are defaulted.

@@ -106,6 +106,20 @@ def test_optional_proxy_cookie_and_user_agent_are_applied(
     assert options["user_agent"] == "test-agent"
 
 
+def test_legacy_gallery_cookie_alias_is_the_effective_ytdlp_cookie(
+    settings: Settings, tmp_path: Path
+) -> None:
+    cookie = tmp_path / "combined.txt"
+    raw = settings.model_dump()
+    raw["yt_dlp"]["cookies_file"] = None
+    raw["gallery_dl"]["cookies"]["pinterest"] = cookie
+    configured = type(settings).model_validate(raw)
+
+    options = YtDlpOptionsFactory(configured).inspect_options()
+
+    assert options["cookiefile"] == str(cookie.resolve())
+
+
 def test_explicit_proxy_disable_wins_over_configured_secret(settings: Settings) -> None:
     raw = settings.model_dump()
     raw["yt_dlp"]["proxy_enabled"] = False

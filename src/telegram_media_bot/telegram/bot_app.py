@@ -10,6 +10,7 @@ from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.infrastructure.analytics.usage_chart_renderer import PngUsageChartRenderer
+from telegram_media_bot.infrastructure.cookies.manager import NetscapeCookieManager
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.persistence.sqlite_usage_analytics import (
     SqliteUsageAnalyticsRepository,
@@ -65,6 +66,11 @@ async def run_bot(settings: Settings) -> None:
                     admin_ids=settings.telegram.admin_ids,
                 ),
                 usage_chart_renderer=PngUsageChartRenderer(),
+                cookie_manager=(
+                    NetscapeCookieManager(cookie_file)
+                    if (cookie_file := settings.effective_cookie_file()) is not None
+                    else None
+                ),
             )
         )
         await logger.ainfo("bot_started")

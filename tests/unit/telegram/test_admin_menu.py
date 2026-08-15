@@ -4,11 +4,15 @@ from telegram_media_bot.domain.analytics import UsageReportPeriod
 from telegram_media_bot.telegram.admin_menu import (
     ADMIN_BACK_TO_MENU_BUTTON,
     ADMIN_CANCEL_DOWNLOAD_BUTTON,
+    ADMIN_COOKIE_DOWNLOAD_BUTTON,
+    ADMIN_COOKIE_MANAGEMENT_BUTTON,
+    ADMIN_COOKIE_UPLOAD_BUTTON,
     ADMIN_DOWNLOAD_BUTTON,
     ADMIN_FULL_REPORT_BUTTON,
     ADMIN_MONTHLY_REPORT_BUTTON,
     ADMIN_REFRESH_MENU_BUTTON,
     ADMIN_WEEKLY_REPORT_BUTTON,
+    build_admin_cookie_keyboard,
     build_admin_download_prompt_keyboard,
     build_admin_main_keyboard,
     build_admin_report_inline_keyboard,
@@ -24,6 +28,7 @@ def test_admin_main_keyboard_is_persistent_selective_and_complete() -> None:
         ADMIN_WEEKLY_REPORT_BUTTON,
         ADMIN_MONTHLY_REPORT_BUTTON,
         ADMIN_FULL_REPORT_BUTTON,
+        ADMIN_COOKIE_MANAGEMENT_BUTTON,
         ADMIN_REFRESH_MENU_BUTTON,
     ]
     assert keyboard.resize_keyboard is True
@@ -42,3 +47,15 @@ def test_admin_download_prompt_and_report_refresh_keyboards() -> None:
     ]
     assert report.inline_keyboard[0][0].callback_data == "adm:rpt:w:refresh"
     assert report.inline_keyboard[1][0].callback_data == "adm:menu"
+
+
+def test_admin_cookie_management_keyboard_is_persistent_and_complete() -> None:
+    keyboard = build_admin_cookie_keyboard()
+
+    assert [button.text for row in keyboard.keyboard for button in row] == [
+        ADMIN_COOKIE_UPLOAD_BUTTON,
+        ADMIN_COOKIE_DOWNLOAD_BUTTON,
+        ADMIN_BACK_TO_MENU_BUTTON,
+    ]
+    assert keyboard.is_persistent is True
+    assert keyboard.selective is True

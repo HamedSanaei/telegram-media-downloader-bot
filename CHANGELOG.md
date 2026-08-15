@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 1.3.0 - 2026-08-14
+
+### Added
+
+- Add a private-chat, administrator-only cookie management panel that accepts bounded Netscape
+  documents, detects supported services from cookie domains, and exports the complete canonical
+  server `cookies.txt` on demand.
+
+### Security
+
+- Merge uploaded records by normalized domain, path, and name while preserving unrelated cookie
+  lines exactly. Updates create a restricted atomic backup, retain owner/group/mode, and atomically
+  replace the canonical file without logging filenames, cookie names, values, or contents.
+- Resolve yt-dlp, SoundCloud, and every enabled gallery-dl provider to that same canonical file.
+  Legacy gallery cookie entries are accepted only when they identify the canonical path, preventing
+  an admin update from leaving an active runtime consumer on stale cookie state.
+
+### Operations
+
+- Reopen the canonical cookie path for every subsequent inspection/download job, so an atomic
+  administrator update reaches yt-dlp and gallery-dl without a container restart.
+- Preserve legacy `gallery_dl.cookies.*` configuration keys as aliases. Deployments with divergent
+  legacy files must merge them into the combined `yt_dlp.cookies_file` and then use null or
+  identical aliases; deployments already configured only with the canonical path need no migration.
+
 ## 1.2.2 - 2026-08-14
 
 ### Fixed

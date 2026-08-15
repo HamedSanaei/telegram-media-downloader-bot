@@ -170,7 +170,8 @@ gallery_dl:
     - twitter
     - pinterest
   cookies:
-    # null preserves backward compatibility by reusing yt_dlp.cookies_file for Instagram only.
+    # All null entries reuse yt_dlp.cookies_file. Legacy non-null entries must point to that same
+    # canonical combined file; divergent per-source cookie stores are rejected.
     instagram: null
     tiktok: null
     twitter: null

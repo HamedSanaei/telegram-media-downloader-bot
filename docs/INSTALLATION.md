@@ -1,10 +1,10 @@
 # Docker installation and `tmb` management
 
-The v1.1 runtime image installs the exact locked `gallery-dl==1.32.8` package and preserves its
+The v1.3 runtime image installs the exact locked `gallery-dl==1.32.8` package and preserves its
 GPL-2.0 notice. Upgrading from v1.0.x does not rewrite `config.yaml`, `.env`, SQLite/WAL, Redis,
 cookies, downloads, backups, or Telegram Local Bot API state. A null `gallery_dl.cookies.instagram`
-automatically reuses the deployed `yt_dlp.cookies_file`; other sources use their own optional
-read-only cookie paths.
+automatically reuses the deployed `yt_dlp.cookies_file`, as do TikTok, Twitter/X, and Pinterest.
+Legacy non-null gallery cookie entries must resolve to that same canonical combined file.
 
 ## Linux
 
@@ -65,6 +65,24 @@ health before repairing and executing the global command. Any post-stop failure 
 source, image, usable permissions, command link, and exact previous service set. `config.yaml`,
 `.env`, SQLite, cookies, Redis, Local API state, and downloads are preserved. `uninstall` removes
 local state only after the literal `DELETE` confirmation.
+
+### Upgrade from v1.2.2 to v1.3.0
+
+After the `v1.3.0` release and image are published, a normal version-pinned update is sufficient:
+
+```bash
+cd /path/to/telegram-media-downloader-bot
+TMB_RELEASE_TAG=v1.3.0 tmb update
+tmb doctor
+tmb status
+```
+
+No cookie migration is needed when v1.2.2 defines only
+`yt_dlp.cookies_file: /data/cookies/cookies.txt`, as confirmed for the current production
+deployment. If any legacy `gallery_dl.cookies.*` value points elsewhere, first merge all records
+from those files into the canonical combined file, then set every alias to null or to the same
+canonical path. The v1.3.0 configuration check deliberately fails divergent paths instead of
+leaving a runtime consumer on stale credentials.
 
 Before restart, the Linux updater resolves `APP_UID`/`APP_GID` from the Compose environment or
 `.env` with fallback `10001:10001`. It repairs `data/`, SQLite/WAL/SHM, downloads, temp, cookies,
@@ -138,5 +156,16 @@ restore that stage. Changing `TELEGRAM_BOT_API_REF`, its stage/toolchain/base im
 Dockerfile instructions intentionally invalidates it; application source and Python changes do not.
 
 For private Instagram Stories/Highlights, export a Netscape cookies file from an authorized account,
-place it below `data/cookies`, configure its container path, and keep it read-only. No phone number,
-SMS, 2FA, Userbot, or Telegram user session is used.
+place it below `data/cookies`, configure its container path, and restrict it to the runtime owner
+with mode `0600`. The canonical file and its parent directory must be owner-writable when Telegram
+cookie management is used. No phone number, SMS, 2FA, Userbot, or Telegram user session is used.
+
+Configured administrators can subsequently open **Cookie Management** in the bot's private chat.
+Uploading a Netscape `cookies.txt` updates only records for services detected from its domains;
+other service records in `yt_dlp.cookies_file` remain unchanged. The upload filename is ignored,
+files above 2 MiB are rejected, and every successful change leaves a mode-preserving backup under
+`data/cookies/.cookie-backups/`. The complete current canonical file can be downloaded from the
+same private admin section. Treat that document and all backups as secrets. No restart is required;
+yt-dlp and every gallery-dl source reopen the same effective path for subsequent jobs. Existing
+deployments with different per-source gallery cookie files must first combine their records into
+`yt_dlp.cookies_file` and set those legacy entries to null or the same canonical path.
