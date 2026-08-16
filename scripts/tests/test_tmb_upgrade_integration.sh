@@ -50,6 +50,29 @@ assert_mode() {
   fi
 }
 
+assert_local_api_directory_contract() {
+  # A valid installed production v1.3.0/v1.3.1 with local_bot_api enabled owns every Local Bot API
+  # persistent directory as the configured runtime user (install.sh and the image create them for
+  # APP_UID:APP_GID, and every update re-enforces runtime ownership). Candidate preflight validates
+  # those existing directories read-only, so a fixture that models that production config must
+  # satisfy the same contract before the updater runs; a broken fixture must fail here with a
+  # precise message instead of inside candidate configuration preflight.
+  local path="$1" label="$2" expected_owner="${RUNTIME_UID}:${RUNTIME_GID}" actual
+  if [[ ! -d "$path" ]]; then
+    echo "Privileged fixture violates the Local Bot API directory contract: $label is missing: $path" >&2
+    return 1
+  fi
+  actual="$(stat -c '%u:%g %a' "$path")"
+  if [[ "$actual" != "$expected_owner 700" ]]; then
+    echo "Privileged fixture violates the Local Bot API directory contract: $label is '$actual', expected '$expected_owner 700': $path" >&2
+    return 1
+  fi
+  if [[ ! -r "$path" || ! -x "$path" ]]; then
+    echo "Privileged fixture violates the Local Bot API directory contract: $label is not readable/searchable by the runtime user: $path" >&2
+    return 1
+  fi
+}
+
 assert_update_output() {
   local expected="$1" output_file="$2"
   if ! grep -Fq "$expected" "$output_file"; then
@@ -371,6 +394,15 @@ if [[ "$INITIAL_SERVICE_STATE" =~ ^(writer-redis|all-running|no-bot)$ ]]; then
   sudo chmod 700 "$INSTALL_ROOT/data/telegram-bot-api"
   sudo find "$INSTALL_ROOT/data/telegram-bot-api" -type f -exec chmod 600 {} +
 fi
+if [[ "$PREVIOUS_VERSION" =~ ^1\.3\.[01]$ ]]; then
+  # The generated production config enables local_bot_api, whose migration state persists under
+  # /data/state. A valid installed production v1.3.0/v1.3.1 owns that directory as the runtime
+  # user; candidate preflight validates it read-only before any permission repair runs. Keep
+  # exactly the Local Bot API persistent directories runtime-owned; the remaining legacy
+  # root-owned paths still exercise the updater's permission repair after installation.
+  sudo chown "${RUNTIME_UID}:${RUNTIME_GID}" "$INSTALL_ROOT/data/state"
+  sudo chmod 700 "$INSTALL_ROOT/data/state"
+fi
 
 assert_owner_mode "$TEST_ROOT" "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 700 \
   "temporary parent"
@@ -390,6 +422,14 @@ if [[ "$USE_RELEASE_UPDATER_ASSET" == "1" ]]; then
     "${INSTALL_OWNER_UID}:${INSTALL_OWNER_GID}" 400 "preflight cookie"
 else
   assert_owner_mode "$INSTALL_ROOT/data" "0:0" 500 "legacy root-owned data"
+fi
+if [[ "$PREVIOUS_VERSION" =~ ^1\.3\.[01]$ ]]; then
+  grep -Eq '^    mode: external$' "$INSTALL_ROOT/config.yaml" || {
+    echo "Privileged fixture local_bot_api mode contract changed; update the directory contract below." >&2
+    exit 1
+  }
+  assert_local_api_directory_contract "$INSTALL_ROOT/data/state" \
+    "Local Bot API migration state directory"
 fi
 
 UPDATER_PATH="$INSTALL_ROOT/scripts/tmb.sh"

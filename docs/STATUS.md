@@ -138,6 +138,13 @@ public contract checks passed and 12 operator fixtures were not configured.
 
 ## Recent fixes
 
+- 2026-08-15: Fixed the v1.3.2 privileged-updater fixture so the v1.3.0/v1.3.1 production config it
+  generates (local_bot_api enabled in external mode) owns its required Local Bot API persistent
+  directory `/data/state` as the configured runtime user before the updater runs. Candidate
+  configuration preflight validates that existing directory read-only, so a valid production
+  installation must already satisfy the contract; the fixture now asserts it before invoking the
+  updater, failing with a precise fixture message instead of inside preflight. The remaining legacy
+  root-owned paths still exercise the updater's post-install permission repair.
 - 2026-08-15: Prepared patch 1.3.2 after production v1.3.1 proved its nominal offline doctor still
   required `local_api_reachable` and `required_channels` while those services were intentionally
   stopped. The updater now runs fail-closed static checks offline, conditionally verifies restored
