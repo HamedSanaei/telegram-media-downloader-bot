@@ -20,7 +20,12 @@ from telegram_media_bot.infrastructure.security.redis_rate_limiter import RedisR
 from telegram_media_bot.infrastructure.security.telegram_membership import (
     TelegramMembershipChecker,
 )
-from telegram_media_bot.telegram.bot_factory import create_telegram_runtime
+from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
+from telegram_media_bot.telegram.bot_factory import (
+    create_telegram_runtime,
+    readiness_wait_required,
+    wait_for_local_api_readiness,
+)
 from telegram_media_bot.telegram.handlers import build_router
 
 logger = structlog.get_logger(__name__)
@@ -28,6 +33,10 @@ logger = structlog.get_logger(__name__)
 
 async def run_bot(settings: Settings) -> None:
     settings.create_runtime_directories()
+    if readiness_wait_required(settings):
+        manager = LocalBotApiManager(settings)
+        if manager.active_endpoint() == "local":
+            await wait_for_local_api_readiness(settings)
     runtime = await asyncio.to_thread(create_telegram_runtime, settings, role="bot")
     settings = runtime.settings
     bot = runtime.bot

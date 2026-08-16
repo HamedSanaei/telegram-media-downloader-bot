@@ -12,6 +12,7 @@ from telegram_media_bot.application.ports.url_validator import UrlValidator
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.domain.errors import (
     InvalidUrlError,
+    MediaBotError,
     MediaTooLargeError,
     PlaylistNotAllowedError,
     UnsupportedSourceError,
@@ -94,17 +95,26 @@ class DownloadService:
             allow_collection=info.source.casefold() == "instagram",
             image_delivery_mode=image_delivery_mode,
         )
-        result = self._engine.download(
-            request,
-            progress=progress,
-            is_cancelled=is_cancelled,
-        )
+        try:
+            result = self._engine.download(
+                request,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+        except MediaBotError as exc:
+            # Once the inspection above resolved the provider, a later failure inside the
+            # engine must never leave the durable job record without source attribution.
+            if getattr(exc, "source", None) is None:
+                exc.source = info.source
+            raise
         self._validate_source(result.source)
         if (
             self._max_file_size_bytes is not None
             and result.file_size_bytes > self._max_file_size_bytes
         ):
-            raise MediaTooLargeError("Final media exceeds configured size limit")
+            raise MediaTooLargeError(
+                "Final media exceeds configured size limit", source=info.source
+            )
         return result
 
     @staticmethod
@@ -136,4 +146,6 @@ class DownloadService:
             if info.item_count is None or info.item_count > self._playlist_max_items:
                 raise PlaylistNotAllowedError("Playlist exceeds the configured item limit")
         if info.duration_seconds is not None and info.duration_seconds > self._max_duration_seconds:
-            raise MediaTooLargeError("Media duration exceeds the configured limit")
+            raise MediaTooLargeError(
+                "Media duration exceeds the configured limit", source=info.source
+            )

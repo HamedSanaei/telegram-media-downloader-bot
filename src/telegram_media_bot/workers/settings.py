@@ -34,7 +34,12 @@ from telegram_media_bot.infrastructure.storage.workspace import (
 )
 from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
 from telegram_media_bot.infrastructure.ytdlp.engine import YtDlpEngine
-from telegram_media_bot.telegram.bot_factory import TelegramRuntime, create_telegram_runtime
+from telegram_media_bot.telegram.bot_factory import (
+    TelegramRuntime,
+    create_telegram_runtime,
+    readiness_wait_required,
+    wait_for_local_api_readiness,
+)
 from telegram_media_bot.telegram.delivery import RoutedDeliveryGateway
 from telegram_media_bot.workers.jobs import (
     maintenance_job,
@@ -48,6 +53,10 @@ logger = structlog.get_logger(__name__)
 async def startup(ctx: dict[str, Any]) -> None:
     settings = load_settings(require_token=True)
     settings.create_runtime_directories()
+    if readiness_wait_required(settings):
+        local_api_manager = LocalBotApiManager(settings)
+        if local_api_manager.active_endpoint() == "local":
+            await wait_for_local_api_readiness(settings)
     runtime = await asyncio.to_thread(create_telegram_runtime, settings, role="worker")
     settings = runtime.settings
     bot = runtime.bot

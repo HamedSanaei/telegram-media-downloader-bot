@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from time import monotonic
+from urllib.parse import urlsplit
 
 import structlog
 
@@ -24,6 +25,7 @@ from telegram_media_bot.domain.errors import (
     GalleryDlUnavailableError,
     ImageValidationError,
     JobCancelledError,
+    MediaUnavailableError,
     RateLimitedError,
 )
 from telegram_media_bot.domain.models import (
@@ -64,6 +66,7 @@ _GALLERY_MODES = {
     DownloadMode.ALL_ORIGINAL_MEDIA,
     DownloadMode.IMAGES_ONLY,
     DownloadMode.VIDEOS_ONLY,
+    DownloadMode.VIDEO_ORIGINAL,
     DownloadMode.IMAGES_ZIP,
 }
 
@@ -102,13 +105,22 @@ class GalleryDlEngine:
             )
         if result.return_code != 0:
             self._raise_process_failure(result, provider=provider)
+        if _empty_gallery_events(result.stdout):
+            if _is_instagram_story_url(canonical):
+                raise MediaUnavailableError("Instagram story is expired or unavailable")
+            raise GalleryDlOutputChangedError("gallery-dl emitted no JSON Lines events")
         for transient_url in transient_asset_urls(result.stdout):
             self._validator.validate(transient_url)
-        inspection = parse_inspection(
-            result.stdout,
-            expected_provider=provider,
-            max_assets=self._settings.gallery_dl.max_assets_per_job,
-        )
+        try:
+            inspection = parse_inspection(
+                result.stdout,
+                expected_provider=provider,
+                max_assets=self._settings.gallery_dl.max_assets_per_job,
+            )
+        except GalleryDlOutputChangedError as exc:
+            if _is_instagram_story_url(canonical) and _empty_gallery_events(result.stdout):
+                raise MediaUnavailableError("Instagram story is expired or unavailable") from exc
+            raise
         self._check_known_size(inspection)
         info = map_gallery_info(inspection, canonical)
         if len(info.assets) >= self._settings.gallery_dl.zip_threshold:
@@ -171,7 +183,10 @@ class GalleryDlEngine:
             DownloadMode.IMAGES_ZIP,
         }:
             planned = tuple(asset for asset in planned if asset.kind is MediaKind.IMAGE)
-        elif request.mode is DownloadMode.VIDEOS_ONLY:
+        elif request.mode in {
+            DownloadMode.VIDEOS_ONLY,
+            DownloadMode.VIDEO_ORIGINAL,
+        }:
             planned = tuple(asset for asset in planned if asset.kind is MediaKind.VIDEO)
         if not planned:
             raise GalleryDlOutputChangedError("Selected gallery assets are no longer available")
@@ -367,6 +382,18 @@ class GalleryDlEngine:
             yield
         finally:
             self._gate.release()
+
+
+def _is_instagram_story_url(url: str) -> bool:
+    parsed = urlsplit(url)
+    return (parsed.hostname or "").casefold() in {"instagram.com", "www.instagram.com"} and (
+        parsed.path.casefold().startswith("/stories/")
+    )
+
+
+def _empty_gallery_events(payload: bytes) -> bool:
+    text = payload.decode("utf-8", errors="replace").strip()
+    return not text or all(not line.strip() for line in text.splitlines())
 
 
 def _validated_output_files(workspace: Path) -> tuple[Path, ...]:

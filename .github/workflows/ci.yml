@@ -26,6 +26,7 @@ jobs:
           bash -n scripts/build_release_archives.sh
           bash -n scripts/tests/test_tmb_update.sh
           bash -n scripts/tests/test_tmb_upgrade_integration.sh
+          bash -n scripts/tests/test_local_api_readiness.sh
       - run: uv python install 3.14.5
       - run: uv lock --check
       - run: uv sync --frozen --group dev
@@ -71,6 +72,7 @@ jobs:
           bash -n scripts/build_release_archives.sh
           bash -n scripts/tests/test_tmb_update.sh
           bash -n scripts/tests/test_tmb_upgrade_integration.sh
+          bash -n scripts/tests/test_local_api_readiness.sh
       - run: uv lock --check
       - run: docker compose --profile local-api config
       - uses: docker/setup-buildx-action@v3
@@ -174,6 +176,8 @@ jobs:
           TMB_TEST_PREVIOUS_VERSION=1.3.1 TMB_USE_RELEASE_UPDATER_ASSET=1 \
             TMB_TEST_INITIAL_SERVICE_STATE=all-running \
             bash scripts/tests/test_tmb_upgrade_integration.sh
+          RUN_PRIVILEGED_UPGRADE_TESTS=1 \
+            bash scripts/tests/test_local_api_readiness.sh
 
   installer-quality:
     strategy:
@@ -194,6 +198,7 @@ jobs:
           bash -n scripts/build_release_archives.sh
           bash -n scripts/tests/test_tmb_update.sh
           bash -n scripts/tests/test_tmb_upgrade_integration.sh
+          bash -n scripts/tests/test_local_api_readiness.sh
       - name: Test Linux update recovery
         if: runner.os == 'Linux'
         run: bash scripts/tests/test_tmb_update.sh

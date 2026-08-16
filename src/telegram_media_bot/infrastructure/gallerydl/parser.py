@@ -9,7 +9,6 @@ from typing import Any
 
 from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
-    GalleryDlNoImagesError,
     GalleryDlOutputChangedError,
 )
 from telegram_media_bot.domain.models import MediaAsset, MediaKind
@@ -71,8 +70,9 @@ def parse_inspection(
             raise GalleryDlOutputChangedError("gallery-dl ytdl event is not video media")
         assets_list.append(asset)
     assets = tuple(assets_list)
-    if not any(asset.kind is MediaKind.IMAGE for asset in assets):
-        raise GalleryDlNoImagesError("The post contains no image assets")
+    # A valid gallery-dl extraction may be image-only, video-only (story video, Reel, video post),
+    # or mixed. "No image entries" is never "no downloadable media": the typed collection below
+    # carries every IMAGE/VIDEO asset the extractor returned.
     return GalleryInspection(provider=provider, post_id=post_id, title=title[:512], assets=assets)
 
 
@@ -144,7 +144,12 @@ def _provider(item: Mapping[str, Any]) -> str:
 
 
 def _post_id(item: Mapping[str, Any], provider: str) -> str:
-    for key in _POST_ID_KEYS[provider]:
+    # For Instagram Stories the directory-level post identity is the account; the exact story
+    # item keeps its own media identity, so prefer the per-item media id/shortcode there.
+    keys = _POST_ID_KEYS[provider]
+    if provider == "instagram" and str(item.get("subcategory") or "").casefold() == "stories":
+        keys = ("media_id", "shortcode", "post_shortcode", "id")
+    for key in keys:
         value = item.get(key)
         if isinstance(value, (str, int)) and str(value).strip():
             return str(value).strip()[:128]

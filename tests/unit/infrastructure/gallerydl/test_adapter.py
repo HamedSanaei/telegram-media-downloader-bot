@@ -16,7 +16,6 @@ from telegram_media_bot.domain.errors import (
     GalleryDlAuthenticationRequiredError,
     GalleryDlCookiesExpiredError,
     GalleryDlExtractionError,
-    GalleryDlNoImagesError,
     GalleryDlOutputChangedError,
     GalleryDlUnsupportedUrlError,
     ImageValidationError,
@@ -137,9 +136,10 @@ def test_mapper_exposes_only_semantic_bundle_modes(
         ("instagram-reel-ytdl.json", "instagram"),
     ],
 )
-def test_video_only_fixture_signals_ytdlp_fallback(name: str, provider: str) -> None:
-    with pytest.raises(GalleryDlNoImagesError):
-        parse_inspection(_fixture(name), expected_provider=provider, max_assets=30)
+def test_video_only_fixtures_parse_as_video_assets(name: str, provider: str) -> None:
+    inspection = parse_inspection(_fixture(name), expected_provider=provider, max_assets=30)
+
+    assert tuple(asset.kind for asset in inspection.assets) == (MediaKind.VIDEO,)
 
 
 def test_parser_rejects_invalid_and_changed_vendor_output() -> None:
@@ -295,6 +295,157 @@ def test_supported_scope_accepts_only_single_item_shapes(url: str, provider: str
     )
 
 
+def test_supported_scope_accepts_avatar_and_reels_shapes() -> None:
+    assert (
+        provider_for_single_item(
+            "https://www.instagram.com/exampleuser/avatar/",
+            frozenset({"instagram"}),
+        )
+        == "instagram"
+    )
+    assert (
+        provider_for_single_item(
+            "https://www.instagram.com/reels/AbC123/",
+            frozenset({"instagram"}),
+        )
+        == "instagram"
+    )
+
+
+def test_story_account_url_is_rejected_as_bulk() -> None:
+    with pytest.raises(GalleryDlUnsupportedUrlError):
+        provider_for_single_item(
+            "https://www.instagram.com/stories/exampleuser/",
+            frozenset({"instagram"}),
+        )
+
+
+def test_story_video_inspection_offers_video_original() -> None:
+    inspection = parse_inspection(
+        _fixture("instagram-story-video.json"), expected_provider="instagram", max_assets=30
+    )
+    info = map_gallery_info(inspection, "https://www.instagram.com/stories/u/3964254748584813861/")
+
+    assert tuple(asset.kind for asset in inspection.assets) == (MediaKind.VIDEO,)
+    assert inspection.post_id == "3964254748584813861"
+    assert info.kind is MediaKind.VIDEO
+    assert {option.mode for option in info.format_options} == {DownloadMode.VIDEO_ORIGINAL}
+
+
+def test_avatar_inspection_offers_image_original() -> None:
+    inspection = parse_inspection(
+        _fixture("instagram-avatar.json"), expected_provider="instagram", max_assets=30
+    )
+    info = map_gallery_info(inspection, "https://www.instagram.com/cristiano/avatar/")
+
+    assert tuple(asset.kind for asset in inspection.assets) == (MediaKind.IMAGE,)
+    assert info.kind is MediaKind.IMAGE
+    assert {option.mode for option in info.format_options} == {DownloadMode.IMAGE_ORIGINAL}
+
+
+def test_story_image_inspection_keeps_image_original() -> None:
+    inspection = parse_inspection(
+        _fixture("instagram-story.json"), expected_provider="instagram", max_assets=30
+    )
+    info = map_gallery_info(inspection, "https://www.instagram.com/stories/u/991/")
+
+    assert tuple(asset.kind for asset in inspection.assets) == (MediaKind.IMAGE,)
+    assert info.kind is MediaKind.IMAGE
+    assert {option.mode for option in info.format_options} == {DownloadMode.IMAGE_ORIGINAL}
+
+
+def test_expired_story_empty_output_is_media_unavailable(settings: Settings) -> None:
+    engine = GalleryDlEngine(
+        settings,
+        runner=cast(GalleryDlRunner, _FixtureRunner(b"")),
+    )
+    engine._validator = cast(Any, _AllowValidator())
+
+    with pytest.raises(MediaUnavailableError, match="story is expired or unavailable"):
+        engine.inspect("https://www.instagram.com/stories/exampleuser/123/")
+
+
+def test_story_video_download_succeeds_within_configured_limits(
+    settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LargeVideoRunner(_FixtureRunner):
+        def run(
+            self,
+            args: list[str],
+            *,
+            timeout_seconds: float,
+            is_cancelled: object = None,
+            **kwargs: object,
+        ) -> GalleryProcessResult:
+            if "--dump-json" in args:
+                return super().run(
+                    args,
+                    timeout_seconds=timeout_seconds,
+                    is_cancelled=is_cancelled,
+                    **kwargs,
+                )
+            workspace = Path(args[args.index("--directory") + 1])
+            self.download_commands.append(args)
+            # Model the production story artifact: ~6.35 MB of actual bytes with only partial
+            # extractor metadata (no filesize/duration fields). This must download successfully
+            # under the configured limits instead of raising a false MediaTooLargeError.
+            path = workspace / "0001-story.mp4"
+            path.write_bytes(b"x" * 6_355_000)
+            return GalleryProcessResult(0, b"", b"", 0.01)
+
+    monkeypatch.setattr(
+        "telegram_media_bot.infrastructure.gallerydl.adapter.is_inline_video_streamable",
+        lambda _path: False,
+    )
+    engine = GalleryDlEngine(
+        settings,
+        runner=cast(GalleryDlRunner, LargeVideoRunner(_fixture("instagram-story-video.json"))),
+    )
+    engine._validator = cast(Any, _AllowValidator())
+    info = engine.inspect("https://www.instagram.com/stories/u/3964254748584813861/")
+    option = next(item for item in info.format_options if item.mode is DownloadMode.VIDEO_ORIGINAL)
+
+    result = engine.download(
+        DownloadRequest(
+            job_id=JobId("story-job"),
+            url=info.webpage_url,
+            mode=option.mode,
+            output_directory=tmp_path / "job",
+            selected_format_ids=option.selected_format_ids,
+        )
+    )
+
+    assert result.kind is MediaKind.VIDEO
+    assert result.file_path.is_file()
+    assert result.file_size_bytes == 6_355_000
+
+
+def test_avatar_downloads_as_original_image(settings: Settings, tmp_path: Path) -> None:
+    engine = GalleryDlEngine(
+        settings,
+        runner=cast(GalleryDlRunner, _FixtureRunner(_fixture("instagram-avatar.json"))),
+    )
+    engine._validator = cast(Any, _AllowValidator())
+    info = engine.inspect("https://www.instagram.com/cristiano/avatar/")
+    option = next(item for item in info.format_options if item.mode is DownloadMode.IMAGE_ORIGINAL)
+
+    result = engine.download(
+        DownloadRequest(
+            job_id=JobId("avatar-job"),
+            url=info.webpage_url,
+            mode=option.mode,
+            output_directory=tmp_path / "job",
+            selected_format_ids=option.selected_format_ids,
+        )
+    )
+
+    assert result.kind is MediaKind.IMAGE
+    assert result.file_path.is_file()
+    assert result.file_path.suffix.casefold() == ".jpg"
+
+
 async def test_runner_cancellation_terminates_process_group() -> None:
     checks = 0
 
@@ -340,7 +491,7 @@ class _FixtureRunner:
                 continue
             extension = metadata["extension"]
             path = workspace / f"{index:04}-{metadata['type']}.{extension}"
-            if metadata["type"] in {"image", "photo"}:
+            if extension.casefold() in {"jpg", "jpeg", "png", "webp", "gif", "avif"}:
                 Image.new("RGB", (16, 16)).save(path, format="JPEG")
             else:
                 path.write_bytes(b"video")
@@ -501,7 +652,7 @@ class _FakeEngine:
         return ComponentHealth("yt_dlp", True, "test")
 
 
-def test_router_falls_back_only_for_video_only_single_post(settings: Settings) -> None:
+def test_router_keeps_video_only_single_post_gallery_owned(settings: Settings) -> None:
     gallery = GalleryDlEngine(
         settings,
         runner=cast(GalleryDlRunner, _FixtureRunner(_fixture("twitter-video.json"))),
@@ -513,10 +664,12 @@ def test_router_falls_back_only_for_video_only_single_post(settings: Settings) -
     info = router.inspect("https://x.com/example/status/8004?s=20")
 
     assert info.kind is MediaKind.VIDEO
-    assert ytdlp.inspected == ["https://x.com/example/status/8004"]
+    assert tuple(asset.kind for asset in info.assets) == (MediaKind.VIDEO,)
+    assert {option.mode for option in info.format_options} == {DownloadMode.VIDEO_ORIGINAL}
+    assert ytdlp.inspected == []
 
 
-def test_router_falls_back_for_instagram_reel_ytdl_video_event(settings: Settings) -> None:
+def test_router_keeps_instagram_reel_ytdl_video_event_gallery_owned(settings: Settings) -> None:
     gallery = GalleryDlEngine(
         settings,
         runner=cast(GalleryDlRunner, _FixtureRunner(_fixture("instagram-reel-ytdl.json"))),
@@ -528,7 +681,9 @@ def test_router_falls_back_for_instagram_reel_ytdl_video_event(settings: Setting
     info = router.inspect("https://www.instagram.com/reel/Db4UcovzZnl/")
 
     assert info.kind is MediaKind.VIDEO
-    assert ytdlp.inspected == ["https://www.instagram.com/reel/Db4UcovzZnl/"]
+    assert tuple(asset.kind for asset in info.assets) == (MediaKind.VIDEO,)
+    assert {option.mode for option in info.format_options} == {DownloadMode.VIDEO_ORIGINAL}
+    assert ytdlp.inspected == []
 
 
 def test_router_keeps_mixed_instagram_ytdl_post_gallery_owned(settings: Settings) -> None:

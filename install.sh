@@ -41,7 +41,8 @@ install_verified_release() (
     scripts/tmb.sh \
     scripts/build_release_archives.sh \
     scripts/tests/test_tmb_update.sh \
-    scripts/tests/test_tmb_upgrade_integration.sh; do
+    scripts/tests/test_tmb_upgrade_integration.sh \
+    scripts/tests/test_local_api_readiness.sh; do
     bash -n "$staging_directory/$script"
   done
   chmod 755 \
@@ -50,7 +51,8 @@ install_verified_release() (
     "$staging_directory/scripts/tmb.sh" \
     "$staging_directory/scripts/build_release_archives.sh" \
     "$staging_directory/scripts/tests/test_tmb_update.sh" \
-    "$staging_directory/scripts/tests/test_tmb_upgrade_integration.sh"
+    "$staging_directory/scripts/tests/test_tmb_upgrade_integration.sh" \
+    "$staging_directory/scripts/tests/test_local_api_readiness.sh"
   mkdir -p "$destination"
   cp -a "$staging_directory/." "$destination/"
   chmod 755 \
@@ -59,7 +61,8 @@ install_verified_release() (
     "$destination/scripts/tmb.sh" \
     "$destination/scripts/build_release_archives.sh" \
     "$destination/scripts/tests/test_tmb_update.sh" \
-    "$destination/scripts/tests/test_tmb_upgrade_integration.sh"
+    "$destination/scripts/tests/test_tmb_upgrade_integration.sh" \
+    "$destination/scripts/tests/test_local_api_readiness.sh"
 )
 
 if [[ "$(uname -s)" != "Linux" ]]; then

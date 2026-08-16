@@ -14,9 +14,20 @@ _YOUTUBE_HOSTS = frozenset(
     }
 )
 _TWITTER_HOSTS = frozenset({"x.com", "www.x.com", "twitter.com", "www.twitter.com"})
+_INSTAGRAM_HOSTS = frozenset({"instagram.com", "www.instagram.com"})
 _TWITTER_STATUS_PATTERN = re.compile(
     r"^/(?P<username>[A-Za-z0-9_]{1,15})/status/(?P<status_id>[0-9]+)(?:/.*)?$"
 )
+# Instagram share/tracking parameters are stripped before routing; they carry no routing
+# meaning and can contain user-generated share payloads.
+_INSTAGRAM_PROFILE_PATTERN = re.compile(r"^/(?P<username>[A-Za-z0-9_.]+)/?$")
+_INSTAGRAM_AVATAR_PATTERN = re.compile(r"^/(?P<username>[A-Za-z0-9_.]+)/avatar/?$")
+_INSTAGRAM_POST_PATTERN = re.compile(r"^/(?:p|reel|reels|tv)/(?P<shortcode>[A-Za-z0-9_-]+)/?$")
+_INSTAGRAM_STORY_PATTERN = re.compile(
+    r"^/stories/(?P<username>[A-Za-z0-9_.]+)/(?P<media_id>[0-9]+)/?$"
+)
+_INSTAGRAM_STORY_ACCOUNT_PATTERN = re.compile(r"^/stories/(?P<username>[A-Za-z0-9_.]+)/?$")
+_INSTAGRAM_HIGHLIGHT_PATTERN = re.compile(r"^/stories/highlights/(?P<highlight_id>[0-9]+)/?$")
 _PLAYLIST_QUERY_PARAMETERS = frozenset(
     {
         "list",
@@ -42,6 +53,9 @@ class MediaUrlIntent:
     single_video_forced: bool = False
     youtube_playlist: bool = False
     removed_query_parameters: tuple[str, ...] = ()
+    #: Explicit Instagram URL class per the routing contract: post, reel, story, story_account,
+    #: profile, avatar, or highlight. A plain profile canonicalizes to its avatar target.
+    instagram_kind: str | None = None
 
     @property
     def log_fields(self) -> dict[str, object]:
@@ -52,6 +66,7 @@ class MediaUrlIntent:
             "youtube_playlist_id": self.youtube_playlist_id,
             "single_video_forced": self.single_video_forced,
             "removed_query_parameters": self.removed_query_parameters,
+            "instagram_kind": self.instagram_kind,
         }
 
 
@@ -69,6 +84,8 @@ def canonicalize_media_url(url: str) -> MediaUrlIntent:
                 (),
             )
             return MediaUrlIntent(original_url=canonical, canonical_url=canonical)
+    if parsed.scheme.casefold() in {"http", "https"} and hostname in _INSTAGRAM_HOSTS:
+        return _canonicalize_instagram(parsed.path)
     if parsed.scheme.casefold() not in {"http", "https"} or hostname not in _YOUTUBE_HOSTS:
         return MediaUrlIntent(original_url=candidate, canonical_url=candidate)
 
@@ -114,6 +131,77 @@ def canonicalize_media_url(url: str) -> MediaUrlIntent:
         youtube_playlist_id=playlist_id,
         single_video_forced=True,
         removed_query_parameters=removed,
+    )
+
+
+def _canonicalize_instagram(path: str) -> MediaUrlIntent:
+    """Canonicalize Instagram share/tracking URLs before routing (Part D contract).
+
+    - Post/Reel/Story with an explicit media identity keep the identity and drop the query.
+    - A Story with a media id downloads only that exact story item.
+    - A plain profile URL is treated as a profile-avatar action and canonicalizes to the
+      internal ``/USERNAME/avatar/`` gallery-dl target so a profile never silently downloads
+      the account's post history.
+    - A bare story-account URL (no media id) stays distinct and is rejected as bulk by the
+      gallery adapter.
+    """
+    story = _INSTAGRAM_STORY_PATTERN.fullmatch(path)
+    if story is not None:
+        canonical = f"https://www.instagram.com/stories/{story.group('username')}/{story.group('media_id')}/"
+        return MediaUrlIntent(
+            original_url=canonical,
+            canonical_url=canonical,
+            instagram_kind="story",
+        )
+    if _INSTAGRAM_HIGHLIGHT_PATTERN.fullmatch(path) is not None:
+        canonical = f"https://www.instagram.com{path.rstrip('/')}/"
+        return MediaUrlIntent(
+            original_url=canonical,
+            canonical_url=canonical,
+            instagram_kind="highlight",
+        )
+    if _INSTAGRAM_STORY_ACCOUNT_PATTERN.fullmatch(path) is not None:
+        canonical = f"https://www.instagram.com{path.rstrip('/')}/"
+        return MediaUrlIntent(
+            original_url=canonical,
+            canonical_url=canonical,
+            instagram_kind="story_account",
+        )
+    post = _INSTAGRAM_POST_PATTERN.fullmatch(path)
+    if post is not None:
+        kind = (
+            "reel"
+            if path.strip("/").split("/", maxsplit=1)[0].casefold() in {"reel", "reels"}
+            else "post"
+        )
+        canonical = f"https://www.instagram.com/{path.strip('/')}/"
+        return MediaUrlIntent(
+            original_url=canonical,
+            canonical_url=canonical,
+            instagram_kind=kind,
+        )
+    avatar = _INSTAGRAM_AVATAR_PATTERN.fullmatch(path)
+    if avatar is not None:
+        canonical = f"https://www.instagram.com/{avatar.group('username')}/avatar/"
+        return MediaUrlIntent(
+            original_url=canonical,
+            canonical_url=canonical,
+            instagram_kind="avatar",
+        )
+    profile = _INSTAGRAM_PROFILE_PATTERN.fullmatch(path)
+    if profile is not None:
+        canonical = f"https://www.instagram.com/{profile.group('username')}/avatar/"
+        return MediaUrlIntent(
+            original_url=canonical,
+            canonical_url=canonical,
+            instagram_kind="profile",
+        )
+    # Unknown Instagram path: keep the path, drop tracking query, and leave routing to adapters.
+    canonical = f"https://www.instagram.com{path.rstrip('/')}/"
+    return MediaUrlIntent(
+        original_url=canonical,
+        canonical_url=canonical,
+        instagram_kind="unsupported",
     )
 
 

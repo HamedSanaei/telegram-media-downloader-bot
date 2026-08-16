@@ -10,8 +10,9 @@ from telegram_media_bot.domain.errors import GalleryDlUnsupportedUrlError
 
 _PROVIDER_PATTERNS = {
     "instagram": re.compile(
-        r"^/(?:p|reel|tv)/[A-Za-z0-9_-]+/?$|"
-        r"^/stories/(?:[A-Za-z0-9_.-]+/[0-9]+|highlights/[0-9]+)/?$"
+        r"^/(?:p|reel|reels|tv)/[A-Za-z0-9_-]+/?$|"
+        r"^/stories/(?:[A-Za-z0-9_.-]+/[0-9]+|highlights/[0-9]+)/?$|"
+        r"^/[A-Za-z0-9_.-]+/avatar/?$"
     ),
     "tiktok": re.compile(r"^/@[^/]+/(?:video|photo)/[0-9]+/?$"),
     "twitter": re.compile(r"^/[A-Za-z0-9_]{1,15}/status/[0-9]+/?$"),

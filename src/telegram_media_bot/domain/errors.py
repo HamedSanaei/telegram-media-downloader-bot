@@ -6,6 +6,12 @@ class MediaBotError(Exception):
 
     retryable = False
 
+    def __init__(self, message: str = "", *, source: str | None = None) -> None:
+        super().__init__(message)
+        #: Provider attribution attached once an adapter has processed the request, so a
+        #: terminal job failure never reports an unknown source after the fact.
+        self.source = source
+
 
 class ConfigurationError(MediaBotError):
     pass

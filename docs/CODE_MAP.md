@@ -9,7 +9,7 @@
 | `src/telegram_media_bot/application/services/native_options.py` | Builds the public native-only option catalog, enforces codec/transcode invariants, chooses truthful representatives, deduplicates actual plans, and creates opaque option IDs |
 | `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
 | `src/telegram_media_bot/application/services/instagram_delivery.py` | Selects the complete Instagram image/mixed bundle behind the Photo/File confirmation |
-| `src/telegram_media_bot/application/services/url_canonicalization.py` | Parses YouTube URL intent, removes Mix context from single videos, and gives equivalent X/Twitter status-share URLs one query-free identity |
+| `src/telegram_media_bot/application/services/url_canonicalization.py` | Parses YouTube URL intent, removes Mix context from single videos, gives equivalent X/Twitter status-share URLs one query-free identity, and canonicalizes Instagram share/story/profile URLs (tracking stripped, plain profiles rewritten to the `/USERNAME/avatar/` avatar target) |
 | `src/telegram_media_bot/application/services/usage_analytics.py` | Builds Tehran-local usage reports and excludes configured administrators from public KPI aggregation |
 | `src/telegram_media_bot/application/ports/usage_analytics.py` | Framework-free usage activity and PNG renderer contracts |
 | `src/telegram_media_bot/application/services/progress.py` | Framework-free download/delivery progress throttling |
@@ -17,7 +17,7 @@
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
 | `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, including strict raw-entry Instagram mixed-carousel video resolution, zero-transcode AV1/H.264 MP4 and VP9 WebM selection, narrow Twitter HLS audio-metadata inference, native/inline compatibility probing, and bounded explicit transcoding |
-| `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, explicit JSON Lines event contract, bounded output/cancellation, strict vendor tuple parsing/error mapping, stable asset normalization, and safe original-image download with Instagram videos disabled when required |
+| `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, explicit JSON Lines event contract, bounded output/cancellation, strict vendor tuple parsing/error mapping, stable asset normalization, and safe original-image download with Instagram videos disabled when required. The typed result model carries IMAGE/VIDEO/mixed collections (Stories, Reels, video posts, avatar) without conflating "no images" with "no media" |
 | `src/telegram_media_bot/infrastructure/media_engine_router.py` | Inspection-result routing and fail-closed mixed Instagram merge: validate/download canonical yt-dlp video children before gallery-dl images, then merge exact source ordinals |
 | `src/telegram_media_bot/infrastructure/image_validation.py` | Pillow signature/format/dimension/decompression-bomb validation without altering originals |
 | `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for AV1/H.264 MP4 and VP9 WebM selection, stream-copy arguments, and Best Original policy |
@@ -37,7 +37,7 @@
 | `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants, FSM state, and reply/inline keyboard builders |
 | `src/telegram_media_bot/telegram/admin_handlers.py` | Role-checked menu/download/report/cookie routing, private-chat secret export, bounded in-memory document intake, and per-admin report single-flight coordination |
 | `src/telegram_media_bot/telegram/handlers.py` | Shared URL submission, editable job-status ownership, active-job queue reconciliation, callbacks, and cancellation routing |
-| `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction |
+| `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction plus the bounded, cancellable Local Bot API startup readiness wait (`local_api_startup_wait`/`ready`/`timeout`) |
 | `src/telegram_media_bot/workers/` | ARQ worker settings and job functions, including edit-or-send inspection publication, redacted terminal-failure alerts to configured administrators, retries, receipts, and workspace cleanup |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, composition roots, and fail-fast effective-cookie path identity |
 | `src/telegram_media_bot/cli.py` | Management CLI plus full, fail-closed offline-static, and explicitly service-selected online doctor modes |
@@ -56,7 +56,7 @@
 | `install.sh`, `install.ps1` | Interactive Docker-first one-line installers and global management command setup |
 | `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup/cleanup command; Linux adds prepared-image/read-only-data static preflight, pre-downtime image pulls, exact writer/service-state tracking, private atomic offline backups, isolated transactional replacement, offline post-install plus conditional post-start online verification, runtime probes, SIGINT recovery, rollback, `tmb` repair, and guarded project-image reclamation |
 | `scripts/build_release_archives.sh` | Reproducible tar/ZIP assets, checksummed standalone updater bootstrap, v1.0.2-safe executable Linux updater packaging, and an explicit deterministic epoch for current-tree integration fixtures |
-| `scripts/tests/` | Mocked recovery plus opt-in privileged release-upgrade tests for phased offline/online verification, exact mixed service restoration, active Local API logs, archive inclusion/exclusion, redacted failures, SIGINT, runtime identity, filesystem/SQLite permissions, and Compose bind contracts |
+| `scripts/tests/` | Mocked recovery plus opt-in privileged release-upgrade tests for phased offline/online verification, exact mixed service restoration, active Local API logs, archive inclusion/exclusion, redacted failures, SIGINT, runtime identity, filesystem/SQLite permissions, Compose bind contracts, and the delayed Local API startup readiness regression (`test_local_api_readiness.sh`) |
 | `.github/workflows/ci.yml` | Quality/security gates, Compose validation, shared-cache Docker build, runtime dependency doctor, native-selector/remux, CLI, and multipart smoke tests |
 | `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication using the CI cache, runtime doctor/native-selector/remux/CLI/multipart smoke tests, and reproducible release assets |
 

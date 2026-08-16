@@ -14,7 +14,6 @@ from telegram_media_bot.application.ports.download_engine import (
 )
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.domain.errors import (
-    GalleryDlNoImagesError,
     GalleryDlOutputChangedError,
     GalleryDlUnsupportedUrlError,
 )
@@ -45,14 +44,6 @@ class RoutedMediaEngine(DownloadEngine):
         url = canonicalize_media_url(url).canonical_url
         try:
             return self._gallery.inspect(url)
-        except GalleryDlNoImagesError as exc:
-            logger.info(
-                "media_engine_fallback",
-                from_adapter="gallery-dl",
-                to_adapter="yt-dlp",
-                reason=type(exc).__name__,
-            )
-            return self._ytdlp.inspect(url)
         except GalleryDlUnsupportedUrlError as exc:
             if self._gallery.is_gallery_social_url(url):
                 raise

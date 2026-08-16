@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+## 1.3.3 - 2026-08-16
+
+### Added
+
+- Bounded, cancellable Local Telegram Bot API startup readiness wait for the bot and worker.
+  Service-owned managed and external endpoints are probed immediately, then retried with
+  exponential backoff up to the configured `startup_timeout_seconds` deadline. Structured events
+  `local_api_startup_wait`, `local_api_startup_ready`, and `local_api_startup_timeout` are emitted;
+  a permanently unavailable endpoint still fails non-zero after the bounded deadline.
+- First-class Instagram Story support. Story URLs with an exact media id canonicalize to
+  `/stories/USERNAME/MEDIA_ID/` (tracking parameters stripped) and gallery-dl is the primary
+  engine: image stories use the existing photo/file delivery, video stories expose a new
+  `video_original` option and download the original MP4 natively through the Local Bot API.
+- Instagram profile-avatar downloading. A plain `instagram.com/USERNAME/` URL classifies as a
+  profile-avatar action and canonicalizes to the internal `/USERNAME/avatar/` gallery-dl target,
+  so it never silently downloads the account's post history. The avatar is delivered as an
+  original image with document/file delivery supported.
+- Explicit Instagram URL routing contract: post `/p/`, reel `/reel/` and `/reels/`, story
+  `/stories/USER/MEDIA_ID/`, story account `/stories/USER/` (rejected as bulk), profile
+  `/USERNAME/` (avatar action), avatar `/USERNAME/avatar/`, and highlights.
+
+### Fixed
+
+- Gallery-dl inspections no longer conflate "no image entries" with "no downloadable media": the
+  typed result model now carries IMAGE, VIDEO, and mixed collections, so video-only Stories,
+  Reels, and video posts stay gallery-owned instead of falling back to yt-dlp.
+- The production false `too_large`: a silent video-only story (no audio stream) previously made
+  the bounded format selector raise `MediaTooLargeError("No complete configured format fits the
+  size limit")` after the ~6.35 MB story video had already been downloaded. That condition is now
+  classified as `NativeFormatUnavailableError`; genuinely oversized complete selections still
+  raise `MediaTooLargeError`. Story URLs with a media id also no longer fall back to the yt-dlp
+  account-story playlist that downloaded every current story.
+- Job failures after an adapter has processed the request now carry the provider source on the
+  durable record instead of reporting `source = null`.
+- Empty Instagram Story output is classified as unavailable (`MediaUnavailableError`) instead of a
+  generic parser-output error, while authentication and expired-cookie failures keep their
+  dedicated categories.
+
 ## 1.3.2 - 2026-08-15
 
 ### Fixed

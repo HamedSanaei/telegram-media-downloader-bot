@@ -4,18 +4,15 @@ Last updated: 2026-08-15
 
 ## Release state
 
-Tasks T001 through T013 are implemented. Patch 1.3.2 is prepared over production v1.3.1 and the
-released v1.3.0 secure
-administrator Cookie Management and one canonical runtime cookie file shared by yt-dlp, SoundCloud, every gallery-dl
-provider, `doctor`, and `config-check`. Legacy `gallery_dl.cookies.*` keys remain readable as
-backward-compatible aliases, but every configured alias must resolve to the canonical path; a
-divergent deployment must merge its files before upgrade. The audited production v1.2.2
-configuration defines only `yt_dlp.cookies_file: /data/cookies/cookies.txt`, so it requires no
-cookie-path migration for v1.3.0, v1.3.1, or v1.3.2. Patch 1.3.1 corrects the Linux updater's
-live-backup race. Patch 1.3.2 corrects the post-install verification lifecycle so static checks run
+Tasks T001 through T013 are implemented. Patch 1.3.3 is prepared over production v1.3.2. It fixes
+the Local Telegram Bot API startup readiness race (bot no longer crash-restarts when the Local API
+is still starting) and adds first-class Instagram Story support plus profile-avatar downloading.
+Story URLs with an exact media id download only that story item through gallery-dl, and a plain
+Instagram profile URL becomes a profile-avatar action that never downloads the account's post
+history. Patch 1.3.2 had corrected the post-install verification lifecycle so static checks run
 while writers are stopped and live Local API/Telegram checks run only after their originally
-running services are restored. Neither patch changes application configuration or cookie
-architecture.
+running services are restored; the audited production v1.3.0/v1.3.1 configuration requires no
+cookie-path migration for v1.3.2 or v1.3.3.
 
 Patch 1.2.2 fixed updater preflight validation for runtime cookie paths without mutating persistent
 data, patch 1.2.1 fixed strict mixed-carousel video-child discovery, and release 1.2.0 introduced
@@ -127,17 +124,31 @@ recorded in `docs/HANDOFF_REPORT.md` after the release-quality run.
 
 ## Verification
 
-The final v1.3.2 Python suites passed 506 Linux non-contract tests (one destructive opt-in skip) at
-82.46% coverage and 498 Windows tests (nine platform/opt-in skips) at 82.37%. Mocked Linux/Windows
-updater suites and the real privileged historical/production upgrade matrix passed, including both
-offline and online rollback boundaries, mixed service states, and the exact v1.3.1 standalone
-bootstrap to v1.3.2. The exact command results,
-artifact hashes, platform skips, and runtime smokes are recorded in `docs/HANDOFF_REPORT.md`.
-External source contracts remain opt-in and require operator-maintained public URLs; the three fixed
-public contract checks passed and 12 operator fixtures were not configured.
+The v1.3.3 Python suites passed 528 Linux non-contract tests (one destructive opt-in skip) at 83%
+coverage and 520 Windows tests (nine platform/opt-in skips) at 82% coverage. The privileged
+Docker matrix passed on the v1.3.3 image: historical v1.0.2, v1.2.1 standalone bootstrap, v1.3.0
+all-running with an active Local API log, backup/offline-doctor/online-doctor rollbacks,
+local-api/bot stopped, mixed services, the v1.3.1 standalone bootstrap, and the new delayed Local
+API readiness regression (bot and local-api RestartCount both 0; permanently unavailable endpoint
+fails after the bounded wait). The live authenticated Instagram Story (video, 6,355,416 bytes)
+downloaded through gallery-dl without a false `too_large`, and the plain-profile avatar action
+downloaded the original JPEG. Exact command results, artifact hashes, platform skips, and runtime
+smokes are recorded in `docs/HANDOFF_REPORT.md`.
 
 ## Recent fixes
 
+- 2026-08-16: Prepared patch 1.3.3. The bot no longer crash-restarts when the compose `local-api`
+  service is still starting: bot and worker now wait with bounded exponential backoff
+  (`local_api_startup_wait` / `local_api_startup_ready` / `local_api_startup_timeout` structured
+  events) and still fail non-zero if the endpoint never becomes reachable. Instagram gained
+  first-class Story support (exact-media-id canonicalization, gallery-dl as primary engine,
+  image photo/file delivery, video `video_original` native MP4 delivery), profile-avatar
+  downloading (plain profile URLs become the `/USERNAME/avatar/` action with document/file
+  delivery), and an explicit URL routing contract. The production false `too_large` for the
+  silent video-only story was fixed: gallery-dl inspections now accept video-only collections,
+  and the bounded format selector classifies "no complete selection exists" as format-unavailable
+  instead of oversized. Job failures now retain provider source attribution after an adapter has
+  processed the request.
 - 2026-08-15: Fixed the v1.3.2 privileged-updater fixture so the v1.3.0/v1.3.1 production config it
   generates (local_bot_api enabled in external mode) owns its required Local Bot API persistent
   directory `/data/state` as the configured runtime user before the updater runs. Candidate

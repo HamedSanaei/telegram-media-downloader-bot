@@ -195,6 +195,26 @@ JSON, or full commands. Rollback means restoring both the previous exact depende
 then rebuilding the previous application image; persistent config, SQLite/WAL, Redis, cookies,
 downloads, and Local API state remain mounted and untouched.
 
+## Supported Instagram URL classes (v1.3.3)
+
+Instagram URLs are canonicalized before routing and share/tracking parameters (`igsh`, `utm_*`)
+are stripped:
+
+| URL shape | Class | Behavior |
+| --- | --- | --- |
+| `/p/SHORTCODE/` | Post | Gallery-dl images/carousel; mixed carousels keep the existing image/video split |
+| `/reel/SHORTCODE/`, `/reels/SHORTCODE/`, `/tv/SHORTCODE/` | Reel | Gallery-dl video (`video_original`), original MP4 |
+| `/stories/USERNAME/MEDIA_ID/` | Story | Gallery-dl exact story item; image stories use photo/file delivery, video stories use `video_original` |
+| `/stories/USERNAME/` | Story account | Rejected as bulk; one exact story media id is required |
+| `/USERNAME/` | Profile | Treated as a profile-avatar action; canonicalizes to `/USERNAME/avatar/`; never downloads the post history |
+| `/USERNAME/avatar/` | Avatar | Gallery-dl avatar extractor; original JPEG delivered as photo or file/document |
+| `/stories/highlights/ID/` | Highlight | Gallery-dl highlight extractor (existing) |
+
+Cookies are required for private profiles and for most Stories; expired or login-required access
+surfaces the dedicated authentication category, while an expired/deleted Story surfaces the
+unavailable category. The canonical combined cookie file at `yt_dlp.cookies_file` is the single
+source for all Instagram access.
+
 ## Controlled yt-dlp update
 
 ```bash

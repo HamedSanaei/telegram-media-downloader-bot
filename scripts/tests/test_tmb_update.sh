@@ -293,13 +293,16 @@ cp "$TMB_SOURCE_ROOT/scripts/tests/test_tmb_update.sh" \
   "$destination/scripts/tests/test_tmb_update.sh"
 cp "$TMB_SOURCE_ROOT/scripts/tests/test_tmb_upgrade_integration.sh" \
   "$destination/scripts/tests/test_tmb_upgrade_integration.sh"
+cp "$TMB_SOURCE_ROOT/scripts/tests/test_local_api_readiness.sh" \
+  "$destination/scripts/tests/test_local_api_readiness.sh"
 chmod 644 \
   "$destination/install.sh" \
   "$destination/manage.sh" \
   "$destination/scripts/tmb.sh" \
   "$destination/scripts/build_release_archives.sh" \
   "$destination/scripts/tests/test_tmb_update.sh" \
-  "$destination/scripts/tests/test_tmb_upgrade_integration.sh"
+  "$destination/scripts/tests/test_tmb_upgrade_integration.sh" \
+  "$destination/scripts/tests/test_local_api_readiness.sh"
 printf 'release-placeholder' >"$destination/data/state/.gitkeep"
 printf 'release-placeholder' >"$destination/data/cookies/README.md"
 printf 'release-placeholder' >"$destination/data/downloads/.gitkeep"

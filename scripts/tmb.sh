@@ -95,7 +95,8 @@ prepare_verified_release() {
     scripts/tmb.sh \
     scripts/build_release_archives.sh \
     scripts/tests/test_tmb_update.sh \
-    scripts/tests/test_tmb_upgrade_integration.sh; do
+    scripts/tests/test_tmb_upgrade_integration.sh \
+    scripts/tests/test_local_api_readiness.sh; do
     [[ -f "$RELEASE_STAGING_DIRECTORY/$script" ]] || {
       echo "Verified release is missing $script." >&2
       return 1
@@ -111,7 +112,8 @@ prepare_verified_release() {
     "$RELEASE_STAGING_DIRECTORY/scripts/tmb.sh" \
     "$RELEASE_STAGING_DIRECTORY/scripts/build_release_archives.sh" \
     "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_tmb_update.sh" \
-    "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_tmb_upgrade_integration.sh" || return 1
+    "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_tmb_upgrade_integration.sh" \
+    "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_local_api_readiness.sh" || return 1
 }
 
 validate_prepared_release() {
@@ -184,7 +186,8 @@ install_prepared_release() {
     "$ROOT_DIR/scripts/tmb.sh" \
     "$ROOT_DIR/scripts/build_release_archives.sh" \
     "$ROOT_DIR/scripts/tests/test_tmb_update.sh" \
-    "$ROOT_DIR/scripts/tests/test_tmb_upgrade_integration.sh"
+    "$ROOT_DIR/scripts/tests/test_tmb_upgrade_integration.sh" \
+    "$ROOT_DIR/scripts/tests/test_local_api_readiness.sh"
 }
 
 rollback_application_files() {

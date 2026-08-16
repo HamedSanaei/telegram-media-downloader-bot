@@ -4,7 +4,11 @@ from typing import Any
 import pytest
 
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.errors import MediaTooLargeError, MediaUnavailableError
+from telegram_media_bot.domain.errors import (
+    MediaTooLargeError,
+    MediaUnavailableError,
+    NativeFormatUnavailableError,
+)
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
@@ -317,6 +321,53 @@ def test_fixed_mode_never_falls_back_to_lower_height() -> None:
         _best_video_audio_selector,
         mode=DownloadMode.VIDEO_2160,
         max_size_bytes=100,
+    )
+
+    with pytest.raises(NativeFormatUnavailableError):
+        list(selector({"formats": formats}))
+
+
+def test_video_only_story_selector_is_not_misclassified_as_too_large() -> None:
+    # A silent video-only story has no audio stream, so no complete video+audio selection can
+    # exist. The production false "too_large" classified that condition as MediaTooLargeError;
+    # it must surface as a format-availability condition instead.
+    formats = [
+        {
+            "format_id": "dash-video",
+            "filesize_approx": 6_351_087,
+            "vcodec": "vp09.00.40",
+            "acodec": "none",
+            "height": 1920,
+            "ext": "mp4",
+        },
+        {
+            "format_id": "progressive",
+            "filesize_approx": None,
+            "vcodec": None,
+            "acodec": "none",
+            "height": 1280,
+            "ext": "mp4",
+        },
+    ]
+    selector = bounded_format_selector(
+        _best_video_audio_selector,
+        mode=DownloadMode.BEST_ORIGINAL,
+        max_size_bytes=49 * 1024 * 1024,
+    )
+
+    with pytest.raises(NativeFormatUnavailableError):
+        list(selector({"formats": formats}))
+
+
+def test_complete_but_oversized_selection_remains_too_large() -> None:
+    formats = [
+        _format("audio", size=30, audio=True),
+        _format("video", size=40, video=True, height=720),
+    ]
+    selector = bounded_format_selector(
+        _best_video_audio_selector,
+        mode=DownloadMode.VIDEO_720,
+        max_size_bytes=50,
     )
 
     with pytest.raises(MediaTooLargeError):

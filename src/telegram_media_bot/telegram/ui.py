@@ -112,6 +112,7 @@ def media_bundle_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
         "all_original_media": "📦 دانلود همه رسانه‌ها",  # noqa: RUF001
         "images_only": "🖼 فقط تصاویر",
         "videos_only": "🎬 فقط ویدیوها",
+        "video_original": "🎬 دانلود ویدیوی اصلی",
         "images_zip": "🗜 تصاویر به‌صورت ZIP",
         "youtube_thumbnail": "🖼 دانلود تصویر بندانگشتی",
         "soundcloud_artwork": "🖼 دانلود تصویر کاور",

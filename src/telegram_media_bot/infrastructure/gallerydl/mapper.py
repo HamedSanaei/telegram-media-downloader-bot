@@ -17,6 +17,8 @@ def map_gallery_info(inspection: GalleryInspection, canonical_url: str) -> Media
     options: list[MediaFormatOption] = []
     if len(inspection.assets) == 1 and images:
         options.append(_option(DownloadMode.IMAGE_ORIGINAL, images))
+    elif len(inspection.assets) == 1 and videos:
+        options.append(_option(DownloadMode.VIDEO_ORIGINAL, videos))
     elif images and not videos:
         options.extend(
             (
@@ -33,11 +35,19 @@ def map_gallery_info(inspection: GalleryInspection, canonical_url: str) -> Media
                 _option(DownloadMode.IMAGES_ZIP, images),
             )
         )
+    elif videos:
+        options.append(_option(DownloadMode.VIDEOS_ONLY, videos))
     return MediaInfo(
         media_id=inspection.post_id,
         title=inspection.title,
         source=inspection.provider,
-        kind=MediaKind.IMAGE if len(inspection.assets) == 1 else MediaKind.PLAYLIST,
+        kind=(
+            MediaKind.IMAGE
+            if len(inspection.assets) == 1 and images
+            else MediaKind.VIDEO
+            if len(inspection.assets) == 1 and videos
+            else MediaKind.PLAYLIST
+        ),
         webpage_url=canonical_url,
         item_count=len(inspection.assets),
         estimated_size_bytes=(

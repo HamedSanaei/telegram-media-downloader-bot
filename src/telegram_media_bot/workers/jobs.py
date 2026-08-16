@@ -869,6 +869,9 @@ async def _handle_controlled_failure(
     metrics = cast(MetricsRegistry, ctx["metrics"])
     record = repository.get_job(job_id)
     category = error_category(exc)
+    # An adapter that already processed the request must leave its provider attribution on the
+    # durable record, so a terminal failure never reports an unknown source.
+    exc_source = getattr(exc, "source", None) or (record.source if record is not None else None)
     if await asyncio.to_thread(repository.is_cancel_requested, job_id):
         await asyncio.to_thread(repository.finalize_cancelled, job_id, source="user")
         await logger.ainfo(
@@ -884,6 +887,7 @@ async def _handle_controlled_failure(
             repository.transition,
             job_id,
             JobStatus.RETRYING,
+            source=exc_source,
             error_category=category,
             error_summary=type(exc).__name__,
             attempt=attempt,
@@ -893,6 +897,7 @@ async def _handle_controlled_failure(
         repository.transition,
         job_id,
         JobStatus.FAILED,
+        source=exc_source,
         error_category=category,
         error_summary=type(exc).__name__,
         attempt=attempt,

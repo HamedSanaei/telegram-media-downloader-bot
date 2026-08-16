@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from telegram_media_bot.application.services.download_service import DownloadService
+from telegram_media_bot.application.services.error_policy import error_category
 from telegram_media_bot.domain.errors import (
     InvalidUrlError,
     MediaTooLargeError,
@@ -15,6 +16,7 @@ from telegram_media_bot.domain.models import (
     DownloadMode,
     DownloadRequest,
     DownloadResult,
+    ErrorCategory,
     ImageDeliveryMode,
     JobId,
     MediaInfo,
@@ -222,3 +224,75 @@ def test_rejects_oversized_selected_result(tmp_path: Path) -> None:
             mode=DownloadMode.BEST,
             output_directory=tmp_path / "job-too-large",
         )
+
+
+def test_engine_failure_is_attributed_to_the_inspected_source(tmp_path: Path) -> None:
+    class FailingEngine(FakeEngine):
+        def download(
+            self,
+            request: DownloadRequest,
+            *,
+            progress: Callable[[ProgressEvent], None] | None = None,
+            is_cancelled: Callable[[], bool] | None = None,
+        ) -> DownloadResult:
+            del progress, is_cancelled
+            raise MediaTooLargeError("engine raised after inspection")
+
+    service = DownloadService(
+        FailingEngine(result_size_bytes=6_355_000),
+        frozenset({"example"}),
+    )
+
+    with pytest.raises(MediaTooLargeError) as raised:
+        service.download(
+            job_id=JobId("attributed-job"),
+            url="https://example.com/stories/user/123/",
+            mode=DownloadMode.BEST_ORIGINAL,
+            output_directory=tmp_path / "attributed-job",
+        )
+
+    assert raised.value.source == "example"
+    assert error_category(raised.value) is ErrorCategory.TOO_LARGE
+
+
+def test_story_sized_result_within_limits_never_raises_too_large(tmp_path: Path) -> None:
+    service = DownloadService(
+        FakeEngine(result_size_bytes=6_355_000),
+        frozenset({"example"}),
+        max_file_size_bytes=49 * 1024 * 1024,
+    )
+
+    result = service.download(
+        job_id=JobId("story-ok"),
+        url="https://example.com/stories/user/3964254748584813861/",
+        mode=DownloadMode.VIDEO_ORIGINAL,
+        output_directory=tmp_path / "story-ok",
+    )
+
+    assert result.file_size_bytes == 6_355_000
+
+
+def test_duration_genuinely_over_limit_is_too_large_and_attributed(tmp_path: Path) -> None:
+    class LongEngine(FakeEngine):
+        def inspect(self, url: str) -> MediaInfo:
+            return MediaInfo(
+                media_id="1",
+                title="Long story",
+                source="instagram",
+                kind=MediaKind.VIDEO,
+                webpage_url=url,
+                duration_seconds=14400,
+            )
+
+    service = DownloadService(
+        LongEngine(),
+        frozenset({"instagram"}),
+        max_duration_seconds=60,
+        max_file_size_bytes=49 * 1024 * 1024,
+    )
+
+    with pytest.raises(MediaTooLargeError) as raised:
+        service.inspect("https://www.instagram.com/stories/user/123/")
+
+    assert raised.value.source == "instagram"
+    assert error_category(raised.value) is ErrorCategory.TOO_LARGE

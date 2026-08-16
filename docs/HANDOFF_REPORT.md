@@ -1,6 +1,46 @@
 # Handoff verification report
 
-Generated: 2026-08-15
+Generated: 2026-08-16
+
+## v1.3.3 change addendum
+
+- Patch v1.3.3 fixes the production Local Bot API startup readiness race: after the successful
+  v1.3.2 update the bot crash-restarted once (`ValueError: Configured Local Telegram API service
+  is unreachable`, bot RestartCount=1, local-api RestartCount=0) because the compose `local-api`
+  service was still starting. Bot and worker now run a bounded, cancellable readiness wait
+  (`local_api_startup_wait`/`local_api_startup_ready`/`local_api_startup_timeout`) with
+  exponential backoff up to `startup_timeout_seconds`; an already-ready endpoint starts
+  immediately, a temporarily unavailable endpoint is retried without a container restart, and a
+  permanently unavailable endpoint fails non-zero after the bounded deadline. The privileged
+  delayed-start Docker regression asserts bot RestartCount == 0 and local-api RestartCount == 0.
+- Instagram gained first-class Story support plus profile-avatar downloading. The production Story
+  URL (`/stories/arezoo.m.1997/3964254748584813861/`) was reproduced live with the canonical
+  cookies: gallery-dl 1.32.8 emitted one video event (`type: story`, `extension: mp4`,
+  `media_id: 3964254748584813861`), which the old parser rejected as `GalleryDlNoImagesError`
+  because it required at least one IMAGE asset. The typed gallery-dl result model now carries
+  IMAGE/VIDEO/mixed collections; the story inspects as a single video with a new
+  `video_original` option and downloads the original MP4 (6,355,416 bytes) through gallery-dl
+  with no yt-dlp fallback.
+- The production false `too_large` was fully reproduced and fixed: the old fallback treated the
+  exact story URL as the account story reel (8 entries), downloaded the requested 6.35 MB story,
+  then a silent video-only entry (no audio stream) made `bounded_format_selector` raise
+  `MediaTooLargeError("No complete configured format fits the size limit")`. That condition is
+  now `NativeFormatUnavailableError`; genuinely oversized complete selections still raise
+  `MediaTooLargeError`. Job failures now retain provider source attribution, and empty Story
+  output is classified unavailable.
+- A plain Instagram profile URL (`/USERNAME/`) is classified as a profile-avatar action and
+  canonicalizes to the internal `/USERNAME/avatar/` gallery-dl target; the avatar downloads as an
+  original JPEG (photo or file/document delivery) and never downloads the account's post history.
+- Verification: Linux 529 passed (one destructive opt-in skip) at 83% coverage; Windows 521 passed
+  (nine platform/opt-in skips) at 82% coverage. Ruff, strict mypy, architecture/text/manifest
+  checks, ShellCheck, complete Bash parsing, detect-secrets, `pip check`, `pip-audit`, wheel/sdist
+  build with bundled-font smoke, plugin SDK, and `git diff --check` all passed. The privileged
+  Docker matrix passed on the v1.3.3 image (v1.0.2, v1.2.1 bootstrap, v1.3.0 all-running, backup/
+  offline/online rollbacks, local-api/bot stopped, mixed, v1.3.1 bootstrap, and the delayed Local
+  API readiness regression with both RestartCount values zero). The live authenticated Story
+  downloaded 6,355,416 bytes via gallery-dl with no false `too_large`, and the cristiano avatar
+  downloaded as a 192,983-byte JPEG.
+- Nothing was committed, pushed, tagged, published, or deployed during this preparation task.
 
 ## Current change addendum
 

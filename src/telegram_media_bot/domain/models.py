@@ -25,6 +25,7 @@ class DownloadMode(StrEnum):
     ALL_ORIGINAL_MEDIA = "all_original_media"
     IMAGES_ONLY = "images_only"
     VIDEOS_ONLY = "videos_only"
+    VIDEO_ORIGINAL = "video_original"
     IMAGES_ZIP = "images_zip"
     YOUTUBE_THUMBNAIL = "youtube_thumbnail"
     SOUNDCLOUD_ARTWORK = "soundcloud_artwork"

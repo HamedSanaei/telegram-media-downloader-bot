@@ -113,3 +113,62 @@ def test_twitter_status_tracking_query_has_stable_identity() -> None:
 
     assert plain.canonical_url == shared.canonical_url
     assert plain.canonical_url == "https://x.com/example/status/1951000000000000000"
+
+
+def test_instagram_story_tracking_url_keeps_exact_media_id_and_username() -> None:
+    url = (
+        "https://www.instagram.com/stories/arezoo.m.1997/3964254748584813861"
+        "?utm_source=ig_story_item_share&igsh=MTdoejRnanY0cXNtMw=="
+    )
+
+    intent = canonicalize_media_url(url)
+
+    assert intent.canonical_url == (
+        "https://www.instagram.com/stories/arezoo.m.1997/3964254748584813861/"
+    )
+    assert intent.instagram_kind == "story"
+    assert "utm_source" not in intent.canonical_url
+    assert "igsh" not in intent.canonical_url
+
+
+def test_instagram_post_reel_and_reels_share_urls_canonicalize() -> None:
+    post = canonicalize_media_url(
+        "https://www.instagram.com/p/AbC123/?igsh=share&utm_source=ig_share_sheet"
+    )
+    reel = canonicalize_media_url("https://www.instagram.com/reel/AbC123/?igsh=share")
+    reels = canonicalize_media_url("https://www.instagram.com/reels/AbC123/?igsh=share")
+
+    assert post.canonical_url == "https://www.instagram.com/p/AbC123/"
+    assert post.instagram_kind == "post"
+    assert reel.canonical_url == "https://www.instagram.com/reel/AbC123/"
+    assert reel.instagram_kind == "reel"
+    assert reels.canonical_url == "https://www.instagram.com/reels/AbC123/"
+    assert reels.instagram_kind == "reel"
+
+
+def test_plain_instagram_profile_canonicalizes_to_avatar_target() -> None:
+    with_www = canonicalize_media_url("https://www.instagram.com/exampleuser/")
+    bare = canonicalize_media_url("https://instagram.com/exampleuser")
+
+    assert with_www.canonical_url == "https://www.instagram.com/exampleuser/avatar/"
+    assert with_www.instagram_kind == "profile"
+    assert bare.canonical_url == "https://www.instagram.com/exampleuser/avatar/"
+    assert bare.instagram_kind == "profile"
+    # The log-safe original URL never carries the avatar rewrite or any tracking payload.
+    assert with_www.log_fields["original_url"] == "https://www.instagram.com/exampleuser/avatar/"
+
+
+def test_explicit_avatar_url_is_classified_avatar() -> None:
+    intent = canonicalize_media_url("https://www.instagram.com/exampleuser/avatar/")
+
+    assert intent.canonical_url == "https://www.instagram.com/exampleuser/avatar/"
+    assert intent.instagram_kind == "avatar"
+
+
+def test_instagram_story_account_url_stays_distinct_and_unexpanded() -> None:
+    intent = canonicalize_media_url(
+        "https://www.instagram.com/stories/exampleuser/?utm_source=ig_story_share"
+    )
+
+    assert intent.canonical_url == "https://www.instagram.com/stories/exampleuser/"
+    assert intent.instagram_kind == "story_account"

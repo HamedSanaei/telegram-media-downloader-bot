@@ -249,6 +249,7 @@ def bounded_format_selector(
         visited: set[frozenset[str]] = set()
         best: tuple[tuple[int, ...], dict[str, Any]] | None = None
         unknown: tuple[tuple[int, ...], dict[str, Any]] | None = None
+        complete_candidates_seen = False
 
         while pending and len(visited) < 1024:
             excluded = pending.popleft()
@@ -272,6 +273,7 @@ def bounded_format_selector(
                 components = _selected_components(candidate)
                 if not _is_complete_selection(components, mode):
                     continue
+                complete_candidates_seen = True
                 score = _selection_score(components, quality_index, mode)
                 size = _known_total_size(components)
                 if size is None:
@@ -293,6 +295,13 @@ def bounded_format_selector(
         if unknown is not None:
             yield unknown[1]
             return
+        if not complete_candidates_seen:
+            # The source offers no complete selection at all (for example a silent video-only
+            # story has no audio stream); that is a format-availability condition, never a size
+            # violation. Classifying it as too_large produced false oversized failures.
+            raise NativeFormatUnavailableError(
+                "No complete configured format selection is available"
+            )
         if compatible_container is not None and candidate_count:
             raise NativeFormatUnavailableError(
                 f"No native {compatible_container.value} codec-compatible format is available"

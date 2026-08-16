@@ -26,7 +26,8 @@ chmod 755 \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/manage.sh" \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tmb-current.sh" \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_tmb_update.sh" \
-  "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_tmb_upgrade_integration.sh"
+  "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_tmb_upgrade_integration.sh" \
+  "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_local_api_readiness.sh"
 
 COMMIT_EPOCH="${TMB_RELEASE_ARCHIVE_EPOCH:-$(git show -s --format=%ct "$COMMIT")}"
 [[ "$COMMIT_EPOCH" =~ ^[0-9]+$ ]] || {
