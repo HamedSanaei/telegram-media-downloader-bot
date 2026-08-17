@@ -47,7 +47,12 @@
 | `tests/integration/test_local_api_large_upload.py` | Explicit opt-in real Local API upload over 200 MB |
 | `tests/contracts/` | Opt-in external yt-dlp smoke tests |
 | `docs/tasks/` | Ordered implementation tasks for Codex |
+| `docs/agent/` | Compact task routing, architecture/current-state summaries, ADR index, and the supported Graphify query/freshness workflow; never a replacement for detailed docs |
+| `.agents/skills/` | Validated repository-local Skill trees for navigation, media engines, Telegram delivery, worker jobs, persistence, and release/updater work |
+| `.graphifyignore` | Project-scoped Graphify exclusions for secrets, runtime state, caches, generated artifacts, media, logs, and local graph output |
 | `plugins/example_extractor/` | Independent external yt-dlp extractor plugin SDK/template |
+| `scripts/agent_context.py` | Dependency-free, bounded AST fallback for overview, symbols, imports, reverse imports, references, and likely tests |
+| `scripts/check_agent_context.py` | Deterministic CI guard for routing docs/Skills, query-first/source-authority guidance, preserved quality references, exclusions, and no runtime Graphify dependency |
 | `scripts/upgrade_ytdlp.py` | Reviewed engine upgrade, verification, and report workflow |
 | `scripts/compare_canary.py` | Baseline/canary failure-rate promotion gate |
 | `scripts/generate_file_manifest.py` | Deterministic SHA-256 source-manifest generation |
@@ -57,7 +62,7 @@
 | `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup/cleanup command; Linux adds prepared-image/read-only-data static preflight, pre-downtime image pulls, exact writer/service-state tracking, private atomic offline backups, isolated transactional replacement, offline post-install plus conditional post-start online verification, runtime probes, SIGINT recovery, rollback, `tmb` repair, and guarded project-image reclamation |
 | `scripts/build_release_archives.sh` | Reproducible tar/ZIP assets, checksummed standalone updater bootstrap, v1.0.2-safe executable Linux updater packaging, and an explicit deterministic epoch for current-tree integration fixtures |
 | `scripts/tests/` | Mocked recovery plus opt-in privileged release-upgrade tests for phased offline/online verification, exact mixed service restoration, active Local API logs, archive inclusion/exclusion, redacted failures, SIGINT, runtime identity, filesystem/SQLite permissions, Compose bind contracts, and the delayed Local API startup readiness regression (`test_local_api_readiness.sh`) |
-| `.github/workflows/ci.yml` | Quality/security gates, Compose validation, shared-cache Docker build, runtime dependency doctor, native-selector/remux, CLI, and multipart smoke tests |
+| `.github/workflows/ci.yml` | Quality/security and agent-context guardrails, Compose validation, shared-cache Docker build, runtime dependency doctor, native-selector/remux, CLI, and multipart smoke tests |
 | `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication using the CI cache, runtime doctor/native-selector/remux/CLI/multipart smoke tests, and reproducible release assets |
 
 ## Upstream compatibility hot spots

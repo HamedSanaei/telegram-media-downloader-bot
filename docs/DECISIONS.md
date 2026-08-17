@@ -385,3 +385,19 @@ and fsyncs a same-directory temporary file, preserves the canonical file's numer
 and atomically replaces the path. Current readers retain their open inode and subsequent jobs open
 the new file. Error reporting contains only stable Persian messages and exception class names—never
 cookie values, names, domains, contents, upload filenames, or filesystem paths.
+
+## ADR-029: Add progressive agent navigation without changing engineering authority
+
+**Status:** accepted
+
+Keep root `AGENTS.md` as the always-loaded global engineering contract, but stop requiring every
+ordinary task to preload all major project documents and historical task files. Route tasks through
+compact indexes and repository-local subsystem Skills, then use bounded Graphify queries to locate
+the smallest likely source/test working set. Architecture-wide or high-risk changes still require
+the applicable complete specification, architecture, ADR, status, and task context.
+
+Graphify is optional local developer tooling backed by `.graphifyignore` and ignored
+checkout-specific output. It is not a production dependency, source of behavioral truth, hosted CI
+service, or substitute for source/tests/ADRs. Source defines behavior, tests define expected
+behavior, and detailed documentation retains rationale. A dependency-free AST utility and CI
+guardrail provide deterministic fallback/navigation verification without requiring Graphify.

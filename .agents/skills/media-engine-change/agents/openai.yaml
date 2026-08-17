@@ -1,0 +1,5 @@
+interface:
+  display_name: "Media Engine Change"
+  short_description: "Navigate media engine changes safely"
+  default_prompt: "Use $media-engine-change to scope this media engine change and its tests."
+

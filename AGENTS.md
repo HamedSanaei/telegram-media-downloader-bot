@@ -9,11 +9,33 @@ test, deploy, roll back, and hand over to another engineer or coding agent.
 ## Mandatory first steps for every task
 
 1. Read this file completely.
-2. Read `docs/PROJECT_SPEC.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`,
-   `docs/CODE_MAP.md`, `docs/STATUS.md`, and the relevant task file under `docs/tasks/`.
-3. Inspect existing code and tests before proposing changes.
-4. Preserve the architecture invariants below.
-5. Update `docs/STATUS.md` and `docs/CODE_MAP.md` whenever behavior or file ownership changes.
+2. Understand the task and inspect the existing working tree before deciding scope.
+3. Use the relevant repository Skill under `.agents/skills/`. If ownership is unclear, consult
+   `docs/agent/CONTEXT_INDEX.md`; before broad grep/file exploration, prefer a fresh Graphify query
+   to identify the smallest relevant working set.
+4. Inspect the relevant source code and tests before proposing or making changes.
+5. Read the relevant sections of `docs/PROJECT_SPEC.md`, `docs/ARCHITECTURE.md`,
+   `docs/DECISIONS.md`, `docs/CODE_MAP.md`, `docs/STATUS.md`, and task history as required by the
+   change. For architecture-wide, persistence, queue, cancellation, concurrency, security,
+   cleanup, upgrade/rollback, backward-compatibility, public-configuration, data-integrity, or
+   release work, err on the side of loading more authoritative context rather than less.
+6. Preserve the architecture invariants below.
+7. Update `docs/STATUS.md` and `docs/CODE_MAP.md` whenever behavior or file ownership changes.
+
+## Progressive repository navigation
+
+- Graphify is discovery tooling only: use it for symbol location, relationships, dependency paths,
+  blast radius, and candidate tests. Verify exact behavior in source code and tests before editing.
+- Source code is the behavior authority, tests define expected behavior, and the project spec,
+  architecture, ADRs, and task history explain intent. Compact files under `docs/agent/` route to
+  those authorities; they do not replace them.
+- Ensure `graphify-out/graph.json` represents the current checkout before relying on it, and update
+  it after structural changes. Use bounded `graphify query`, `path`, and `explain` results rather
+  than loading the complete graph or report.
+- When Graphify is unavailable or stale, use the dependency-free
+  `python scripts/agent_context.py ...` fallback and ordinary targeted source inspection.
+- Progressive discovery is not a limit on justified investigation. Cross-component or high-risk
+  changes must still load every relevant authoritative document, implementation, and test.
 
 ## Architecture invariants
 
@@ -77,6 +99,7 @@ uv sync --frozen --group dev
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src tests
+uv run python scripts/check_agent_context.py
 uv run pytest -m "not contract" --cov=telegram_media_bot --cov-report=term-missing
 ```
 

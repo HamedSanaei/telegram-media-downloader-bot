@@ -1,0 +1,5 @@
+interface:
+  display_name: "Telegram Delivery Change"
+  short_description: "Trace Telegram delivery changes safely"
+  default_prompt: "Use $telegram-delivery-change to scope this Telegram delivery change."
+

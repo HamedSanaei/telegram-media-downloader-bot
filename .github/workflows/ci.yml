@@ -31,6 +31,7 @@ jobs:
       - run: uv lock --check
       - run: uv sync --frozen --group dev
       - run: uv run python scripts/check_architecture.py
+      - run: uv run python scripts/check_agent_context.py
       - run: uv run python scripts/check_text_integrity.py
       - run: uv run python scripts/generate_file_manifest.py --check
       - run: uv run ruff check .

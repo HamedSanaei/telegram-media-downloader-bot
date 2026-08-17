@@ -1,0 +1,5 @@
+interface:
+  display_name: "Persistence Change"
+  short_description: "Scope durable state changes safely"
+  default_prompt: "Use $persistence-change to map this persistence change and its blast radius."
+

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Development tooling
+
+- Add project-scoped Graphify navigation guidance and exclusions, compact agent routing indexes,
+  validated subsystem Skill trees under `.agents/skills/`, and a deterministic standard-library
+  `scripts/agent_context.py` fallback for symbols, imports, reverse imports, references, and likely
+  tests. Graphify remains optional
+  developer tooling; source/tests/docs remain authoritative and production/CI have no Graphify
+  service or runtime dependency.
+- Replace unconditional whole-document-tree preloading with task-directed progressive discovery
+  while preserving every architecture, security, cleanup, cancellation, release, documentation,
+  lint, type, test, and completion safeguard. CI now checks the routing contract deterministically.
+
 ## 1.3.3 - 2026-08-16
 
 ### Added

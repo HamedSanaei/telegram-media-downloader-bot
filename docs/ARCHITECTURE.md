@@ -360,3 +360,18 @@ For defense in depth, yt-dlp receives `noplaylist=true` in both inspection and d
 single-video intent is present. Canonicalization happens before any extractor or Deno work. The
 structured `youtube_url_canonicalized` event includes validated IDs and a sanitized original URL;
 unknown query keys and their values are excluded from logs.
+
+## Agent context control plane
+
+Repository navigation is an additive development-time layer and has no runtime path into the bot,
+worker, media engines, database, queue, image, or release artifacts. Root `AGENTS.md` retains the
+global engineering contract. Compact files under `docs/agent/` route a task to the existing
+authoritative specification, architecture, ADRs, status, source, and tests.
+
+Graphify uses the repository-scoped `.graphifyignore` and an ignored, checkout-local
+`graphify-out/` index. Bounded queries locate symbols, dependency paths, reverse relationships, and
+candidate tests. The graph is not authoritative and is refreshed after structural changes; no
+Graphify package, service, network call, or generated graph is required at production runtime or in
+CI. `scripts/agent_context.py` provides a deterministic standard-library fallback, while
+`scripts/check_agent_context.py` protects the progressive-discovery contract without imposing an
+arbitrary documentation size ceiling.

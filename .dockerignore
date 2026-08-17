@@ -6,6 +6,7 @@
 .mypy_cache
 .ruff_cache
 .uv-cache
+graphify-out
 .coverage
 htmlcov
 config.yaml

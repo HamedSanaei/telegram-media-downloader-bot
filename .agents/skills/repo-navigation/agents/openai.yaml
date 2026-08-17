@@ -1,0 +1,5 @@
+interface:
+  display_name: "Repository Navigation"
+  short_description: "Route repository work with focused context"
+  default_prompt: "Use $repo-navigation to find the smallest authoritative working set for this task."
+

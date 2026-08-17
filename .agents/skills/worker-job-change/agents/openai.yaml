@@ -1,0 +1,5 @@
+interface:
+  display_name: "Worker Job Change"
+  short_description: "Trace worker job lifecycle changes"
+  default_prompt: "Use $worker-job-change to trace this worker lifecycle change."
+

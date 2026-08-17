@@ -1,0 +1,33 @@
+# Graphify output and tool environments
+graphify-out/
+.git/
+.venv/
+venv/
+.uv-cache/
+
+# Caches, reports, and build products
+**/__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+htmlcov/
+coverage.xml
+.coverage
+
+# Runtime state, secrets, media, logs, and archives
+config.yaml
+.env
+data/
+backups/
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*.mp4
+*.m4a
+*.tar
+*.tar.gz
+*.zip

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Upgrade"
+  short_description: "Navigate release and updater safeguards"
+  default_prompt: "Use $release-upgrade to scope this release or updater change."

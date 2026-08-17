@@ -4,14 +4,25 @@
 
 1. Create a single feature branch, for example `feat/complete-media-bot-v1`.
 2. Give Codex the content of `PROMPT_FOR_CODEX.md`.
-3. Tell Codex to work through `docs/tasks/` in numeric order without intermediate confirmation.
-4. Require one final implementation report containing exact test counts and coverage.
-5. Review architectural hot spots before merging:
+3. Have Codex understand the task, load the relevant repository Skill, and use
+   `docs/agent/CONTEXT_INDEX.md` only when subsystem ownership is unclear.
+4. Query a fresh Graphify index for the smallest working set, then inspect the identified source,
+   tests, and relevant detailed spec/architecture/ADR/task sections. For environments without
+   Graphify, use `scripts/agent_context.py` as the deterministic fallback.
+5. For a full-project completion request, work through incomplete `docs/tasks/` in numeric order
+   without intermediate confirmation; ordinary localized tasks should not preload unrelated task
+   history.
+6. Require one final implementation report containing exact test counts and coverage.
+7. Review architectural hot spots before merging:
    - any `yt_dlp` import outside the adapter;
    - raw dictionaries crossing layers;
    - secrets or runtime data tracked by Git;
    - blocking work in aiogram handlers;
    - user-controlled output paths or commands.
+
+The authority order is explicit: Graphify = navigation; source = actual behavior; tests = expected
+behavior; project specification, architecture, and ADRs = design rationale. Query output never
+waives source inspection or an applicable safeguard.
 
 ## Suggested final command set
 
@@ -21,6 +32,9 @@ uv sync --frozen --group dev
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src tests
+uv run python scripts/check_architecture.py
+uv run python scripts/check_agent_context.py
+uv run python scripts/check_text_integrity.py
 uv run python scripts/generate_file_manifest.py --check
 uv run pre-commit run detect-secrets --all-files
 uv run pip check

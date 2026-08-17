@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-08-15
+Last updated: 2026-08-17
 
 ## Release state
 
@@ -13,6 +13,13 @@ history. Patch 1.3.2 had corrected the post-install verification lifecycle so st
 while writers are stopped and live Local API/Telegram checks run only after their originally
 running services are restored; the audited production v1.3.0/v1.3.1 configuration requires no
 cookie-path migration for v1.3.2 or v1.3.3.
+
+An additive progressive-context layer is ready: root engineering rules stay mandatory, compact
+indexes route each task, Graphify provides bounded local structural queries, and source/tests/
+detailed documentation remain authoritative. Six validated subsystem Skill trees live under
+`.agents/skills/`. The optional graph has no production or CI dependency; a standard-library AST
+fallback and deterministic CI guard cover environments without Graphify. Runtime behavior is
+unchanged.
 
 Patch 1.2.2 fixed updater preflight validation for runtime cookie paths without mutating persistent
 data, patch 1.2.1 fixed strict mixed-carousel video-child discovery, and release 1.2.0 introduced
@@ -121,6 +128,9 @@ recorded in `docs/HANDOFF_REPORT.md` after the release-quality run.
   cookie file, and exports the complete file only to a currently configured administrator. yt-dlp,
   SoundCloud, and every gallery-dl provider use that one effective path on their next job; divergent
   legacy source aliases fail before startup.
+- Progressive agent navigation is available with task-specific indexes/Skills, local Graphify
+  queries, and a bounded AST fallback without removing any architecture, testing, security,
+  cleanup, cancellation, update, release, documentation, or completion safeguard.
 
 ## Verification
 
@@ -136,6 +146,12 @@ downloaded the original JPEG. Exact command results, artifact hashes, platform s
 smokes are recorded in `docs/HANDOFF_REPORT.md`.
 
 ## Recent fixes
+
+- 2026-08-17: Added project-scoped Graphify exclusions and query/freshness guidance, compact agent
+  routing/current-state/ADR indexes, six validated subsystem navigation Skills, and dependency-free
+  `agent_context.py` symbol/import/reference/test discovery with deterministic tests. Root
+  `AGENTS.md` now avoids unrelated document preloading but retains every global engineering rule;
+  source, tests, and detailed docs remain authoritative, and CI requires the local context guard.
 
 - 2026-08-16: Prepared patch 1.3.3. The bot no longer crash-restarts when the compose `local-api`
   service is still starting: bot and worker now wait with bounded exponential backoff
