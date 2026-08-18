@@ -14,17 +14,17 @@ def test_sanitize_url_keeps_scheme_host_and_safe_path() -> None:
 
 
 def test_sanitize_url_strips_query_parameters() -> None:
-    url = "https://cdn.example.com/media.mp4?sig=abc123&token=secret&Expires=1700000000"
+    url = "https://cdn.example.com/media.mp4?sig=abc123&token=secret&Expires=1700000000"  # pragma: allowlist secret
     assert sanitize_url(url) == "https://cdn.example.com/media.mp4"
 
 
 def test_sanitize_url_keeps_explicitly_safe_parameters() -> None:
-    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30&list=PLabc&token=secret"
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30&list=PLabc&token=secret"  # pragma: allowlist secret
     assert sanitize_url(url) == "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30&list=PLabc"
 
 
 def test_sanitize_url_never_reproduces_credentials() -> None:
-    url = "https://user:password@example.com/video"
+    url = "https://user:password@example.com/video"  # pragma: allowlist secret
     result = sanitize_url(url)
     assert "user" not in result
     assert "password" not in result
@@ -37,17 +37,37 @@ def test_sanitize_url_rejects_non_http() -> None:
 @pytest.mark.parametrize(
     ("message", "forbidden"),
     [
-        ("sessionid=IGSuperSecretCookieValue123", "IGSuperSecretCookieValue123"),
-        ("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload", "eyJhbGciOiJIUzI1NiJ9.payload"),
-        ("api_hash=abcdef0123456789abcdef0123456789", "abcdef0123456789abcdef0123456789"),
-        ("proxy=http://user:supersecret@proxy.example:8080", "supersecret"),
-        ("token=abc1234567890", "abc1234567890"),
-        ("access_token=xyzwxyzxyzxyzxyzxyz", "xyzwxyzxyzxyzxyzxyz"),
-        ("password=CorrectHorseBatteryStaple123", "CorrectHorseBatteryStaple123"),
-        ("x-api-key: 1234567890abcdef1234567890abcdef", "1234567890abcdef1234567890abcdef"),
+        # Every literal below is an intentional synthetic secret fixture: the tests verify that
+        # diagnostic_sanitizer redacts these exact shapes. They are never real credentials.
         (
-            "bot token 123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
-            "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+            "sessionid=IGSuperSecretCookieValue123",  # pragma: allowlist secret
+            "IGSuperSecretCookieValue123",  # pragma: allowlist secret
+        ),
+        (
+            "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload",  # pragma: allowlist secret
+            "eyJhbGciOiJIUzI1NiJ9.payload",  # pragma: allowlist secret
+        ),
+        (
+            "api_hash=abcdef0123456789abcdef0123456789",  # pragma: allowlist secret
+            "abcdef0123456789abcdef0123456789",  # pragma: allowlist secret
+        ),
+        (
+            "proxy=http://user:supersecret@proxy.example:8080",  # pragma: allowlist secret
+            "supersecret",  # pragma: allowlist secret
+        ),
+        ("token=abc1234567890", "abc1234567890"),  # pragma: allowlist secret
+        ("access_token=xyzwxyzxyzxyzxyzxyz", "xyzwxyzxyzxyzxyzxyz"),  # pragma: allowlist secret
+        (
+            "password=CorrectHorseBatteryStaple123",  # pragma: allowlist secret
+            "CorrectHorseBatteryStaple123",  # pragma: allowlist secret
+        ),
+        (
+            "x-api-key: 1234567890abcdef1234567890abcdef",  # pragma: allowlist secret
+            "1234567890abcdef1234567890abcdef",  # pragma: allowlist secret
+        ),
+        (
+            "bot token 123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",  # pragma: allowlist secret
+            "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",  # pragma: allowlist secret
         ),
     ],
 )
@@ -57,7 +77,7 @@ def test_synthetic_secret_bearing_messages_are_redacted(message: str, forbidden:
 
 
 def test_signed_cdn_query_secrets_are_redacted_in_text() -> None:
-    text = "download from https://cdn.example.com/media.mp4?X-Amz-Signature=abc&token=zzz"
+    text = "download from https://cdn.example.com/media.mp4?X-Amz-Signature=abc&token=zzz"  # pragma: allowlist secret
     redacted = redact_secrets(text)
     assert "X-Amz-Signature=abc" not in redacted
     assert "token=zzz" not in redacted
@@ -77,7 +97,9 @@ def test_sanitize_exception_message_bounds_and_cleans() -> None:
 
 
 def test_sanitize_exception_message_redacts_secrets() -> None:
-    result = sanitize_exception_message("HTTP 403 for sessionid=SecretCookieValue99999")
+    result = sanitize_exception_message(
+        "HTTP 403 for sessionid=SecretCookieValue99999"  # pragma: allowlist secret
+    )
     assert result is not None
     assert "SecretCookieValue99999" not in result
     assert "403" in result
