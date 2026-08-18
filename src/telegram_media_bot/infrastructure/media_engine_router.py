@@ -16,8 +16,10 @@ from telegram_media_bot.application.services.url_canonicalization import canonic
 from telegram_media_bot.domain.errors import (
     GalleryDlOutputChangedError,
     GalleryDlUnsupportedUrlError,
+    MediaBotError,
 )
 from telegram_media_bot.domain.models import (
+    COLLECTION_MODES,
     ComponentHealth,
     ContainerPolicy,
     DownloadArtifact,
@@ -53,7 +55,11 @@ class RoutedMediaEngine(DownloadEngine):
                 to_adapter="yt-dlp",
                 reason=type(exc).__name__,
             )
-            return self._ytdlp.inspect(url)
+            try:
+                return self._ytdlp.inspect(url)
+            except Exception as ytdlp_exc:
+                _attach_fallback(ytdlp_exc, ("gallery-dl", "yt-dlp"), type(exc).__name__)
+                raise
 
     def download(
         self,
@@ -68,7 +74,16 @@ class RoutedMediaEngine(DownloadEngine):
                 progress=progress,
                 is_cancelled=is_cancelled,
             )
-        info = self._gallery.inspect(request.url)
+        info = self._gallery.inspect(request.url, max_assets=request.max_assets)
+        if request.mode in COLLECTION_MODES:
+            # Bulk Stories/Highlights stay gallery-dl-owned end to end: gallery-dl is the
+            # primary engine and its native ordering is preserved.
+            return self._gallery.download_inspected(
+                request,
+                info,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
         images = tuple(asset for asset in info.assets if asset.kind is MediaKind.IMAGE)
         videos = tuple(asset for asset in info.assets if asset.kind is MediaKind.VIDEO)
         if info.source.casefold() != "instagram" or not videos:
@@ -238,3 +253,13 @@ class RoutedMediaEngine(DownloadEngine):
 def _cleanup_split_directory(path: Path) -> None:
     if path.is_dir():
         shutil.rmtree(path)
+
+
+def _attach_fallback(exc: BaseException, chain: tuple[str, ...], reason: str) -> None:
+    if isinstance(exc, MediaBotError):
+        if exc.fallback_chain is None:
+            exc.fallback_chain = chain
+        if exc.fallback_reason is None:
+            exc.fallback_reason = reason
+        if exc.adapter is None:
+            exc.adapter = chain[-1]

@@ -172,3 +172,26 @@ def test_instagram_story_account_url_stays_distinct_and_unexpanded() -> None:
 
     assert intent.canonical_url == "https://www.instagram.com/stories/exampleuser/"
     assert intent.instagram_kind == "story_account"
+
+
+def test_instagram_highlight_url_canonicalizes_and_strips_tracking() -> None:
+    url = (
+        "https://www.instagram.com/stories/highlights/17841400308474925/"
+        "?utm_source=ig_story_item_share&igsh=MTdoejRnanY0cXNtMw=="
+    )
+
+    intent = canonicalize_media_url(url)
+
+    assert intent.canonical_url == (
+        "https://www.instagram.com/stories/highlights/17841400308474925/"
+    )
+    assert intent.instagram_kind == "highlight"
+    assert "utm_source" not in intent.canonical_url
+    assert "igsh" not in intent.canonical_url
+
+
+def test_instagram_user_highlights_tray_url_stays_distinct() -> None:
+    intent = canonicalize_media_url("https://www.instagram.com/exampleuser/highlights/?igsh=share")
+
+    assert intent.canonical_url == "https://www.instagram.com/exampleuser/highlights/"
+    assert intent.instagram_kind == "unsupported"

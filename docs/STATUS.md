@@ -4,15 +4,17 @@ Last updated: 2026-08-17
 
 ## Release state
 
-Tasks T001 through T013 are implemented. Patch 1.3.3 is prepared over production v1.3.2. It fixes
-the Local Telegram Bot API startup readiness race (bot no longer crash-restarts when the Local API
-is still starting) and adds first-class Instagram Story support plus profile-avatar downloading.
-Story URLs with an exact media id download only that story item through gallery-dl, and a plain
-Instagram profile URL becomes a profile-avatar action that never downloads the account's post
-history. Patch 1.3.2 had corrected the post-install verification lifecycle so static checks run
-while writers are stopped and live Local API/Telegram checks run only after their originally
-running services are restored; the audited production v1.3.0/v1.3.1 configuration requires no
-cookie-path migration for v1.3.2 or v1.3.3.
+Tasks T001 through T013 are implemented. Patch 1.3.4 adds rich structured administrator
+failure diagnostics (typed `FailureContext` threaded from the failing layer through retries to
+the terminal admin notification, with a central secret sanitizer), an admin-only Cookie Health
+Center (network-free static validation, real lightweight authenticated probes with bounded
+concurrency, persisted state-transition alert deduplication, a local expiry watcher, and
+runtime auth-failure alerts), Instagram bulk Stories (single exact item vs all active stories,
+batch delivery with per-item isolation and a final summary), first-class Instagram Highlights
+(direct `/stories/highlights/ID/` URLs plus a paginated profile highlight browser), and
+Instagram cookie-health gating before bulk collection jobs. v1.3.3 had added first-class
+Instagram Story support and profile-avatar downloading while keeping the exact-media-id Story
+contract; patch 1.3.2 corrected the post-install verification lifecycle.
 
 An additive progressive-context layer is ready: root engineering rules stay mandatory, compact
 indexes route each task, Graphify provides bounded local structural queries, and source/tests/

@@ -48,6 +48,96 @@
       "title": "AppSection",
       "type": "object"
     },
+    "CookieHealthSection": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "expiring_soon_hours": {
+          "default": 24,
+          "maximum": 720,
+          "minimum": 1,
+          "title": "Expiring Soon Hours",
+          "type": "number"
+        },
+        "expiry_watch_interval_minutes": {
+          "default": 45,
+          "maximum": 1440,
+          "minimum": 5,
+          "title": "Expiry Watch Interval Minutes",
+          "type": "integer"
+        },
+        "active_probe_interval_minutes": {
+          "default": 0,
+          "maximum": 10080,
+          "minimum": 0,
+          "title": "Active Probe Interval Minutes",
+          "type": "integer"
+        },
+        "probe_timeout_seconds": {
+          "default": 20,
+          "maximum": 120,
+          "minimum": 5,
+          "title": "Probe Timeout Seconds",
+          "type": "integer"
+        },
+        "probe_concurrency": {
+          "default": 2,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Probe Concurrency",
+          "type": "integer"
+        },
+        "reminder_interval_minutes": {
+          "default": 180,
+          "maximum": 10080,
+          "minimum": 15,
+          "title": "Reminder Interval Minutes",
+          "type": "integer"
+        },
+        "recovery_notifications": {
+          "default": true,
+          "title": "Recovery Notifications",
+          "type": "boolean"
+        },
+        "probes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CookieProbeSection"
+          },
+          "title": "Probes",
+          "type": "object"
+        }
+      },
+      "title": "CookieHealthSection",
+      "type": "object"
+    },
+    "CookieProbeSection": {
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "auth_required": {
+          "default": false,
+          "title": "Auth Required",
+          "type": "boolean"
+        }
+      },
+      "title": "CookieProbeSection",
+      "type": "object"
+    },
     "DownloadMode": {
       "enum": [
         "best",
@@ -64,9 +154,12 @@
         "all_original_media",
         "images_only",
         "videos_only",
+        "video_original",
         "images_zip",
         "youtube_thumbnail",
-        "soundcloud_artwork"
+        "soundcloud_artwork",
+        "instagram_all_stories",
+        "instagram_highlight"
       ],
       "title": "DownloadMode",
       "type": "string"
@@ -324,6 +417,20 @@
           "minimum": 1,
           "title": "Max Total Size Mb",
           "type": "integer"
+        },
+        "max_stories_per_batch": {
+          "default": 100,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Max Stories Per Batch",
+          "type": "integer"
+        },
+        "max_highlight_items": {
+          "default": 100,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Max Highlight Items",
+          "type": "integer"
         }
       },
       "title": "InstagramSection",
@@ -505,9 +612,12 @@
             "all_original_media",
             "images_only",
             "videos_only",
+            "video_original",
             "images_zip",
             "youtube_thumbnail",
-            "soundcloud_artwork"
+            "soundcloud_artwork",
+            "instagram_all_stories",
+            "instagram_highlight"
           ],
           "items": {
             "$ref": "#/$defs/DownloadMode"
@@ -1267,6 +1377,9 @@
     },
     "operations": {
       "$ref": "#/$defs/OperationsSection"
+    },
+    "cookie_health": {
+      "$ref": "#/$defs/CookieHealthSection"
     }
   },
   "required": [

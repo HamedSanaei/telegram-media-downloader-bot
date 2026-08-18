@@ -6,11 +6,20 @@ import structlog
 from aiogram import Dispatcher
 
 from telegram_media_bot.application.services.access_policy import AccessPolicyService
+from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.infrastructure.analytics.usage_chart_renderer import PngUsageChartRenderer
+from telegram_media_bot.infrastructure.cookies.health import (
+    MissingCookieChecker,
+    NetscapeStaticCookieChecker,
+)
 from telegram_media_bot.infrastructure.cookies.manager import NetscapeCookieManager
+from telegram_media_bot.infrastructure.cookies.probe import GalleryDlCookieProbe
+from telegram_media_bot.infrastructure.persistence.sqlite_cookie_health import (
+    SqliteCookieHealthRepository,
+)
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.persistence.sqlite_usage_analytics import (
     SqliteUsageAnalyticsRepository,
@@ -62,6 +71,21 @@ async def run_bot(settings: Settings) -> None:
             membership_checker=membership_checker,
         )
         dispatcher = Dispatcher()
+        cookie_health_store = SqliteCookieHealthRepository(settings.database_path())
+        await asyncio.to_thread(cookie_health_store.initialize)
+        cookie_health_service = CookieHealthService(
+            store=cookie_health_store,
+            checker=(
+                NetscapeStaticCookieChecker(NetscapeCookieManager(cookie_file))
+                if (cookie_file := settings.effective_cookie_file()) is not None
+                else MissingCookieChecker()
+            ),
+            probe=GalleryDlCookieProbe(settings),
+            expiring_soon_hours=settings.cookie_health.expiring_soon_hours,
+            reminder_interval_minutes=settings.cookie_health.reminder_interval_minutes,
+            recovery_notifications=settings.cookie_health.recovery_notifications,
+            probe_concurrency=settings.cookie_health.probe_concurrency,
+        )
         dispatcher.include_router(
             build_router(
                 settings=settings,
@@ -80,6 +104,7 @@ async def run_bot(settings: Settings) -> None:
                     if (cookie_file := settings.effective_cookie_file()) is not None
                     else None
                 ),
+                cookie_health_service=cookie_health_service,
             )
         )
         await logger.ainfo("bot_started")

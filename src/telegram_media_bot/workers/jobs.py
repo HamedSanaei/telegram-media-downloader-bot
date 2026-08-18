@@ -5,20 +5,31 @@ import secrets
 import threading
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import PackageNotFoundError, version
 from time import monotonic
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import structlog
 import structlog.contextvars
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from arq import Retry
 
-from telegram_media_bot.application.ports.delivery import DeliveryGateway
+from telegram_media_bot.application.ports.delivery import (
+    DeliveryGateway,
+)
 from telegram_media_bot.application.ports.job_queue import JobQueue
 from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.application.ports.user_repository import UserRepository
+from telegram_media_bot.application.services.cookie_health_service import (
+    CookieHealthAlert,
+    CookieHealthService,
+)
+from telegram_media_bot.application.services.diagnostic_sanitizer import (
+    sanitize_exception_message,
+)
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.error_policy import error_category
 from telegram_media_bot.application.services.instagram_delivery import (
@@ -32,8 +43,14 @@ from telegram_media_bot.application.services.progress import (
 )
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.domain.cookie_health import (
+    BLOCKING_COOKIE_STATES,
+    CookieHealthState,
+)
+from telegram_media_bot.domain.cookies import CookieService
 from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
+    BatchDeliveryFailedError,
     CollectionTooLargeError,
     DeliveryError,
     GalleryDlCookiesExpiredError,
@@ -42,16 +59,24 @@ from telegram_media_bot.domain.errors import (
     GalleryDlUnavailableError,
     GalleryDlUnsupportedUrlError,
     ImageValidationError,
+    InstagramCookiesUnavailableError,
     JobCancelledError,
     MediaBotError,
     MediaTooLargeError,
     MediaUnavailableError,
     NativeFormatUnavailableError,
     PlaylistNotAllowedError,
+    PostProcessingError,
     RateLimitedError,
     TranscodeRejectedError,
 )
+from telegram_media_bot.domain.failures import (
+    FailureContext,
+    FailureStage,
+    render_failure_notification,
+)
 from telegram_media_bot.domain.models import (
+    COLLECTION_MODES,
     ContainerPolicy,
     DeliveryItemReceipt,
     DeliveryItemRecord,
@@ -60,10 +85,13 @@ from telegram_media_bot.domain.models import (
     DeliveryStage,
     DownloadMode,
     ErrorCategory,
+    HighlightTrayRecord,
     ImageDeliveryMode,
     JobId,
     JobKind,
+    JobRecord,
     JobStatus,
+    MediaKind,
     NativeVideoCodec,
     OutputContainer,
     ProgressEvent,
@@ -75,7 +103,7 @@ from telegram_media_bot.infrastructure.storage.workspace import (
     cleanup_job_workspace,
     sweep_workspaces,
 )
-from telegram_media_bot.telegram.delivery import render_caption
+from telegram_media_bot.telegram.delivery import render_batch_summary, render_caption
 from telegram_media_bot.telegram.texts import (
     AUTH_REQUIRED_TEXT,
     CANCELLED_TEXT,
@@ -87,6 +115,7 @@ from telegram_media_bot.telegram.texts import (
     GALLERY_EXTRACTION_TEXT,
     GALLERY_OUTPUT_CHANGED_TEXT,
     GALLERY_UNAVAILABLE_TEXT,
+    INSTAGRAM_COOKIES_BLOCKED_TEXT,
     INVALID_IMAGE_TEXT,
     MEDIA_TOO_LARGE_TEXT,
     MEDIA_UNAVAILABLE_TEXT,
@@ -97,15 +126,31 @@ from telegram_media_bot.telegram.texts import (
 )
 from telegram_media_bot.telegram.ui import (
     container_keyboard,
+    highlight_tray_keyboard,
     instagram_image_delivery_keyboard,
     media_bundle_keyboard,
     render_delivery_progress,
+    render_highlight_tray,
     render_instagram_image_delivery_prompt,
     render_media_info,
     render_progress,
+    story_choice_keyboard,
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def _project_version() -> str:
+    try:
+        return version("telegram-media-downloader-bot")
+    except PackageNotFoundError:
+        return "1.3.4"
+
+
+APP_VERSION = _project_version()
+
+#: In-memory per-job retry history (best effort; the durable record keeps the attempt count).
+_FAILURE_HISTORY: dict[str, list[str]] = {}
 
 
 async def process_inspection_job(
@@ -195,6 +240,43 @@ async def process_inspection_job(
             )
             return str(job_id)
         if info.assets:
+            intent = canonicalize_media_url(url)
+            now = datetime.now(UTC)
+            if intent.instagram_kind == "story":
+                # Part C: after a successful exact-story inspection the user chooses between the
+                # exact story item and every active story of that account. Never bulk-download
+                # automatically.
+                story_selection = SelectionRecord(
+                    token=SelectionToken(secrets.token_urlsafe(15)),
+                    owner_user_id=user_id,
+                    chat_id=chat_id,
+                    media=info,
+                    allowed_modes=tuple(
+                        dict.fromkeys(option.mode for option in info.format_options)
+                    ),
+                    created_at=now,
+                    expires_at=now + timedelta(seconds=settings.persistence.selection_ttl_seconds),
+                )
+                await asyncio.to_thread(repository.save_selection, story_selection)
+                status_message_id = await _edit_or_send_inspection_message(
+                    bot=bot,
+                    chat_id=chat_id,
+                    message_id=record.status_message_id,
+                    text=render_media_info(info),
+                    reply_markup=story_choice_keyboard(story_selection),
+                )
+                await asyncio.to_thread(repository.set_status_message, job_id, status_message_id)
+                await asyncio.to_thread(
+                    repository.transition, job_id, JobStatus.SUCCEEDED, source=info.source
+                )
+                metrics.record_job(outcome="inspection_succeeded", source=info.source)
+                await logger.ainfo(
+                    "story_choice_published",
+                    job_id=job_id,
+                    source=info.source,
+                    media_count=len(info.assets),
+                )
+                return str(job_id)
             allowed_modes = tuple(dict.fromkeys(option.mode for option in info.format_options))
             if not allowed_modes:
                 raise NativeFormatUnavailableError(
@@ -210,6 +292,11 @@ async def process_inspection_job(
                 expires_at=now + timedelta(seconds=settings.persistence.selection_ttl_seconds),
             )
             await asyncio.to_thread(repository.save_selection, selection)
+            highlights_username = (
+                _instagram_username_from_url(info.webpage_url)
+                if record.url_classification == "profile"
+                else None
+            )
             status_message_id = await _edit_or_send_inspection_message(
                 bot=bot,
                 chat_id=chat_id,
@@ -220,7 +307,9 @@ async def process_inspection_job(
                     else render_media_info(info)
                 ),
                 reply_markup=(
-                    instagram_image_delivery_keyboard(selection)
+                    instagram_image_delivery_keyboard(
+                        selection, highlights_username=highlights_username
+                    )
                     if requires_instagram_image_confirmation(info)
                     else media_bundle_keyboard(selection)
                 ),
@@ -386,19 +475,16 @@ async def process_inspection_job(
         )
         metrics.record_job(outcome="failed", error=ErrorCategory.INTERNAL.value)
         await _notify_failure(ctx, chat_id, record.status_message_id if record else None)
-        await _notify_admins_of_terminal_failure(
+        context = _build_failure_context(
             ctx,
             job_id=job_id,
             kind=JobKind.INSPECTION,
-            source=(
-                terminal_record.source
-                if (terminal_record := repository.get_job(job_id)) is not None
-                else None
-            ),
-            status=JobStatus.FAILED,
-            category=ErrorCategory.INTERNAL,
+            exc=exc,
             attempt=attempt,
+            stage=FailureStage.INSPECTION,
+            started=started,
         )
+        await _notify_admins_of_terminal_failure(ctx, context=context, status=JobStatus.FAILED)
         await logger.aexception("inspection_unexpected_failure", job_id=job_id)
         return str(job_id)
     finally:
@@ -436,6 +522,131 @@ async def _edit_or_send_inspection_message(
         reply_markup=reply_markup,
     )
     return message.message_id
+
+
+async def process_highlight_tray_job(
+    ctx: dict[str, Any],
+    *,
+    chat_id: int,
+    user_id: int,
+    url: str,
+    username: str,
+) -> str:
+    """Fetch one Instagram highlight tray and publish the browsable highlight list (Part D)."""
+    settings = cast(Settings, ctx["settings"])
+    repository = cast(JobRepository, ctx["repository"])
+    engine = ctx.get("gallery_engine") or ctx.get("engine")
+    bot = cast(Bot, ctx["bot"])
+    metrics = cast(MetricsRegistry, ctx["metrics"])
+    job_id = JobId(str(ctx.get("job_id") or "unknown"))
+    structlog.contextvars.bind_contextvars(request_id=str(job_id), job_id=str(job_id))
+    record = repository.get_job(job_id)
+    attempt = int(ctx.get("job_try") or 1)
+    started = monotonic()
+    await logger.ainfo(
+        "highlight_tray_started",
+        job_id=job_id,
+        user_id=user_id,
+        chat_id=chat_id,
+        username=username,
+        attempt=attempt,
+    )
+    try:
+        if record is None:
+            raise RuntimeError("Durable highlight-tray record is missing")
+        if record.status is JobStatus.SUCCEEDED:
+            return str(job_id)
+        if record.status is JobStatus.CANCELLED:
+            return str(job_id)
+        if repository.is_cancel_requested(job_id):
+            raise JobCancelledError("Highlight tray fetch was cancelled")
+        repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
+        fetch = getattr(engine, "fetch_highlight_tray", None)
+        if not callable(fetch):
+            raise RuntimeError("Gallery highlight tray fetch is unavailable")
+        highlights = await asyncio.to_thread(
+            fetch,
+            username,
+            max_highlights=settings.media.instagram.max_highlight_items,
+        )
+        if not highlights:
+            raise MediaUnavailableError("Instagram account has no highlights")
+        now = datetime.now(UTC)
+        tray = HighlightTrayRecord(
+            token=SelectionToken(secrets.token_urlsafe(15)),
+            owner_user_id=user_id,
+            chat_id=chat_id,
+            username=username,
+            highlights=highlights,
+            created_at=now,
+            expires_at=now + timedelta(seconds=settings.persistence.selection_ttl_seconds),
+        )
+        await asyncio.to_thread(repository.save_highlight_tray, tray)
+        status_message_id = await _edit_or_send_inspection_message(
+            bot=bot,
+            chat_id=chat_id,
+            message_id=record.status_message_id,
+            text=render_highlight_tray(tray, page=1),
+            reply_markup=highlight_tray_keyboard(tray, page=1),
+        )
+        await asyncio.to_thread(repository.set_status_message, job_id, status_message_id)
+        await asyncio.to_thread(
+            repository.transition, job_id, JobStatus.SUCCEEDED, source="instagram"
+        )
+        metrics.record_job(outcome="inspection_succeeded", source="instagram")
+        await logger.ainfo(
+            "highlight_tray_completed",
+            job_id=job_id,
+            username=username,
+            highlight_count=len(highlights),
+        )
+        return str(job_id)
+    except JobCancelledError:
+        await asyncio.to_thread(repository.finalize_cancelled, job_id, source="user")
+        await logger.ainfo("highlight_tray_cancelled", job_id=job_id)
+        return str(job_id)
+    except MediaBotError as exc:
+        await _handle_controlled_failure(ctx, job_id, chat_id, exc, attempt)
+        return str(job_id)
+    except Exception as exc:
+        if await asyncio.to_thread(repository.is_cancel_requested, job_id):
+            await asyncio.to_thread(repository.finalize_cancelled, job_id, source="user")
+            return str(job_id)
+        if attempt < settings.queue.max_tries:
+            await asyncio.to_thread(
+                repository.transition,
+                job_id,
+                JobStatus.RETRYING,
+                error_category=ErrorCategory.INTERNAL,
+                error_summary=type(exc).__name__,
+                attempt=attempt,
+            )
+            raise Retry(defer=settings.queue.retry_delay_seconds) from exc
+        await asyncio.to_thread(
+            repository.transition,
+            job_id,
+            JobStatus.FAILED,
+            error_category=ErrorCategory.INTERNAL,
+            error_summary=type(exc).__name__,
+            attempt=attempt,
+        )
+        metrics.record_job(outcome="failed", error=ErrorCategory.INTERNAL.value)
+        await _notify_failure(ctx, chat_id, record.status_message_id if record else None)
+        context = _build_failure_context(
+            ctx,
+            job_id=job_id,
+            kind=JobKind.HIGHLIGHT_TRAY,
+            exc=exc,
+            attempt=attempt,
+            stage=FailureStage.EXTRACTION,
+            started=started,
+        )
+        await _notify_admins_of_terminal_failure(ctx, context=context, status=JobStatus.FAILED)
+        await logger.aexception("highlight_tray_unexpected_failure", job_id=job_id)
+        return str(job_id)
+    finally:
+        metrics.observe_duration(monotonic() - started)
+        structlog.contextvars.clear_contextvars()
 
 
 async def process_download_job(
@@ -535,6 +746,7 @@ async def process_download_job(
             if image_delivery_mode
             else record.image_delivery_mode
         )
+        _gate_collection_cookies(ctx, selected_mode)
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
         reporter = asyncio.create_task(
             _report_progress(
@@ -584,6 +796,66 @@ async def process_download_job(
         await asyncio.to_thread(
             repository.transition, job_id, JobStatus.DELIVERING, source=result.source
         )
+        if selected_mode in COLLECTION_MODES:
+            summary_title = (
+                "📚 دانلود استوری‌ها تمام شد"  # noqa: RUF001
+                if selected_mode is DownloadMode.INSTAGRAM_ALL_STORIES
+                else "⭐ دانلود هایلایت تمام شد"
+            )
+            batch = await delivery.deliver_batch(
+                chat_id=chat_id,
+                result=result,
+                caption=render_caption(
+                    settings,
+                    result,
+                    str(ctx.get("bot_username") or "telegram_media_bot"),
+                ),
+                progress=delivery_progress_sink,
+                item_delivered=persist_delivery_item,
+                is_cancelled=cancellation,
+                summary_title=summary_title,
+            )
+            if batch.succeeded == 0:
+                raise BatchDeliveryFailedError("Every collection item failed to deliver")
+            if cancellation():
+                raise JobCancelledError("Download was cancelled during delivery")
+            try:
+                await asyncio.to_thread(
+                    repository.complete_download,
+                    job_id,
+                    user_id=user_id,
+                    day=datetime.now(UTC).date(),
+                    source=result.source,
+                    delivery_file_id=batch.receipts[0].file_id if batch.receipts else None,
+                    delivery_file_unique_id=(
+                        batch.receipts[0].file_unique_id if batch.receipts else None
+                    ),
+                    attempt=attempt,
+                    delivered_bytes=batch.delivered_bytes,
+                )
+            except JobCancelledError:
+                raise
+            except Exception as exc:
+                raise DeliveryError("Atomic delivery completion persistence failed") from exc
+            metrics.add_bytes(batch.delivered_bytes)
+            metrics.record_job(outcome="succeeded", source=result.source)
+            if record.status_message_id is not None:
+                await _safe_edit(
+                    delivery,
+                    chat_id,
+                    record.status_message_id,
+                    render_batch_summary(summary_title, batch.total, batch.succeeded, batch.failed),
+                )
+            await logger.ainfo(
+                "batch_download_completed",
+                job_id=job_id,
+                source=result.source,
+                total=batch.total,
+                succeeded=batch.succeeded,
+                failed=batch.failed,
+                delivered_bytes=batch.delivered_bytes,
+            )
+            return str(job_id)
         receipt = await delivery.deliver(
             chat_id=chat_id,
             result=result,
@@ -691,18 +963,18 @@ async def process_download_job(
             record.status_message_id if record else None,
             DELIVERY_UNCERTAIN_TEXT,
         )
-        await _notify_admins_of_terminal_failure(
+        context = _build_failure_context(
             ctx,
             job_id=job_id,
             kind=JobKind.DOWNLOAD,
-            source=(
-                terminal_record.source
-                if (terminal_record := repository.get_job(job_id)) is not None
-                else None
-            ),
-            status=JobStatus.DELIVERY_UNCERTAIN,
-            category=ErrorCategory.DELIVERY_UNCERTAIN,
+            exc=exc,
             attempt=attempt,
+            stage=FailureStage.DELIVERY,
+            started=started,
+            category=ErrorCategory.DELIVERY_UNCERTAIN,
+        )
+        await _notify_admins_of_terminal_failure(
+            ctx, context=context, status=JobStatus.DELIVERY_UNCERTAIN
         )
         progress_fields: dict[str, object] = {}
         if last_delivery_progress is not None:
@@ -778,19 +1050,16 @@ async def process_download_job(
         metrics.record_job(outcome="failed", error=ErrorCategory.INTERNAL.value)
         await _record_failed_usage(repository, job_id, user_id)
         await _notify_failure(ctx, chat_id, record.status_message_id if record else None)
-        await _notify_admins_of_terminal_failure(
+        context = _build_failure_context(
             ctx,
             job_id=job_id,
             kind=JobKind.DOWNLOAD,
-            source=(
-                terminal_record.source
-                if (terminal_record := repository.get_job(job_id)) is not None
-                else None
-            ),
-            status=JobStatus.FAILED,
-            category=ErrorCategory.INTERNAL,
+            exc=exc,
             attempt=attempt,
+            stage=FailureStage.DOWNLOAD,
+            started=started,
         )
+        await _notify_admins_of_terminal_failure(ctx, context=context, status=JobStatus.FAILED)
         await logger.aexception("download_unexpected_failure", job_id=job_id)
         return str(job_id)
     finally:
@@ -911,15 +1180,17 @@ async def _handle_controlled_failure(
         record.status_message_id if record else None,
         _controlled_failure_text(exc),
     )
-    await _notify_admins_of_terminal_failure(
+    context = _build_failure_context(
         ctx,
         job_id=job_id,
         kind=record.kind if record is not None else JobKind.DOWNLOAD,
-        source=record.source if record is not None else None,
-        status=JobStatus.FAILED,
-        category=category,
+        exc=exc,
         attempt=attempt,
+        stage=_failure_stage_for_exception(exc),
+        started=None,
     )
+    await _notify_admins_of_terminal_failure(ctx, context=context, status=JobStatus.FAILED)
+    await _record_runtime_auth_failure(ctx, exc)
     await logger.awarning(
         "job_controlled_failure",
         job_id=job_id,
@@ -935,6 +1206,31 @@ def _controlled_failure_reason(exc: MediaBotError) -> str:
     if isinstance(exc, NativeFormatUnavailableError):
         return "native_codec_container_unavailable"
     return error_category(exc).value
+
+
+def _failure_stage_for_exception(exc: MediaBotError) -> FailureStage:
+    if isinstance(
+        exc,
+        (
+            AuthenticationRequiredError,
+            GalleryDlCookiesExpiredError,
+            InstagramCookiesUnavailableError,
+        ),
+    ):
+        return FailureStage.AUTHENTICATION
+    if isinstance(exc, NativeFormatUnavailableError):
+        return FailureStage.FORMAT_PLANNING
+    if isinstance(exc, (GalleryDlExtractionError, GalleryDlUnsupportedUrlError)):
+        return FailureStage.EXTRACTION
+    if isinstance(exc, (DeliveryError, BatchDeliveryFailedError)):
+        return FailureStage.DELIVERY
+    if isinstance(exc, (PostProcessingError, TranscodeRejectedError)):
+        return FailureStage.POSTPROCESS
+    if isinstance(exc, (MediaTooLargeError, CollectionTooLargeError)):
+        return FailureStage.DOWNLOAD
+    if isinstance(exc, GalleryDlOutputChangedError):
+        return FailureStage.EXTRACTION
+    return FailureStage.UNKNOWN
 
 
 async def _report_progress(
@@ -1006,6 +1302,8 @@ async def _record_failed_usage(
 
 
 def _controlled_failure_text(exc: MediaBotError) -> str:
+    if isinstance(exc, InstagramCookiesUnavailableError):
+        return INSTAGRAM_COOKIES_BLOCKED_TEXT
     if isinstance(exc, GalleryDlCookiesExpiredError):
         return GALLERY_COOKIES_EXPIRED_TEXT
     if isinstance(exc, GalleryDlExtractionError):
@@ -1051,38 +1349,30 @@ async def _notify(ctx: dict[str, Any], chat_id: int, message_id: int | None, tex
 async def _notify_admins_of_terminal_failure(
     ctx: dict[str, Any],
     *,
-    job_id: JobId,
-    kind: JobKind,
-    source: str | None,
+    context: FailureContext,
     status: JobStatus,
-    category: ErrorCategory,
-    attempt: int,
 ) -> None:
     settings = cast(Settings, ctx["settings"])
     admin_ids = tuple(dict.fromkeys(settings.telegram.admin_ids))
     if not admin_ids:
         return
     bot = cast(Bot, ctx["bot"])
-    text = (
-        "🚨 خطای نهایی پردازش\n"
-        f"شناسه کار: {job_id}\n"
-        f"نوع کار: {kind.value}\n"
-        f"منبع: {_safe_admin_source(source)}\n"
-        f"وضعیت: {status.value}\n"
-        f"دسته خطا: {category.value}\n"
-        f"تلاش: {attempt}"
-    )
+    reply_markup = _cookie_health_reply_markup() if _context_is_cookie_failure(context) else None
+    text = render_failure_notification(context)
     results = await asyncio.gather(
-        *(bot.send_message(chat_id=admin_id, text=text) for admin_id in admin_ids),
+        *(
+            bot.send_message(chat_id=admin_id, text=text, reply_markup=reply_markup)
+            for admin_id in admin_ids
+        ),
         return_exceptions=True,
     )
     failures = tuple(result for result in results if isinstance(result, BaseException))
     log_fields = {
-        "job_id": job_id,
-        "job_kind": kind.value,
+        "job_id": context.job_id,
+        "job_kind": context.job_kind.value if context.job_kind else None,
         "status": status.value,
-        "error_category": category.value,
-        "attempt": attempt,
+        "error_category": context.error_category.value if context.error_category else None,
+        "attempt": context.attempt,
         "recipient_count": len(admin_ids),
         "sent_count": len(admin_ids) - len(failures),
         "failed_count": len(failures),
@@ -1097,14 +1387,258 @@ async def _notify_admins_of_terminal_failure(
     await logger.ainfo("admin_failure_notification_completed", **log_fields)
 
 
-def _safe_admin_source(source: str | None) -> str:
-    if source is None or not 1 <= len(source) <= 32:
-        return "unknown"
-    if not all(
-        character.isascii() and (character.isalnum() or character in "_-") for character in source
+def _build_failure_context(
+    ctx: dict[str, Any],
+    *,
+    job_id: JobId,
+    kind: JobKind,
+    exc: BaseException,
+    attempt: int,
+    stage: FailureStage,
+    started: float | None,
+    category: ErrorCategory | None = None,
+) -> FailureContext:
+    settings = cast(Settings, ctx["settings"])
+    repository = ctx.get("repository")
+    get_job = getattr(repository, "get_job", None)
+    record = get_job(job_id) if callable(get_job) else None
+    parsed_url = urlsplit(record.url) if record is not None else None
+    platform = (parsed_url.hostname or "").casefold() if parsed_url is not None else None
+    url_classification = record.url_classification if record is not None else None
+    error_key = _failure_key(exc)
+    previous = _previous_failures(job_id, error_key)
+    _record_failure_attempt(job_id, error_key)
+    safe_reason = sanitize_exception_message(str(exc)) if str(exc) else None
+    if isinstance(exc, MediaBotError) and not safe_reason:
+        safe_reason = error_category(exc).value
+    resolved_category = category or (
+        error_category(exc) if isinstance(exc, MediaBotError) else ErrorCategory.INTERNAL
+    )
+    fallback_chain = getattr(exc, "fallback_chain", None)
+    return FailureContext(
+        job_id=job_id,
+        request_id=str(job_id),
+        job_kind=kind,
+        failure_stage=stage,
+        platform=platform,
+        url_classification=url_classification,
+        adapter=getattr(exc, "adapter", None),
+        extractor=getattr(exc, "extractor", None),
+        source=getattr(exc, "source", None) or (record.source if record is not None else None),
+        fallback_chain=tuple(fallback_chain) if fallback_chain else None,
+        fallback_reason=getattr(exc, "fallback_reason", None),
+        error_category=resolved_category,
+        exception_type=type(exc).__name__,
+        safe_error_reason=safe_reason,
+        http_status=getattr(exc, "http_status", None),
+        retryable=getattr(exc, "retryable", None),
+        attempt=attempt,
+        max_attempts=settings.queue.max_tries,
+        elapsed_seconds=(round(monotonic() - started, 2) if started is not None else None),
+        media_kind=_media_kind_from_record(record),
+        app_version=APP_VERSION,
+        previous_failures=previous,
+    )
+
+
+def _failure_key(exc: BaseException) -> str:
+    http_status = getattr(exc, "http_status", None)
+    if isinstance(http_status, int):
+        return f"HTTP {http_status}"
+    return type(exc).__name__
+
+
+def _record_failure_attempt(job_id: JobId, error_key: str) -> None:
+    _FAILURE_HISTORY.setdefault(str(job_id), []).append(error_key)
+
+
+def _previous_failures(job_id: JobId, error_key: str) -> tuple[str, ...]:
+    history = _FAILURE_HISTORY.get(str(job_id), [])
+    count = sum(1 for item in history[:-1] if item == error_key)
+    if count == 0:
+        return ()
+    return (f"{error_key} x{count}",)
+
+
+def _media_kind_from_record(record: JobRecord | None) -> MediaKind | None:
+    if record is None or record.mode is None:
+        return None
+    mode = record.mode
+    if mode in COLLECTION_MODES:
+        return MediaKind.PLAYLIST
+    if mode.value.startswith("video"):
+        return MediaKind.VIDEO
+    if mode.value.startswith("image") or mode.value.startswith("images"):
+        return MediaKind.IMAGE
+    if mode.value.startswith("audio"):
+        return MediaKind.AUDIO
+    return None
+
+
+def _context_is_cookie_failure(context: FailureContext) -> bool:
+    return context.error_category is ErrorCategory.AUTHENTICATION and (
+        context.source == "instagram" or context.failure_stage is FailureStage.AUTHENTICATION
+    )
+
+
+def _cookie_health_reply_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🍪 سلامت کوکی‌ها",  # noqa: RUF001
+                    callback_data="adm:ch:open",
+                )
+            ]
+        ]
+    )
+
+
+def _instagram_username_from_url(url: str) -> str | None:
+    parsed = urlsplit(url)
+    parts = [part for part in parsed.path.split("/") if part]
+    if not parts:
+        return None
+    username = parts[0]
+    if not username or not all(
+        character.isascii() and (character.isalnum() or character in "._") for character in username
     ):
-        return "unknown"
-    return source.casefold()
+        return None
+    return username
+
+
+def _gate_collection_cookies(ctx: dict[str, Any], mode: DownloadMode) -> None:
+    """Fail early before a doomed authenticated Instagram collection job (Part E)."""
+    if mode not in COLLECTION_MODES:
+        return
+    health_service = ctx.get("cookie_health_service")
+    if not isinstance(health_service, CookieHealthService):
+        return
+    current = health_service.all_health().get(CookieService.INSTAGRAM)
+    if current is None or current.status not in BLOCKING_COOKIE_STATES:
+        return
+    raise InstagramCookiesUnavailableError(
+        "Instagram cookies are not valid for this collection job", source="instagram"
+    )
+
+
+async def _record_runtime_auth_failure(ctx: dict[str, Any], exc: BaseException) -> None:
+    """A real runtime authentication failure updates Cookie Health and alerts admins (Part B)."""
+    if not isinstance(exc, (GalleryDlCookiesExpiredError, AuthenticationRequiredError)):
+        return
+    provider: CookieService | None
+    if isinstance(exc, GalleryDlCookiesExpiredError):
+        provider = CookieService.INSTAGRAM
+    else:
+        source = (getattr(exc, "source", None) or "").casefold()
+        provider = CookieService.INSTAGRAM if source == "instagram" else None
+    if provider is None:
+        return
+    health_service = ctx.get("cookie_health_service")
+    if not isinstance(health_service, CookieHealthService):
+        return
+    alert = health_service.update_from_auth_failure(
+        provider,
+        safe_reason=sanitize_exception_message(str(exc)) or "authentication failed",
+    )
+    if alert is not None:
+        await _notify_admins_of_cookie_alert(ctx, alert)
+
+
+async def _notify_admins_of_cookie_alert(
+    ctx: dict[str, Any],
+    alert: CookieHealthAlert,
+) -> None:
+    settings = cast(Settings, ctx["settings"])
+    admin_ids = tuple(dict.fromkeys(settings.telegram.admin_ids))
+    if not admin_ids:
+        return
+    bot = cast(Bot, ctx["bot"])
+    text = _render_cookie_alert_text(alert)
+    await asyncio.gather(
+        *(
+            bot.send_message(
+                chat_id=admin_id, text=text, reply_markup=_cookie_health_reply_markup()
+            )
+            for admin_id in admin_ids
+        ),
+        return_exceptions=True,
+    )
+    await logger.ainfo(
+        "cookie_health_alert_sent",
+        provider=alert.provider.value,
+        previous_state=alert.previous_state.value if alert.previous_state else None,
+        new_state=alert.new_state.value,
+        recovery=alert.recovery,
+        reminder=alert.reminder,
+        recipient_count=len(admin_ids),
+    )
+
+
+def _render_cookie_alert_text(alert: CookieHealthAlert) -> str:
+    state_label = _cookie_state_label(alert.new_state)
+    if alert.recovery:
+        return f"✅ کوکی‌های {_cookie_provider_label(alert.provider)} سالم شدند ({state_label})."
+    if alert.reminder:
+        return (
+            f"🔄 یادآوری: کوکی‌های {_cookie_provider_label(alert.provider)} هنوز "
+            f"{state_label} هستند."
+        )
+    return f"🍪 وضعیت کوکی‌های {_cookie_provider_label(alert.provider)} تغییر کرد: {state_label}."
+
+
+def _cookie_state_label(state: CookieHealthState) -> str:
+    return {
+        CookieHealthState.HEALTHY: "سالم ✅",
+        CookieHealthState.EXPIRING_SOON: "در حال انقضا ⚠️",
+        CookieHealthState.EXPIRED: "منقضی ❌",
+        CookieHealthState.AUTH_FAILED: "ورود نامعتبر ❌",
+        CookieHealthState.MISSING: "ناموجود ❌",
+        CookieHealthState.MALFORMED: "خراب ❌",
+        CookieHealthState.UNVERIFIED: "تأییدنشده ❓",
+        CookieHealthState.CHECK_ERROR: "خطای بررسی ⚠️",
+    }[state]
+
+
+def _cookie_provider_label(provider: CookieService) -> str:
+    from telegram_media_bot.domain.cookies import COOKIE_SERVICE_LABELS
+
+    return COOKIE_SERVICE_LABELS.get(provider, provider.value)
+
+
+async def cookie_health_watcher(ctx: dict[str, Any]) -> int:
+    """Periodic Cookie Health watcher: network-free expiry checks plus optional active probes."""
+    settings = cast(Settings, ctx["settings"])
+    health_service = ctx.get("cookie_health_service")
+    if not isinstance(health_service, CookieHealthService) or not settings.cookie_health.enabled:
+        return 0
+    last_watch = float(ctx.get("cookie_health_last_watch") or 0.0)
+    current = monotonic()
+    interval = settings.cookie_health.expiry_watch_interval_minutes * 60
+    if current - last_watch < interval:
+        return 0
+    ctx["cookie_health_last_watch"] = current
+    alert_count = 0
+    _updated, alerts = await asyncio.to_thread(health_service.refresh_static)
+    alert_count += len(alerts)
+    for alert in alerts:
+        await _notify_admins_of_cookie_alert(ctx, alert)
+    active_interval = settings.cookie_health.active_probe_interval_minutes
+    if active_interval > 0:
+        last_probe = float(ctx.get("cookie_health_last_probe") or 0.0)
+        if current - last_probe >= active_interval * 60:
+            ctx["cookie_health_last_probe"] = current
+            results = await health_service.run_active_probes()
+            _updated, alerts = health_service.apply_probe_results(results)
+            alert_count += len(alerts)
+            for alert in alerts:
+                await _notify_admins_of_cookie_alert(ctx, alert)
+    await logger.ainfo(
+        "cookie_health_watch_completed",
+        interval_seconds=interval,
+        alert_count=alert_count,
+    )
+    return alert_count
 
 
 async def _safe_edit(delivery: DeliveryGateway, chat_id: int, message_id: int, text: str) -> None:

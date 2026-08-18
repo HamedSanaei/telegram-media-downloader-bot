@@ -11,7 +11,7 @@ from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
     GalleryDlOutputChangedError,
 )
-from telegram_media_bot.domain.models import MediaAsset, MediaKind
+from telegram_media_bot.domain.models import HighlightItem, MediaAsset, MediaKind
 from telegram_media_bot.infrastructure.gallerydl.models import GalleryInspection
 
 _IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif", "avif"}
@@ -83,6 +83,56 @@ def transient_asset_urls(payload: bytes) -> tuple[str, ...]:
         for event in _parse_jsonl_events(payload)
         if isinstance(event, _UrlEvent)
     )
+
+
+def parse_highlight_tray(
+    payload: bytes,
+    *,
+    expected_provider: str,
+    max_highlights: int,
+) -> tuple[HighlightItem, ...]:
+    """Parse an Instagram highlight-tray inspection into stable per-highlight entries.
+
+    Directory/URL metadata carries the highlight reel id (``highlight:<digits>``) and title;
+    the returned id is the numeric routing id used by ``/stories/highlights/<id>/``.
+    """
+    events = _parse_jsonl_events(payload)
+    provider = _provider(events[0].metadata)
+    if provider != expected_provider:
+        raise GalleryDlOutputChangedError("gallery-dl provider does not match the highlight tray")
+    entries: dict[str, HighlightItem] = {}
+    counts: dict[str, int] = {}
+    for event in events:
+        metadata = event.metadata
+        raw_id = str(metadata.get("id") or metadata.get("highlight_id") or "").strip()
+        routing_id = _highlight_routing_id(raw_id)
+        if routing_id is None:
+            continue
+        title = _text(metadata, "title", "description", "content", "caption") or "بدون عنوان"
+        item = HighlightItem(highlight_id=routing_id, title=title[:128], item_count=0)
+        entries.setdefault(routing_id, item)
+        if isinstance(event, _UrlEvent):
+            counts[routing_id] = counts.get(routing_id, 0) + 1
+    if not entries:
+        raise GalleryDlOutputChangedError("gallery-dl emitted no highlight entries")
+    ordered = tuple(
+        HighlightItem(
+            highlight_id=entry.highlight_id,
+            title=entry.title,
+            item_count=counts.get(entry.highlight_id, 0),
+        )
+        for entry in entries.values()
+    )
+    if len(ordered) > max_highlights:
+        raise CollectionTooLargeError("Instagram highlight tray exceeds the configured limit")
+    return ordered
+
+
+def _highlight_routing_id(raw_id: str) -> str | None:
+    candidate = raw_id.removeprefix("highlight:")
+    if not candidate or not candidate.isascii() or not candidate.isdigit():
+        return None
+    return candidate[:128]
 
 
 def _parse_jsonl_events(payload: bytes) -> tuple[_GalleryEvent, ...]:

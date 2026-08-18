@@ -23,17 +23,21 @@ from telegram_media_bot.domain.errors import (
     DownloadFailedError,
     GalleryDlOutputChangedError,
     GalleryDlUnavailableError,
+    GalleryDlUnsupportedUrlError,
     ImageValidationError,
     JobCancelledError,
+    MediaBotError,
     MediaUnavailableError,
     RateLimitedError,
 )
 from telegram_media_bot.domain.models import (
+    COLLECTION_MODES,
     ComponentHealth,
     DownloadArtifact,
     DownloadMode,
     DownloadRequest,
     DownloadResult,
+    HighlightItem,
     MediaAsset,
     MediaInfo,
     MediaKind,
@@ -50,6 +54,7 @@ from telegram_media_bot.infrastructure.gallerydl.models import (
     GalleryProcessResult,
 )
 from telegram_media_bot.infrastructure.gallerydl.parser import (
+    parse_highlight_tray,
     parse_inspection,
     transient_asset_urls,
 )
@@ -68,6 +73,8 @@ _GALLERY_MODES = {
     DownloadMode.VIDEOS_ONLY,
     DownloadMode.VIDEO_ORIGINAL,
     DownloadMode.IMAGES_ZIP,
+    DownloadMode.INSTAGRAM_ALL_STORIES,
+    DownloadMode.INSTAGRAM_HIGHLIGHT,
 }
 
 
@@ -93,7 +100,7 @@ class GalleryDlEngine:
     def is_gallery_social_url(url: str) -> bool:
         return is_gallery_social_url(url)
 
-    def inspect(self, url: str) -> MediaInfo:
+    def inspect(self, url: str, *, max_assets: int | None = None) -> MediaInfo:
         canonical = canonicalize_media_url(url).canonical_url
         provider, args = self._commands.inspection(canonical)
         if not self._settings.gallery_dl.enabled:
@@ -115,13 +122,13 @@ class GalleryDlEngine:
             inspection = parse_inspection(
                 result.stdout,
                 expected_provider=provider,
-                max_assets=self._settings.gallery_dl.max_assets_per_job,
+                max_assets=max_assets or self._settings.gallery_dl.max_assets_per_job,
             )
         except GalleryDlOutputChangedError as exc:
             if _is_instagram_story_url(canonical) and _empty_gallery_events(result.stdout):
                 raise MediaUnavailableError("Instagram story is expired or unavailable") from exc
             raise
-        self._check_known_size(inspection)
+        self._check_known_size(inspection, collection=url_is_collection(canonical))
         info = map_gallery_info(inspection, canonical)
         if len(info.assets) >= self._settings.gallery_dl.zip_threshold:
             info = replace(
@@ -153,7 +160,7 @@ class GalleryDlEngine:
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
     ) -> DownloadResult:
-        info = self.inspect(request.url)
+        info = self.inspect(request.url, max_assets=request.max_assets)
         return self.download_inspected(
             request,
             info,
@@ -213,7 +220,11 @@ class GalleryDlEngine:
                     timeout_seconds=self._settings.gallery_dl.timeout_seconds,
                     is_cancelled=is_cancelled,
                     output_directory=workspace,
-                    max_output_bytes=self._max_transfer_bytes,
+                    max_output_bytes=(
+                        self._max_collection_transfer_bytes
+                        if request.mode in COLLECTION_MODES
+                        else self._max_transfer_bytes
+                    ),
                 )
         except BaseException:
             _cleanup_gallery_workspace(workspace)
@@ -241,7 +252,12 @@ class GalleryDlEngine:
                     validate_image(path, self._settings.gallery_dl.images)
                 kept.append((asset, path))
             total = sum(path.stat().st_size for _, path in kept)
-            if total > self._max_transfer_bytes:
+            transfer_limit = (
+                self._max_collection_transfer_bytes
+                if request.mode in COLLECTION_MODES
+                else self._max_transfer_bytes
+            )
+            if total > transfer_limit:
                 raise CollectionTooLargeError("Gallery output exceeds the configured total size")
         except BaseException:
             _cleanup_gallery_workspace(workspace)
@@ -320,6 +336,33 @@ class GalleryDlEngine:
             image_delivery_mode=request.image_delivery_mode,
         )
 
+    def fetch_highlight_tray(
+        self,
+        username: str,
+        *,
+        max_highlights: int = 100,
+    ) -> tuple[HighlightItem, ...]:
+        """Fetch one Instagram account's highlight tray (authenticated, no media download)."""
+        if not self._settings.gallery_dl.enabled:
+            raise GalleryDlUnavailableError("gallery-dl is disabled")
+        if "instagram" not in self._settings.gallery_dl.enabled_platforms:
+            raise GalleryDlUnsupportedUrlError("Instagram is disabled")
+        url = f"https://www.instagram.com/{username}/highlights/"
+        args = self._commands.inspect_url("instagram", url)
+        with self._process_slot():
+            result = self._runner.run(
+                args, timeout_seconds=self._settings.gallery_dl.timeout_seconds
+            )
+        if result.return_code != 0:
+            self._raise_process_failure(result, provider="instagram")
+        if _empty_gallery_events(result.stdout):
+            raise GalleryDlOutputChangedError("gallery-dl emitted no highlight tray events")
+        return parse_highlight_tray(
+            result.stdout,
+            expected_provider="instagram",
+            max_highlights=max_highlights,
+        )
+
     def health(self) -> ComponentHealth:
         if not self._settings.gallery_dl.enabled:
             return ComponentHealth("gallery_dl", True, "disabled")
@@ -334,11 +377,12 @@ class GalleryDlEngine:
             version,
         )
 
-    def _check_known_size(self, inspection: GalleryInspection) -> None:
+    def _check_known_size(self, inspection: GalleryInspection, *, collection: bool = False) -> None:
         known = [asset.size_bytes for asset in inspection.assets]
         if all(value is not None for value in known):
             total = sum(value or 0 for value in known)
-            if total > self._max_transfer_bytes:
+            limit = self._max_collection_transfer_bytes if collection else self._max_transfer_bytes
+            if total > limit:
                 raise CollectionTooLargeError("Gallery metadata exceeds the total size limit")
 
     @property
@@ -353,6 +397,18 @@ class GalleryDlEngine:
             * 1024
         )
 
+    @property
+    def _max_collection_transfer_bytes(self) -> int:
+        """Aggregate bound for batch collections; never the single-file upload limit."""
+        return (
+            min(
+                self._settings.gallery_dl.max_total_size_mb,
+                self._settings.media.max_source_size_mb,
+            )
+            * 1024
+            * 1024
+        )
+
     @staticmethod
     def _raise_process_failure(
         result: GalleryProcessResult,
@@ -361,6 +417,8 @@ class GalleryDlEngine:
         job_id: str | None = None,
     ) -> None:
         error = map_process_failure(result.return_code, result.stderr)
+        if isinstance(error, MediaBotError) and error.extractor is None:
+            error.extractor = provider
         logger.warning(
             "gallery_dl_process_failed",
             adapter="gallery-dl",
@@ -389,6 +447,20 @@ def _is_instagram_story_url(url: str) -> bool:
     return (parsed.hostname or "").casefold() in {"instagram.com", "www.instagram.com"} and (
         parsed.path.casefold().startswith("/stories/")
     )
+
+
+def url_is_collection(url: str) -> bool:
+    """Whether a canonical URL targets a multi-item gallery collection (stories/highlights tray)."""
+    parsed = urlsplit(url)
+    hostname = (parsed.hostname or "").casefold()
+    if hostname not in {"instagram.com", "www.instagram.com"}:
+        return False
+    path = parsed.path.casefold()
+    if path.startswith("/stories/highlights/"):
+        return True
+    # /stories/USERNAME/ with no media id -> all active stories collection.
+    parts = path.strip("/").split("/")
+    return len(parts) == 2 and parts[0] == "stories" and bool(parts[1])
 
 
 def _empty_gallery_events(payload: bytes) -> bool:

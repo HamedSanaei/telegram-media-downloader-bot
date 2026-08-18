@@ -6,6 +6,7 @@ from typing import Protocol
 from telegram_media_bot.domain.models import (
     DeliveryItemRecord,
     ErrorCategory,
+    HighlightTrayRecord,
     JobCancellationResult,
     JobCounts,
     JobId,
@@ -25,6 +26,12 @@ class JobRepository(Protocol):
     def save_selection(self, selection: SelectionRecord) -> None: ...
 
     def get_selection(self, token: SelectionToken, owner_user_id: int) -> SelectionRecord: ...
+
+    def save_highlight_tray(self, tray: HighlightTrayRecord) -> None: ...
+
+    def get_highlight_tray(
+        self, token: SelectionToken, owner_user_id: int
+    ) -> HighlightTrayRecord: ...
 
     def create_job(self, record: JobRecord) -> JobRecord: ...
 

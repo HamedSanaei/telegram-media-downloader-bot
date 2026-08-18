@@ -117,6 +117,9 @@ media:
     ignore_images: true
     max_videos: 50
     max_total_size_mb: 4096
+    # Per-job batch safeguards for bulk Stories/Highlight downloads (not per item).
+    max_stories_per_batch: 100
+    max_highlight_items: 100
   transcode:
     # Global safety switch for explicitly requested codec conversion.
     enabled: true
@@ -199,6 +202,28 @@ observability:
   health_port: 8080
   telegram_readiness_check: true
   metrics_enabled: true
+
+# Cookie Health Center (admin-only diagnostics; the canonical cookies file stays the single
+# source of truth). Active probes are real but lightweight authenticated requests; leave a
+# provider's probe URL unset to report UNVERIFIED instead of trusting anonymous public success.
+cookie_health:
+  enabled: true
+  expiring_soon_hours: 24
+  expiry_watch_interval_minutes: 45
+  # Optional periodic active-probe cadence in minutes; 0 disables periodic probes.
+  active_probe_interval_minutes: 0
+  probe_timeout_seconds: 20
+  probe_concurrency: 2
+  reminder_interval_minutes: 180
+  recovery_notifications: true
+  probes: {}
+    # Example for Instagram using the operator account's own authenticated stories tray:
+    # instagram:
+    #   url: "https://www.instagram.com/stories/me/"
+    #   auth_required: true
+    # youtube:
+    #   url: "https://www.youtube.com/..."
+    #   auth_required: true
 
 operations:
   update:

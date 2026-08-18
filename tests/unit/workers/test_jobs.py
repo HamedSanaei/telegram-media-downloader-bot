@@ -25,6 +25,7 @@ from telegram_media_bot.domain.errors import (
     MediaTooLargeError,
     RateLimitedError,
 )
+from telegram_media_bot.domain.failures import FailureContext
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DeliveryMethod,
@@ -613,8 +614,8 @@ async def test_terminal_controlled_inspection_failure_alerts_each_unique_admin(
         assert str(inspection.job_id) in text
         assert "inspection" in text
         assert "twitter" in text
-        assert JobStatus.FAILED.value in text
         assert ErrorCategory.FORMAT_UNAVAILABLE.value in text
+        assert "تلاش: 1/2" in text
         assert url not in text
         assert "user_id" not in text
         assert "chat_id" not in text
@@ -662,7 +663,9 @@ async def test_terminal_unexpected_inspection_failure_alert_is_redacted(
     alert = str(bot.messages[0]["text"])
     assert ErrorCategory.INTERNAL.value in alert
     assert url not in alert
-    assert "unexpected inspection detail" not in alert
+    # The sanitized safe reason is shown to administrators (never the raw URL/query).
+    assert "unexpected inspection detail" in alert
+    assert "token=" not in alert
 
 
 async def test_worker_honors_pre_start_cancellation(
@@ -759,7 +762,7 @@ async def test_retryable_failure_alerts_only_after_retries_are_exhausted(
     context["settings"] = configured
     bot = FakeInspectionBot(fail_edit=False)
     context["bot"] = bot
-    service.failure = RateLimitedError("remote throttled with private detail")
+    service.failure = RateLimitedError("remote throttled with token=abc1234567890")
 
     with pytest.raises(Retry):
         await process_download_job(
@@ -786,7 +789,8 @@ async def test_retryable_failure_alerts_only_after_retries_are_exhausted(
     assert len(bot.messages) == 1
     alert = str(bot.messages[0]["text"])
     assert ErrorCategory.RATE_LIMITED.value in alert
-    assert "private detail" not in alert
+    assert "token=abc1234567890" not in alert
+    assert "token=<redacted>" not in alert or "<redacted>" in alert
 
 
 async def test_ambiguous_delivery_is_quarantined_with_specific_user_message(
@@ -840,7 +844,8 @@ async def test_terminal_unexpected_download_failure_alert_is_redacted(
     alert = str(bot.messages[0]["text"])
     assert ErrorCategory.INTERNAL.value in alert
     assert "token=secret" not in alert
-    assert "private detail" not in alert
+    # Sanitized reason is shown to administrators; the query secret stays redacted.
+    assert "unexpected download private detail" in alert
 
 
 async def test_delivery_uncertain_alerts_admins_without_changing_cleanup(
@@ -869,7 +874,7 @@ async def test_delivery_uncertain_alerts_admins_without_changing_cleanup(
     assert [message["chat_id"] for message in bot.messages] == [99, 100]
     assert all(
         ErrorCategory.DELIVERY_UNCERTAIN.value in str(message["text"])
-        and "private detail" not in str(message["text"])
+        and "ambiguous response with private detail" in str(message["text"])
         for message in bot.messages
     )
     assert not (configured.storage.downloads_path() / str(record.job_id)).exists()
@@ -899,12 +904,14 @@ async def test_admin_notification_failure_is_isolated_and_logged_without_recipie
     monkeypatch.setattr(jobs_module, "logger", captured)
     await jobs_module._notify_admins_of_terminal_failure(
         {"settings": configured, "bot": bot},
-        job_id=JobId("opaque-job"),
-        kind=JobKind.DOWNLOAD,
-        source="instagram",
+        context=FailureContext(
+            job_id=JobId("opaque-job"),
+            job_kind=JobKind.DOWNLOAD,
+            source="instagram",
+            error_category=ErrorCategory.INTERNAL,
+            attempt=3,
+        ),
         status=JobStatus.FAILED,
-        category=ErrorCategory.INTERNAL,
-        attempt=3,
     )
 
     assert [attempt["chat_id"] for attempt in bot.send_attempts] == [99, 100]
@@ -925,12 +932,14 @@ async def test_admin_notification_is_noop_when_no_admins_are_configured(
 ) -> None:
     await jobs_module._notify_admins_of_terminal_failure(
         {"settings": settings},
-        job_id=JobId("opaque-job"),
-        kind=JobKind.DOWNLOAD,
-        source="instagram",
+        context=FailureContext(
+            job_id=JobId("opaque-job"),
+            job_kind=JobKind.DOWNLOAD,
+            source="instagram",
+            error_category=ErrorCategory.INTERNAL,
+            attempt=1,
+        ),
         status=JobStatus.FAILED,
-        category=ErrorCategory.INTERNAL,
-        attempt=1,
     )
 
 

@@ -11,6 +11,7 @@ from telegram_media_bot.application.ports.download_engine import (
 from telegram_media_bot.application.ports.url_validator import UrlValidator
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.domain.errors import (
+    CollectionTooLargeError,
     InvalidUrlError,
     MediaBotError,
     MediaTooLargeError,
@@ -18,6 +19,7 @@ from telegram_media_bot.domain.errors import (
     UnsupportedSourceError,
 )
 from telegram_media_bot.domain.models import (
+    COLLECTION_MODES,
     ContainerPolicy,
     DownloadMode,
     DownloadRequest,
@@ -43,7 +45,10 @@ class DownloadService:
         playlist_max_items: int = 20,
         max_duration_seconds: int = 14400,
         max_file_size_bytes: int | None = None,
+        max_source_size_bytes: int | None = None,
         instagram_max_videos: int = 50,
+        instagram_max_stories: int = 100,
+        instagram_max_highlight_items: int = 100,
     ) -> None:
         self._engine = engine
         self._enabled_sources = enabled_sources
@@ -52,7 +57,10 @@ class DownloadService:
         self._playlist_max_items = playlist_max_items
         self._max_duration_seconds = max_duration_seconds
         self._max_file_size_bytes = max_file_size_bytes
+        self._max_source_size_bytes = max_source_size_bytes
         self._instagram_max_videos = instagram_max_videos
+        self._instagram_max_stories = instagram_max_stories
+        self._instagram_max_highlight_items = instagram_max_highlight_items
 
     def inspect(self, url: str) -> MediaInfo:
         normalized_url = canonicalize_media_url(self.validate_url(url)).canonical_url
@@ -82,6 +90,7 @@ class DownloadService:
         is_cancelled: CancellationCheck | None = None,
     ) -> DownloadResult:
         info = self.inspect(url)
+        collection = mode in COLLECTION_MODES
         request = DownloadRequest(
             job_id=job_id,
             url=info.webpage_url,
@@ -94,6 +103,13 @@ class DownloadService:
             selected_format_ids=selected_format_ids,
             allow_collection=info.source.casefold() == "instagram",
             image_delivery_mode=image_delivery_mode,
+            max_assets=_collection_max_assets(
+                mode,
+                max_stories=self._instagram_max_stories,
+                max_highlight_items=self._instagram_max_highlight_items,
+            )
+            if collection
+            else None,
         )
         try:
             result = self._engine.download(
@@ -108,7 +124,15 @@ class DownloadService:
                 exc.source = info.source
             raise
         self._validate_source(result.source)
-        if (
+        if collection:
+            if (
+                self._max_source_size_bytes is not None
+                and result.file_size_bytes > self._max_source_size_bytes
+            ):
+                raise CollectionTooLargeError(
+                    "Collection aggregate exceeds the configured size limit", source=info.source
+                )
+        elif (
             self._max_file_size_bytes is not None
             and result.file_size_bytes > self._max_file_size_bytes
         ):
@@ -149,3 +173,16 @@ class DownloadService:
             raise MediaTooLargeError(
                 "Media duration exceeds the configured limit", source=info.source
             )
+
+
+def _collection_max_assets(
+    mode: DownloadMode,
+    *,
+    max_stories: int,
+    max_highlight_items: int,
+) -> int | None:
+    if mode is DownloadMode.INSTAGRAM_ALL_STORIES:
+        return max_stories
+    if mode is DownloadMode.INSTAGRAM_HIGHLIGHT:
+        return max_highlight_items
+    return None

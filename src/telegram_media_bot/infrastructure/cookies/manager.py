@@ -7,12 +7,17 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
+from telegram_media_bot.application.services.diagnostic_sanitizer import sanitize_exception_message
+from telegram_media_bot.domain.cookie_health import CookieHealthState, StaticCookieCheck
 from telegram_media_bot.domain.cookies import (
     MAX_COOKIE_UPLOAD_BYTES,
     CookieService,
     CookieUpdateSummary,
+    cookie_provider_domains,
+    cookie_service_for_domain,
 )
 from telegram_media_bot.domain.errors import (
     CookieFileTooLargeError,
@@ -27,14 +32,6 @@ from telegram_media_bot.domain.errors import (
 _MAX_COMBINED_COOKIE_BYTES = 8 * 1024 * 1024
 _HEADER = "# Netscape HTTP Cookie File"
 _HTTP_ONLY_PREFIX = "#HttpOnly_"
-_SERVICE_DOMAINS: tuple[tuple[CookieService, tuple[str, ...]], ...] = (
-    (CookieService.YOUTUBE, ("youtube.com", "youtu.be", "google.com", "googlevideo.com")),
-    (CookieService.INSTAGRAM, ("instagram.com",)),
-    (CookieService.TIKTOK, ("tiktok.com",)),
-    (CookieService.TWITTER, ("twitter.com", "x.com")),
-    (CookieService.PINTEREST, ("pinterest.com", "pin.it")),
-    (CookieService.SOUNDCLOUD, ("soundcloud.com",)),
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +93,104 @@ class NetscapeCookieManager:
     def export_combined(self) -> bytes:
         with self._lock:
             return self._read_store_snapshot()[0]
+
+    def static_health(
+        self,
+        provider: CookieService,
+        *,
+        now: datetime | None = None,
+        expiring_soon_hours: float = 24,
+    ) -> StaticCookieCheck:
+        """Network-free static validation for one provider (Cookie Health Center)."""
+        checked_at = now or datetime.now(UTC)
+        try:
+            content, metadata = self._read_store_snapshot()
+        except CookieManagementError as exc:
+            if isinstance(exc, CookieStoreUnavailableError) and not self._path.exists():
+                return StaticCookieCheck(
+                    provider=provider,
+                    status=CookieHealthState.MISSING,
+                    file_ok=False,
+                    safe_reason="canonical cookie file is missing",
+                )
+            return StaticCookieCheck(
+                provider=provider,
+                status=CookieHealthState.CHECK_ERROR,
+                file_ok=False,
+                safe_reason=sanitize_exception_message(str(exc)) or "cookie store unavailable",
+            )
+        permission_ok = not _world_writable(metadata.st_mode)
+        try:
+            lines = _parse_document(content, upload=False)
+        except InvalidCookieFileError as exc:
+            return StaticCookieCheck(
+                provider=provider,
+                status=CookieHealthState.MALFORMED,
+                file_ok=True,
+                malformed_record_count=0,
+                safe_reason=sanitize_exception_message(str(exc)) or "cookie file is malformed",
+                permission_ok=permission_ok,
+            )
+        valid_records: list[tuple[int, str]] = []
+        malformed = 0
+        domains = cookie_provider_domains(provider)
+        for line in lines:
+            record = line.record
+            if record is None:
+                continue
+            if not _matches_provider_domain(record.domain, domains):
+                continue
+            try:
+                expires = int(record.content.split("\t")[4])
+            except IndexError, ValueError:
+                malformed += 1
+                continue
+            if expires == 0:
+                # Session cookies expire when the browser closes; treat as long-lived.
+                continue
+            valid_records.append((expires, record.domain))
+        if malformed and not valid_records:
+            return StaticCookieCheck(
+                provider=provider,
+                status=CookieHealthState.MALFORMED,
+                file_ok=True,
+                malformed_record_count=malformed,
+                safe_reason="provider cookie records are malformed",
+                permission_ok=permission_ok,
+            )
+        if not valid_records:
+            return StaticCookieCheck(
+                provider=provider,
+                status=CookieHealthState.MISSING,
+                file_ok=True,
+                malformed_record_count=malformed,
+                safe_reason="no provider-domain cookie records found",
+                permission_ok=permission_ok,
+            )
+        expires_sorted = sorted(expires for expires, _domain in valid_records)
+        earliest = _expiry_datetime(expires_sorted[0])
+        latest = _expiry_datetime(expires_sorted[-1])
+        earliest_epoch = int(earliest.timestamp()) if earliest is not None else None
+        if earliest_epoch is not None and earliest_epoch <= int(checked_at.timestamp()):
+            status = CookieHealthState.EXPIRED
+        elif (
+            earliest_epoch is not None
+            and earliest_epoch - checked_at.timestamp() <= expiring_soon_hours * 3600
+        ):
+            status = CookieHealthState.EXPIRING_SOON
+        else:
+            status = CookieHealthState.HEALTHY
+        return StaticCookieCheck(
+            provider=provider,
+            status=status,
+            file_ok=True,
+            record_count=len(valid_records),
+            earliest_expiry=earliest,
+            latest_expiry=latest,
+            malformed_record_count=malformed,
+            safe_reason=None,
+            permission_ok=permission_ok,
+        )
 
     def _read_store_snapshot(self) -> tuple[bytes, os.stat_result]:
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -245,7 +340,7 @@ def _parse_record(content: str) -> _CookieRecord | None:
         domain=normalized_domain,
         path=path,
         name=name,
-        service=_service_for_domain(normalized_domain),
+        service=cookie_service_for_domain(normalized_domain),
         content=content,
     )
 
@@ -303,20 +398,30 @@ def _merge_documents(
     return "".join(output).encode("utf-8"), summary
 
 
-def _service_for_domain(domain: str) -> CookieService | None:
-    hostname = domain.lstrip(".")
-    for service, suffixes in _SERVICE_DOMAINS:
-        if any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in suffixes):
-            return service
-    return None
-
-
 def _split_line_ending(chunk: str) -> tuple[str, str]:
     if chunk.endswith("\r\n"):
         return chunk[:-2], "\r\n"
     if chunk.endswith(("\n", "\r")):
         return chunk[:-1], chunk[-1]
     return chunk, ""
+
+
+def _matches_provider_domain(domain: str, provider_domains: tuple[str, ...]) -> bool:
+    hostname = domain.lstrip(".").casefold()
+    return any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in provider_domains)
+
+
+def _expiry_datetime(epoch_seconds: int) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(epoch_seconds, tz=UTC)
+    except OverflowError, OSError, ValueError:
+        return None
+
+
+def _world_writable(mode: int) -> bool:
+    if os.name != "posix":
+        return False
+    return bool(stat.S_IMODE(mode) & (stat.S_IWGRP | stat.S_IWOTH))
 
 
 def _fsync_directory(path: Path) -> None:

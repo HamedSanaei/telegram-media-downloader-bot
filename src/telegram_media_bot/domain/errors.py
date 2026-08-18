@@ -6,11 +6,28 @@ class MediaBotError(Exception):
 
     retryable = False
 
-    def __init__(self, message: str = "", *, source: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        source: str | None = None,
+        http_status: int | None = None,
+        adapter: str | None = None,
+        extractor: str | None = None,
+    ) -> None:
         super().__init__(message)
         #: Provider attribution attached once an adapter has processed the request, so a
         #: terminal job failure never reports an unknown source after the fact.
         self.source = source
+        #: Upstream HTTP status when the adapter could observe one; never invented.
+        self.http_status = http_status
+        #: Engine adapter attribution (for example "gallery-dl" or "yt-dlp").
+        self.adapter = adapter
+        #: Extractor/subcategory attribution when the adapter can observe one.
+        self.extractor = extractor
+        #: Adapter fallback chain when the router fell back to another engine.
+        self.fallback_chain: tuple[str, ...] | None = None
+        self.fallback_reason: str | None = None
 
 
 class ConfigurationError(MediaBotError):
@@ -115,6 +132,10 @@ class DeliveryUncertainError(MediaBotError):
     pass
 
 
+class BatchDeliveryFailedError(MediaBotError):
+    """Every item of a collection delivery failed; the batch summary was already sent."""
+
+
 class LocalBotApiError(MediaBotError):
     pass
 
@@ -141,6 +162,10 @@ class GalleryDlAuthenticationRequiredError(AuthenticationRequiredError):
 
 class GalleryDlCookiesExpiredError(AuthenticationRequiredError):
     """Configured source cookies were rejected or have expired."""
+
+
+class InstagramCookiesUnavailableError(MediaBotError):
+    """Instagram cookie health definitively blocks an authenticated bulk collection job."""
 
 
 class GalleryDlRateLimitedError(RateLimitedError):

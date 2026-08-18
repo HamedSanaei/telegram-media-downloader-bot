@@ -312,12 +312,25 @@ def test_supported_scope_accepts_avatar_and_reels_shapes() -> None:
     )
 
 
-def test_story_account_url_is_rejected_as_bulk() -> None:
-    with pytest.raises(GalleryDlUnsupportedUrlError):
+def test_story_account_url_is_now_a_bulk_collection() -> None:
+    # v1.3.4: /stories/USERNAME/ is the authenticated all-stories collection target.
+    assert (
         provider_for_single_item(
             "https://www.instagram.com/stories/exampleuser/",
             frozenset({"instagram"}),
         )
+        == "instagram"
+    )
+
+
+def test_unsupported_instagram_paths_are_rejected() -> None:
+    for url in (
+        "https://www.instagram.com/explore/",
+        "https://www.instagram.com/stories/me/",
+        "https://www.instagram.com/exampleuser/posts/",
+    ):
+        with pytest.raises(GalleryDlUnsupportedUrlError):
+            provider_for_single_item(url, frozenset({"instagram"}))
 
 
 def test_story_video_inspection_offers_video_original() -> None:

@@ -33,6 +33,44 @@ class JobService:
             mode=None,
         )
 
+    def create_highlight_tray(
+        self,
+        *,
+        chat_id: int,
+        user_id: int,
+        url: str,
+        username: str,
+    ) -> tuple[JobRecord, bool]:
+        url = canonicalize_media_url(url).canonical_url
+        key = _idempotency_key(
+            kind=JobKind.HIGHLIGHT_TRAY,
+            user_id=user_id,
+            url=url,
+            mode=None,
+            container=None,
+            selected_format_ids=(username,),
+        )
+        existing = self._repository.find_active_job(key)
+        if existing is not None:
+            return existing, False
+        now = datetime.now(UTC)
+        candidate = JobRecord(
+            job_id=JobId(secrets.token_urlsafe(18)),
+            kind=JobKind.HIGHLIGHT_TRAY,
+            status=JobStatus.QUEUED,
+            chat_id=chat_id,
+            user_id=user_id,
+            url=url,
+            mode=None,
+            idempotency_key=key,
+            created_at=now,
+            updated_at=now,
+            selected_format_ids=(username,),
+            url_classification="highlight_tray",
+        )
+        persisted = self._repository.create_job(candidate)
+        return persisted, persisted.job_id == candidate.job_id
+
     def create_download(
         self,
         *,
@@ -74,7 +112,8 @@ class JobService:
         selected_format_ids: tuple[str, ...] = (),
         image_delivery_mode: ImageDeliveryMode | None = None,
     ) -> tuple[JobRecord, bool]:
-        url = canonicalize_media_url(url).canonical_url
+        intent = canonicalize_media_url(url)
+        url = intent.canonical_url
         key = _idempotency_key(
             kind=kind,
             user_id=user_id,
@@ -105,6 +144,7 @@ class JobService:
             native_video_codec=native_video_codec,
             selected_format_ids=selected_format_ids,
             image_delivery_mode=image_delivery_mode,
+            url_classification=intent.instagram_kind,
         )
         persisted = self._repository.create_job(candidate)
         return persisted, persisted.job_id == candidate.job_id

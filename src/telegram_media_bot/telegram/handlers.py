@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 import structlog
 from aiogram import F, Router
@@ -15,6 +16,7 @@ from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.application.ports.usage_analytics import UsageChartRenderer
 from telegram_media_bot.application.ports.user_repository import UserRepository
 from telegram_media_bot.application.services.access_policy import AccessPolicyService
+from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.instagram_delivery import (
     instagram_default_bundle_option,
     requires_instagram_image_confirmation,
@@ -44,7 +46,10 @@ from telegram_media_bot.domain.models import (
     ErrorCategory,
     ImageDeliveryMode,
     JobId,
+    JobRecord,
     JobStatus,
+    MediaFormatOption,
+    MediaInfo,
     OutputContainer,
     SelectionToken,
     UserProfile,
@@ -57,6 +62,7 @@ from telegram_media_bot.telegram.texts import (
     ACCESS_DENIED_TEXT,
     CANCELLED_TEXT,
     CANNOT_CANCEL_TEXT,
+    HIGHLIGHT_TRAY_QUEUED_TEXT,
     INSPECTION_ACTIVE_TEXT,
     INSPECTION_QUEUED_TEXT,
     INVALID_URL_TEXT,
@@ -71,6 +77,10 @@ from telegram_media_bot.telegram.texts import (
 from telegram_media_bot.telegram.ui import (
     cancellation_keyboard,
     container_keyboard,
+    highlight_tray_keyboard,
+    instagram_image_delivery_keyboard,
+    render_highlight_tray,
+    render_instagram_image_delivery_prompt,
     render_media_info,
     required_channels_keyboard,
     selection_keyboard,
@@ -91,6 +101,7 @@ def build_router(
     usage_analytics: UsageAnalyticsService | None = None,
     usage_chart_renderer: UsageChartRenderer | None = None,
     cookie_manager: CookieManager | None = None,
+    cookie_health_service: CookieHealthService | None = None,
 ) -> Router:
     router = Router(name="main")
     router.message.outer_middleware(CorrelationMiddleware())
@@ -697,6 +708,215 @@ def build_router(
             show_alert=True,
         )
 
+    @router.callback_query(F.data.startswith("s2:"))
+    async def choose_story_action(callback: CallbackQuery) -> None:
+        if callback.from_user is None or callback.data is None:
+            return
+        await _save_callback_user(users, callback)
+        try:
+            await access_policy.authorize_request(callback.from_user.id, consume_rate_limit=False)
+            _prefix, raw_token, action = callback.data.split(":", maxsplit=2)
+            selection = await asyncio.to_thread(
+                repository.get_selection,
+                SelectionToken(raw_token),
+                callback.from_user.id,
+            )
+            story_url = canonicalize_media_url(selection.media.webpage_url)
+            if story_url.instagram_kind != "story":
+                raise SelectionOwnershipError("Story action was not offered")
+            if action == "all":
+                username = _story_username(selection.media.webpage_url)
+                if username is None:
+                    raise SelectionOwnershipError("Story account is missing")
+                record, created = await asyncio.to_thread(
+                    jobs.create_download,
+                    chat_id=selection.chat_id,
+                    user_id=selection.owner_user_id,
+                    url=f"https://www.instagram.com/stories/{username}/",
+                    mode=DownloadMode.INSTAGRAM_ALL_STORIES,
+                )
+                if isinstance(callback.message, Message):
+                    await callback.message.edit_text(
+                        QUEUED_TEXT.format(job_id=record.job_id),
+                        reply_markup=cancellation_keyboard(record.job_id),
+                    )
+                    await asyncio.to_thread(
+                        repository.set_status_message, record.job_id, callback.message.message_id
+                    )
+                if created:
+                    await _enqueue_download_or_fail(
+                        queue=queue,
+                        repository=repository,
+                        users=users,
+                        record=record,
+                        callback=callback,
+                    )
+                await callback.answer("ثبت شد" if created else "این دانلود از قبل فعال است")
+                return
+            if action != "single":
+                raise SelectionOwnershipError("Unknown story action")
+            option = _single_story_option(selection.media)
+            if option is None:
+                raise SelectionOwnershipError("Story plan is unavailable")
+            if option.mode is DownloadMode.IMAGE_ORIGINAL and requires_instagram_image_confirmation(
+                selection.media
+            ):
+                if isinstance(callback.message, Message):
+                    await callback.message.edit_text(
+                        render_instagram_image_delivery_prompt(selection.media),
+                        reply_markup=instagram_image_delivery_keyboard(selection),
+                    )
+                await callback.answer()
+                return
+            record, created = await asyncio.to_thread(
+                jobs.create_download,
+                chat_id=selection.chat_id,
+                user_id=selection.owner_user_id,
+                url=selection.media.webpage_url,
+                mode=option.mode,
+                selected_format_ids=option.selected_format_ids,
+            )
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(
+                    QUEUED_TEXT.format(job_id=record.job_id),
+                    reply_markup=cancellation_keyboard(record.job_id),
+                )
+                await asyncio.to_thread(
+                    repository.set_status_message, record.job_id, callback.message.message_id
+                )
+            if created:
+                await _enqueue_download_or_fail(
+                    queue=queue,
+                    repository=repository,
+                    users=users,
+                    record=record,
+                    callback=callback,
+                )
+            await callback.answer("ثبت شد" if created else "این دانلود از قبل فعال است")
+        except SelectionExpiredError:
+            await callback.answer(SELECTION_EXPIRED_TEXT, show_alert=True)
+        except SelectionOwnershipError, ValueError:
+            await callback.answer(SELECTION_INVALID_TEXT, show_alert=True)
+        except MembershipRequiredError as exc:
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(
+                    _membership_text(),
+                    reply_markup=required_channels_keyboard(exc.channels),
+                )
+            await callback.answer("ابتدا در کانال‌های الزامی عضو شوید.", show_alert=True)
+        except AccessDeniedError:
+            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+        except UserRateLimitError:
+            await callback.answer(RATE_LIMIT_TEXT, show_alert=True)
+        except PolicyBackendError:
+            await callback.answer(SERVICE_UNAVAILABLE_TEXT, show_alert=True)
+
+    @router.callback_query(F.data.startswith("h2:"))
+    async def highlight_tray_navigation(callback: CallbackQuery) -> None:
+        if callback.from_user is None or callback.data is None:
+            return
+        await _save_callback_user(users, callback)
+        parts = callback.data.split(":", maxsplit=3)
+        try:
+            await access_policy.authorize_request(callback.from_user.id, consume_rate_limit=False)
+            if len(parts) == 3 and parts[1] == "open":
+                username = parts[2]
+                _validate_instagram_username(username)
+                record, created = await asyncio.to_thread(
+                    jobs.create_highlight_tray,
+                    chat_id=callback.message.chat.id
+                    if isinstance(callback.message, Message)
+                    else callback.from_user.id,
+                    user_id=callback.from_user.id,
+                    url=f"https://www.instagram.com/{username}/highlights/",
+                    username=username,
+                )
+                if isinstance(callback.message, Message):
+                    await callback.message.edit_text(
+                        HIGHLIGHT_TRAY_QUEUED_TEXT,
+                        reply_markup=None,
+                    )
+                    await asyncio.to_thread(
+                        repository.set_status_message, record.job_id, callback.message.message_id
+                    )
+                if created:
+                    await queue.enqueue_highlight_tray(
+                        job_id=record.job_id,
+                        chat_id=record.chat_id,
+                        user_id=record.user_id,
+                        url=record.url,
+                        username=username,
+                    )
+                await callback.answer("در حال دریافت فهرست هایلایت‌ها…")  # noqa: RUF001
+                return
+            if len(parts) != 4 or parts[0] != "h2":
+                raise SelectionOwnershipError("Invalid highlight callback")
+            token, action, payload = parts[1], parts[2], parts[3]
+            tray = await asyncio.to_thread(
+                repository.get_highlight_tray,
+                SelectionToken(token),
+                callback.from_user.id,
+            )
+            if action == "close":
+                if isinstance(callback.message, Message):
+                    await callback.message.edit_text("فهرست هایلایت‌ها بسته شد.")  # noqa: RUF001
+                await callback.answer()
+                return
+            if action == "page":
+                page = int(payload)
+                if isinstance(callback.message, Message):
+                    await callback.message.edit_text(
+                        render_highlight_tray(tray, page=page),
+                        reply_markup=highlight_tray_keyboard(tray, page=page),
+                    )
+                await callback.answer()
+                return
+            if action != "pick":
+                raise SelectionOwnershipError("Unknown highlight action")
+            if payload not in {item.highlight_id for item in tray.highlights}:
+                raise SelectionOwnershipError("Highlight was not offered")
+            record, created = await asyncio.to_thread(
+                jobs.create_download,
+                chat_id=tray.chat_id,
+                user_id=tray.owner_user_id,
+                url=f"https://www.instagram.com/stories/highlights/{payload}/",
+                mode=DownloadMode.INSTAGRAM_HIGHLIGHT,
+            )
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(
+                    QUEUED_TEXT.format(job_id=record.job_id),
+                    reply_markup=cancellation_keyboard(record.job_id),
+                )
+                await asyncio.to_thread(
+                    repository.set_status_message, record.job_id, callback.message.message_id
+                )
+            if created:
+                await _enqueue_download_or_fail(
+                    queue=queue,
+                    repository=repository,
+                    users=users,
+                    record=record,
+                    callback=callback,
+                )
+            await callback.answer("ثبت شد" if created else "این دانلود از قبل فعال است")
+        except SelectionExpiredError:
+            await callback.answer(SELECTION_EXPIRED_TEXT, show_alert=True)
+        except SelectionOwnershipError, ValueError:
+            await callback.answer(SELECTION_INVALID_TEXT, show_alert=True)
+        except MembershipRequiredError as exc:
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(
+                    _membership_text(),
+                    reply_markup=required_channels_keyboard(exc.channels),
+                )
+            await callback.answer("ابتدا در کانال‌های الزامی عضو شوید.", show_alert=True)
+        except AccessDeniedError:
+            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+        except UserRateLimitError:
+            await callback.answer(RATE_LIMIT_TEXT, show_alert=True)
+        except PolicyBackendError:
+            await callback.answer(SERVICE_UNAVAILABLE_TEXT, show_alert=True)
+
     @router.callback_query(F.data.startswith("cancel:"))
     async def cancel(callback: CallbackQuery) -> None:
         if callback.from_user is None or callback.data is None:
@@ -864,6 +1084,7 @@ def build_router(
             analytics=usage_analytics,
             chart_renderer=usage_chart_renderer,
             cookie_manager=cookie_manager,
+            cookie_health_service=cookie_health_service,
         )
     )
 
@@ -986,6 +1207,82 @@ def _legacy_callback_token(data: str) -> SelectionToken:
     if len(parts) < 3 or parts[0] not in {"fmt", "container"} or not 10 <= len(parts[1]) <= 32:
         raise ValueError("Invalid legacy callback")
     return SelectionToken(parts[1])
+
+
+async def _enqueue_download_or_fail(
+    *,
+    queue: JobQueue,
+    repository: JobRepository,
+    users: UserRepository,
+    record: JobRecord,
+    callback: CallbackQuery,
+) -> bool:
+    try:
+        await queue.enqueue_download(
+            job_id=record.job_id,
+            chat_id=record.chat_id,
+            user_id=record.user_id,
+            url=record.url,
+            mode=record.mode or DownloadMode.BEST,
+            container=record.container,
+            container_policy=record.container_policy,
+            native_video_codec=record.native_video_codec,
+            selected_format_ids=record.selected_format_ids,
+            image_delivery_mode=record.image_delivery_mode,
+        )
+    except Exception as exc:
+        await asyncio.to_thread(
+            repository.transition,
+            record.job_id,
+            JobStatus.FAILED,
+            error_category=ErrorCategory.INTERNAL,
+            error_summary="queue_enqueue_failed",
+        )
+        await asyncio.to_thread(
+            users.record_download_outcome,
+            job_id=record.job_id,
+            user_id=record.user_id,
+            day=datetime.now(UTC).date(),
+            succeeded=False,
+        )
+        if isinstance(callback.message, Message):
+            await callback.message.edit_text("ثبت کار در صف ممکن نشد؛ دوباره تلاش کنید.")
+        await logger.aexception(
+            "download_enqueue_failed",
+            job_id=record.job_id,
+            error_type=type(exc).__name__,
+        )
+        await callback.answer("صف موقتاً در دسترس نیست", show_alert=True)
+        return False
+    return True
+
+
+def _story_username(webpage_url: str) -> str | None:
+    intent = canonicalize_media_url(webpage_url)
+    if intent.instagram_kind != "story":
+        return None
+    parts = [part for part in urlsplit(intent.canonical_url).path.split("/") if part]
+    # canonical: /stories/USERNAME/MEDIA_ID/
+    if len(parts) >= 3 and parts[0] == "stories":
+        return parts[1]
+    return None
+
+
+def _single_story_option(media: MediaInfo) -> MediaFormatOption | None:
+    single = {
+        DownloadMode.IMAGE_ORIGINAL,
+        DownloadMode.VIDEO_ORIGINAL,
+    }
+    return next((option for option in media.format_options if option.mode in single), None)
+
+
+def _validate_instagram_username(username: str) -> None:
+    if not 1 <= len(username) <= 64:
+        raise ValueError("Invalid Instagram username")
+    if not all(
+        character.isascii() and (character.isalnum() or character in "._") for character in username
+    ):
+        raise ValueError("Invalid Instagram username")
 
 
 def _parse_selection_callback_full(

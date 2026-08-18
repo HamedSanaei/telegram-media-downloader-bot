@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import unicodedata
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -23,6 +23,7 @@ from aiogram.types import (
 )
 
 from telegram_media_bot.application.ports.delivery import (
+    BatchDeliveryOutcome,
     DeliveryCancellationCheck,
     DeliveryGateway,
     DeliveryItemSink,
@@ -199,6 +200,30 @@ class TelegramDeliveryGateway(DeliveryGateway):
             await self._bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
         except TelegramAPIError as exc:
             raise DeliveryError("Telegram progress edit failed") from exc
+
+    async def deliver_batch(
+        self,
+        *,
+        chat_id: int,
+        result: DownloadResult,
+        caption: str,
+        progress: DeliveryProgressSink | None = None,
+        item_delivered: DeliveryItemSink | None = None,
+        is_cancelled: DeliveryCancellationCheck | None = None,
+        summary_title: str = "📚 دانلود مجموعه تمام شد",
+    ) -> BatchDeliveryOutcome:
+        """Deliver every item with per-item isolation and a final summary."""
+        return await _deliver_batch(
+            deliver_item=self.deliver,
+            summary_sender=lambda text: self.send_text(chat_id, text),
+            chat_id=chat_id,
+            result=result,
+            caption=caption,
+            progress=progress,
+            item_delivered=item_delivered,
+            is_cancelled=is_cancelled,
+            summary_title=summary_title,
+        )
 
     async def deliver_album(
         self,
@@ -804,6 +829,30 @@ class RoutedDeliveryGateway(DeliveryGateway):
     async def edit_text(self, chat_id: int, message_id: int, text: str) -> None:
         await self._direct.edit_text(chat_id, message_id, text)
 
+    async def deliver_batch(
+        self,
+        *,
+        chat_id: int,
+        result: DownloadResult,
+        caption: str,
+        progress: DeliveryProgressSink | None = None,
+        item_delivered: DeliveryItemSink | None = None,
+        is_cancelled: DeliveryCancellationCheck | None = None,
+        summary_title: str = "📚 دانلود مجموعه تمام شد",
+    ) -> BatchDeliveryOutcome:
+        """Deliver a collection item by item; one failure never discards the successful items."""
+        return await _deliver_batch(
+            deliver_item=self._deliver_one,
+            summary_sender=lambda text: self.send_text(chat_id, text),
+            chat_id=chat_id,
+            result=result,
+            caption=caption,
+            progress=progress,
+            item_delivered=item_delivered,
+            is_cancelled=is_cancelled,
+            summary_title=summary_title,
+        )
+
     async def _deliver_multipart(
         self,
         *,
@@ -961,6 +1010,121 @@ async def _delete_confirmed_delivery_file(
         duration_seconds=round(monotonic() - started, 6),
         failed_paths_count=0,
         entry_kind="delivered_file",
+    )
+
+
+def render_batch_summary(title: str, total: int, succeeded: int, failed: int) -> str:
+    return f"{title}\n\nکل: {total}\nموفق: {succeeded}\nناموفق: {failed}"  # noqa: RUF001
+
+
+async def _deliver_batch(
+    *,
+    deliver_item: Callable[..., Awaitable[DeliveryReceipt]],
+    summary_sender: Callable[[str], Awaitable[object]],
+    chat_id: int,
+    result: DownloadResult,
+    caption: str,
+    progress: DeliveryProgressSink | None,
+    item_delivered: DeliveryItemSink | None,
+    is_cancelled: DeliveryCancellationCheck | None,
+    summary_title: str,
+) -> BatchDeliveryOutcome:
+    artifacts = result.delivery_artifacts
+    receipts: list[DeliveryItemReceipt] = []
+    succeeded = 0
+    failed = 0
+    completed_bytes = 0
+    total_bytes = result.total_file_size_bytes
+    for index, artifact in enumerate(artifacts, start=1):
+        if is_cancelled is not None and is_cancelled():
+            raise asyncio.CancelledError
+        child = DownloadResult(
+            job_id=result.job_id,
+            media_id=result.media_id,
+            title=artifact.title or f"{result.title} {index}",
+            source=result.source,
+            kind=artifact.kind,
+            file_path=artifact.file_path,
+            file_size_bytes=artifact.file_size_bytes,
+            duration_seconds=result.duration_seconds,
+            mime_type=artifact.mime_type,
+            inline_video_streamable=artifact.inline_video_streamable,
+        )
+        # Stable per-item ordinal identity: the artifact position, not the delivery order,
+        # so partial failures never renumber successful items.
+        ordinal_offset = index - 1
+
+        def map_progress(
+            event: DeliveryProgressEvent,
+            *,
+            completed: int = completed_bytes,
+            item_number: int = index,
+        ) -> None:
+            if progress is None:
+                return
+            progress(
+                replace(
+                    event,
+                    transferred_bytes=min(total_bytes, completed + event.item_transferred_bytes),
+                    total_bytes=total_bytes,
+                    item_ordinal=item_number,
+                    item_count=len(artifacts),
+                )
+            )
+
+        async def persist_item(
+            item: DeliveryItemReceipt,
+            *,
+            offset: int = ordinal_offset,
+        ) -> None:
+            if item_delivered is not None:
+                await item_delivered(replace(item, ordinal=offset + item.ordinal))
+
+        try:
+            child_receipt = await deliver_item(
+                chat_id=chat_id,
+                result=child,
+                caption=f"{caption}\nرسانه {index} از {len(artifacts)}",  # noqa: RUF001
+                progress=map_progress,
+                item_delivered=persist_item,
+                is_cancelled=is_cancelled,
+            )
+        except asyncio.CancelledError:
+            raise
+        except DeliveryError as exc:
+            failed += 1
+            await logger.awarning(
+                "batch_item_delivery_failed",
+                job_id=result.job_id,
+                item_ordinal=index,
+                error_type=type(exc).__name__,
+            )
+            continue
+        succeeded += 1
+        receipts.extend(
+            replace(item, ordinal=ordinal_offset + item.ordinal) for item in child_receipt.items
+        )
+        await _delete_confirmed_delivery_file(
+            artifact.file_path,
+            job_id=result.job_id,
+            cleanup_reason="batch_item_delivered",
+        )
+        completed_bytes += artifact.file_size_bytes
+    summary = render_batch_summary(summary_title, len(artifacts), succeeded, failed)
+    try:
+        await summary_sender(summary)
+    except DeliveryError as exc:
+        await logger.awarning(
+            "batch_summary_failed",
+            job_id=result.job_id,
+            error_type=type(exc).__name__,
+        )
+    return BatchDeliveryOutcome(
+        total=len(artifacts),
+        succeeded=succeeded,
+        failed=failed,
+        receipts=tuple(receipts),
+        delivered_bytes=completed_bytes,
     )
 
 

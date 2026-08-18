@@ -12,6 +12,7 @@ from arq.connections import ArqRedis, RedisSettings
 from arq.typing import WorkerSettingsBase
 
 from telegram_media_bot.application.ports.download_engine import DownloadEngine
+from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.domain.models import (
@@ -21,10 +22,19 @@ from telegram_media_bot.domain.models import (
     JobStatus,
     RecoveryDecision,
 )
+from telegram_media_bot.infrastructure.cookies.health import (
+    MissingCookieChecker,
+    NetscapeStaticCookieChecker,
+)
+from telegram_media_bot.infrastructure.cookies.manager import NetscapeCookieManager
+from telegram_media_bot.infrastructure.cookies.probe import GalleryDlCookieProbe
 from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
 from telegram_media_bot.infrastructure.media_engine_router import RoutedMediaEngine
 from telegram_media_bot.infrastructure.observability.health_server import HealthServer
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
+from telegram_media_bot.infrastructure.persistence.sqlite_cookie_health import (
+    SqliteCookieHealthRepository,
+)
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.queue.arq_queue import ArqJobQueue
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
@@ -42,8 +52,10 @@ from telegram_media_bot.telegram.bot_factory import (
 )
 from telegram_media_bot.telegram.delivery import RoutedDeliveryGateway
 from telegram_media_bot.workers.jobs import (
+    cookie_health_watcher,
     maintenance_job,
     process_download_job,
+    process_highlight_tray_job,
     process_inspection_job,
 )
 
@@ -63,6 +75,8 @@ async def startup(ctx: dict[str, Any]) -> None:
     try:
         repository = SqliteJobRepository(settings.database_path())
         await asyncio.to_thread(repository.initialize)
+        cookie_health_store = SqliteCookieHealthRepository(settings.database_path())
+        await asyncio.to_thread(cookie_health_store.initialize)
         ytdlp_engine = YtDlpEngine(settings)
         gallery_engine = GalleryDlEngine(settings)
         gallery_health = await asyncio.to_thread(gallery_engine.health)
@@ -88,15 +102,32 @@ async def startup(ctx: dict[str, Any]) -> None:
             playlist_max_items=settings.media.playlist_max_items,
             max_duration_seconds=settings.media.max_duration_seconds,
             max_file_size_bytes=settings.media.max_file_size_mb * 1024 * 1024,
+            max_source_size_bytes=settings.media.max_source_size_mb * 1024 * 1024,
             instagram_max_videos=settings.media.instagram.max_videos,
+            instagram_max_stories=settings.media.instagram.max_stories_per_batch,
+            instagram_max_highlight_items=settings.media.instagram.max_highlight_items,
         )
         metrics = MetricsRegistry()
+        cookie_health_service = CookieHealthService(
+            store=cookie_health_store,
+            checker=(
+                NetscapeStaticCookieChecker(NetscapeCookieManager(cookie_file))
+                if (cookie_file := settings.effective_cookie_file()) is not None
+                else MissingCookieChecker()
+            ),
+            probe=GalleryDlCookieProbe(settings),
+            expiring_soon_hours=settings.cookie_health.expiring_soon_hours,
+            reminder_interval_minutes=settings.cookie_health.reminder_interval_minutes,
+            recovery_notifications=settings.cookie_health.recovery_notifications,
+            probe_concurrency=settings.cookie_health.probe_concurrency,
+        )
         identity = await bot.get_me()
         ctx.update(
             settings=settings,
             repository=repository,
             bot=bot,
             engine=engine,
+            gallery_engine=gallery_engine,
             queue=queue,
             download_service=service,
             delivery=RoutedDeliveryGateway(
@@ -107,6 +138,7 @@ async def startup(ctx: dict[str, Any]) -> None:
             telegram_runtime=runtime,
             bot_username=identity.username or "telegram_media_bot",
             bot_identity_available=True,
+            cookie_health_service=cookie_health_service,
         )
         cutoff = datetime.now(UTC)
         recovered = await asyncio.to_thread(repository.reconcile_abandoned, cutoff)
@@ -286,9 +318,14 @@ _settings = load_settings(require_token=True)
 
 
 class WorkerSettings(WorkerSettingsBase):
-    functions: tuple[Any, ...] = (process_inspection_job, process_download_job)
+    functions: tuple[Any, ...] = (
+        process_inspection_job,
+        process_download_job,
+        process_highlight_tray_job,
+    )
     cron_jobs: tuple[Any, ...] = (
         cron(maintenance_job, minute=None, second={0, 30}, run_at_startup=True),
+        cron(cookie_health_watcher, minute=None, second={15, 45}, run_at_startup=True),
     )
     on_startup: Any = startup
     on_shutdown: Any = shutdown

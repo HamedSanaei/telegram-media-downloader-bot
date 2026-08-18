@@ -3,9 +3,14 @@
 | Path | Responsibility |
 |---|---|
 | `src/telegram_media_bot/domain/` | Stable models, enums, identifiers, exceptions, and `best_original` native-only normalization |
+| `src/telegram_media_bot/domain/failures.py` | Typed structured `FailureContext` (adapter/extractor/source/fallback/HTTP status/retry history/stage/etc.) that survives to the terminal admin notification; bounded `FailureStage`; size-bounded Persian rendering that omits absent fields |
+| `src/telegram_media_bot/domain/cookie_health.py` | Cookie Health Center states (HEALTHY/EXPIRING_SOON/EXPIRED/AUTH_FAILED/MISSING/MALFORMED/UNVERIFIED/CHECK_ERROR), static/probe result models, and definitive blocking states |
+| `src/telegram_media_bot/domain/cookies.py` | The single cookie-provider registry (YouTube/Instagram/TikTok/X/Pinterest/SoundCloud domains and labels), upload size contract, and merge summary |
 | `src/telegram_media_bot/application/ports/` | Interfaces required by use cases |
 | `src/telegram_media_bot/application/ports/cookie_management.py` | Framework-free canonical cookie merge/export contract |
 | `src/telegram_media_bot/application/services/` | Orchestrates inspection, policy limits, and selected downloads |
+| `src/telegram_media_bot/application/services/diagnostic_sanitizer.py` | Central secret sanitizer: URL reduction to scheme+hostname+safe path, safe-parameter allowlist, redaction of cookies/tokens/headers/proxy passwords/CDN query secrets, bounded exception-message cleanup |
+| `src/telegram_media_bot/application/services/cookie_health_service.py` | Cookie Health orchestration: static+probe merge, persisted state-transition alerts, reminder/recovery deduplication, runtime auth-failure updates |
 | `src/telegram_media_bot/application/services/native_options.py` | Builds the public native-only option catalog, enforces codec/transcode invariants, chooses truthful representatives, deduplicates actual plans, and creates opaque option IDs |
 | `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
 | `src/telegram_media_bot/application/services/instagram_delivery.py` | Selects the complete Instagram image/mixed bundle behind the Photo/File confirmation |
@@ -28,17 +33,18 @@
 | `src/telegram_media_bot/assets/fonts/` | Package-bundled Noto Sans runtime font and SIL OFL 1.1 license |
 | `src/telegram_media_bot/infrastructure/security/telegram_membership.py` | Telegram membership gateway with positive/negative Redis cache |
 | `src/telegram_media_bot/infrastructure/security/` | Public URL/DNS validation, Redis rate limiting, and membership cache |
-| `src/telegram_media_bot/infrastructure/cookies/` | Strict Netscape parsing, supported-service detection, deterministic scoped merge, restricted backup, and atomic canonical-file replacement |
+| `src/telegram_media_bot/infrastructure/cookies/` | Strict Netscape parsing, supported-service detection, deterministic scoped merge, restricted backup, atomic canonical-file replacement, network-free static health checks, and lightweight authenticated probes |
+| `src/telegram_media_bot/infrastructure/persistence/sqlite_cookie_health.py` | Durable Cookie Health state (status/static/active/last-notified/reminder) surviving restarts |
 | `src/telegram_media_bot/infrastructure/observability/` | Health HTTP server and Prometheus metrics registry |
 | `src/telegram_media_bot/infrastructure/telegram/local_api.py` | Local Bot API lifecycle, durable migration, endpoint leases, and safe status |
 | `src/telegram_media_bot/infrastructure/archive/` | Safe 7-Zip multi-volume packaging, deterministic ordered image ZIPs, and SHA-256 manifests |
 | `src/telegram_media_bot/infrastructure/storage/` | Exact job-workspace cleanup, symlink-safe deletion, and startup/maintenance sweeping |
-| `src/telegram_media_bot/telegram/` | Versioned Back/Native/Instagram delivery callbacks, real-plan rendering, middleware, tracked exact-byte document delivery, and ordered ten-item media-group planning |
-| `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants, FSM state, and reply/inline keyboard builders |
+| `src/telegram_media_bot/telegram/` | Versioned Back/Native/Instagram/Story/Highlight delivery callbacks, real-plan rendering, middleware, tracked exact-byte document delivery, and ordered ten-item media-group planning |
+| `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants (reports, cookie management, Cookie Health), FSM state, and reply/inline keyboard builders |
 | `src/telegram_media_bot/telegram/admin_handlers.py` | Role-checked menu/download/report/cookie routing, private-chat secret export, bounded in-memory document intake, and per-admin report single-flight coordination |
 | `src/telegram_media_bot/telegram/handlers.py` | Shared URL submission, editable job-status ownership, active-job queue reconciliation, callbacks, and cancellation routing |
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction plus the bounded, cancellable Local Bot API startup readiness wait (`local_api_startup_wait`/`ready`/`timeout`) |
-| `src/telegram_media_bot/workers/` | ARQ worker settings and job functions, including edit-or-send inspection publication, redacted terminal-failure alerts to configured administrators, retries, receipts, and workspace cleanup |
+| `src/telegram_media_bot/workers/` | ARQ worker settings and job functions, including edit-or-send inspection publication, redacted terminal-failure alerts to configured administrators (rich `FailureContext`), cookie-health watcher, retries, receipts, and workspace cleanup |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, composition roots, and fail-fast effective-cookie path identity |
 | `src/telegram_media_bot/cli.py` | Management CLI plus full, fail-closed offline-static, and explicitly service-selected online doctor modes |
 | `tests/unit/` | Fast deterministic tests |

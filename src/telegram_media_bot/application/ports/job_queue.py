@@ -23,6 +23,18 @@ class JobQueue(Protocol):
         """Enqueue metadata inspection without blocking the bot process."""
         ...
 
+    async def enqueue_highlight_tray(
+        self,
+        *,
+        job_id: JobId,
+        chat_id: int,
+        user_id: int,
+        url: str,
+        username: str,
+    ) -> JobId:
+        """Enqueue an Instagram highlight-tray fetch for the profile highlight browser."""
+        ...
+
     async def enqueue_download(
         self,
         *,

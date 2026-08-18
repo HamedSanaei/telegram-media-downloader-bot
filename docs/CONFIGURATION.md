@@ -86,6 +86,25 @@ source-selected container/codecs are preserved. Image entries are ignored, and t
 count/aggregate size are bounded. Authenticated content uses the optional canonical local cookie
 file.
 
+Bulk Instagram Stories/Highlight batches are bounded per job by
+`media.instagram.max_stories_per_batch` and `media.instagram.max_highlight_items`; the aggregate
+collection size is bounded by the source/gallery total limits and never by the single-file
+`max_file_size_mb`.
+
+### Cookie Health Center
+
+`cookie_health` is admin-only diagnostics over the canonical combined cookie file (the file stays
+the single source of truth): `expiring_soon_hours` (default `24`) controls the static
+EXPIRING_SOON threshold; `expiry_watch_interval_minutes` (default `45`) drives the network-free
+local expiry watcher; `active_probe_interval_minutes` (default `0` = disabled) optionally enables
+periodic authenticated probes; `probe_timeout_seconds` (default `20`) and `probe_concurrency`
+(default `2`) bound the lightweight probes so Telegram callbacks are never blocked;
+`reminder_interval_minutes` (default `180`) deduplicates unresolved-failure reminders; and
+`recovery_notifications` (default `true`) sends one alert when a provider returns to HEALTHY.
+Per-provider `probes` entries (`url` + `auth_required`) must point at real
+authentication-required endpoints; a provider without a configured probe is reported UNVERIFIED
+and is never marked healthy from anonymous public success.
+
 `telegram.upload_as_document: true` accepts native media without requiring Telegram's inline-video
 profile. In particular, VP9 inside MP4 is valid document delivery and is not converted merely
 because `send_video` prefers H.264/AAC. The media size setting is a hard ceiling, not a target:

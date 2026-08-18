@@ -24,6 +24,8 @@ from telegram_media_bot.domain.models import (
     DeliveryProvider,
     DownloadMode,
     ErrorCategory,
+    HighlightItem,
+    HighlightTrayRecord,
     ImageDeliveryMode,
     JobCancellationResult,
     JobCounts,
@@ -94,6 +96,17 @@ class SqliteJobRepository(JobRepository):
                     expires_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS selections_expires_idx ON selections(expires_at);
+
+                CREATE TABLE IF NOT EXISTS highlight_trays (
+                    token TEXT PRIMARY KEY,
+                    owner_user_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    username TEXT NOT NULL,
+                    highlights_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS highlight_trays_expires_idx ON highlight_trays(expires_at);
 
                 CREATE TABLE IF NOT EXISTS jobs (
                     job_id TEXT PRIMARY KEY,
@@ -204,6 +217,7 @@ class SqliteJobRepository(JobRepository):
                 "TEXT NOT NULL DEFAULT '[]'",
             )
             _ensure_column(connection, "jobs", "image_delivery_mode", "TEXT")
+            _ensure_column(connection, "jobs", "url_classification", "TEXT")
 
     def healthy(self) -> bool:
         try:
@@ -301,6 +315,68 @@ class SqliteJobRepository(JobRepository):
             raise SelectionExpiredError("Selection has expired")
         return selection
 
+    def save_highlight_tray(self, tray: HighlightTrayRecord) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO highlight_trays (
+                    token, owner_user_id, chat_id, username, highlights_json,
+                    created_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tray.token,
+                    tray.owner_user_id,
+                    tray.chat_id,
+                    tray.username,
+                    json.dumps(
+                        [
+                            {
+                                "highlight_id": item.highlight_id,
+                                "title": item.title,
+                                "item_count": item.item_count,
+                            }
+                            for item in tray.highlights
+                        ],
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    _dump_datetime(tray.created_at),
+                    _dump_datetime(tray.expires_at),
+                ),
+            )
+
+    def get_highlight_tray(self, token: SelectionToken, owner_user_id: int) -> HighlightTrayRecord:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM highlight_trays WHERE token = ?", (token,)
+            ).fetchone()
+        if row is None:
+            raise SelectionExpiredError("Highlight tray does not exist or has expired")
+        if int(row["owner_user_id"]) != owner_user_id:
+            raise SelectionOwnershipError("Highlight tray belongs to another user")
+        highlights = tuple(
+            HighlightItem(
+                highlight_id=str(item["highlight_id"]),
+                title=str(item["title"]),
+                item_count=int(item.get("item_count", 0)),
+            )
+            for item in json.loads(str(row["highlights_json"]))
+            if isinstance(item, dict) and item.get("highlight_id")
+        )
+        tray = HighlightTrayRecord(
+            token=SelectionToken(str(row["token"])),
+            owner_user_id=int(row["owner_user_id"]),
+            chat_id=int(row["chat_id"]),
+            username=str(row["username"]),
+            highlights=highlights,
+            created_at=_load_datetime(str(row["created_at"])),
+            expires_at=_load_datetime(str(row["expires_at"])),
+        )
+        if tray.expired:
+            raise SelectionExpiredError("Highlight tray has expired")
+        return tray
+
     def create_job(self, record: JobRecord) -> JobRecord:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -324,8 +400,8 @@ class SqliteJobRepository(JobRepository):
                     image_delivery_mode, idempotency_key,
                     created_at, updated_at, status_message_id, source, error_category,
                     error_summary, cancel_requested, delivery_file_id,
-                    delivery_file_unique_id, attempt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    delivery_file_unique_id, attempt, url_classification
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _job_values(record),
             )
@@ -698,13 +774,16 @@ class SqliteJobRepository(JobRepository):
             selections = connection.execute(
                 "DELETE FROM selections WHERE expires_at <= ?", (_dump_datetime(now),)
             ).rowcount
+            trays = connection.execute(
+                "DELETE FROM highlight_trays WHERE expires_at <= ?", (_dump_datetime(now),)
+            ).rowcount
             terminal = tuple(status.value for status in JobStatus if status.terminal)
             placeholders = ",".join("?" for _ in terminal)
             jobs = connection.execute(
                 f"DELETE FROM jobs WHERE status IN ({placeholders}) AND updated_at < ?",
                 (*terminal, retention_cutoff),
             ).rowcount
-        return max(0, selections) + max(0, jobs)
+        return max(0, selections) + max(0, trays) + max(0, jobs)
 
     def failed_jobs(self, limit: int = 10) -> tuple[JobRecord, ...]:
         with self._connect() as connection:
@@ -1060,6 +1139,7 @@ def _job_from_row(row: sqlite3.Row) -> JobRecord:
             str(row["delivery_file_unique_id"]) if row["delivery_file_unique_id"] else None
         ),
         attempt=int(row["attempt"]),
+        url_classification=(str(row["url_classification"]) if row["url_classification"] else None),
     )
 
 
@@ -1088,6 +1168,7 @@ def _job_values(record: JobRecord) -> tuple[Any, ...]:
         record.delivery_file_id,
         record.delivery_file_unique_id,
         record.attempt,
+        record.url_classification,
     )
 
 

@@ -145,6 +145,13 @@ def _canonicalize_instagram(path: str) -> MediaUrlIntent:
     - A bare story-account URL (no media id) stays distinct and is rejected as bulk by the
       gallery adapter.
     """
+    if _INSTAGRAM_HIGHLIGHT_PATTERN.fullmatch(path) is not None:
+        canonical = f"https://www.instagram.com{path.rstrip('/')}/"
+        return MediaUrlIntent(
+            original_url=canonical,
+            canonical_url=canonical,
+            instagram_kind="highlight",
+        )
     story = _INSTAGRAM_STORY_PATTERN.fullmatch(path)
     if story is not None:
         canonical = f"https://www.instagram.com/stories/{story.group('username')}/{story.group('media_id')}/"
@@ -152,13 +159,6 @@ def _canonicalize_instagram(path: str) -> MediaUrlIntent:
             original_url=canonical,
             canonical_url=canonical,
             instagram_kind="story",
-        )
-    if _INSTAGRAM_HIGHLIGHT_PATTERN.fullmatch(path) is not None:
-        canonical = f"https://www.instagram.com{path.rstrip('/')}/"
-        return MediaUrlIntent(
-            original_url=canonical,
-            canonical_url=canonical,
-            instagram_kind="highlight",
         )
     if _INSTAGRAM_STORY_ACCOUNT_PATTERN.fullmatch(path) is not None:
         canonical = f"https://www.instagram.com{path.rstrip('/')}/"

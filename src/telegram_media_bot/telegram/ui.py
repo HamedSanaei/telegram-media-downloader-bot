@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from telegram_media_bot.application.services.native_options import (
@@ -7,9 +9,12 @@ from telegram_media_bot.application.services.native_options import (
     build_native_option_catalog,
     display_video_codec,
 )
+from telegram_media_bot.domain.cookie_health import CookieHealthState, ProviderCookieHealth
+from telegram_media_bot.domain.cookies import COOKIE_SERVICE_LABELS, CookieService
 from telegram_media_bot.domain.models import (
     DeliveryProgressEvent,
     DeliveryStage,
+    HighlightTrayRecord,
     ImageDeliveryMode,
     JobId,
     MediaInfo,
@@ -20,6 +25,94 @@ from telegram_media_bot.domain.models import (
 )
 
 BACK_TEXT = "⬅️ بازگشت"
+HIGHLIGHTS_PER_PAGE = 5
+
+
+def story_choice_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎯 دانلود همین استوری",
+                    callback_data=f"s2:{selection.token}:single",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📚 دانلود همه استوری‌های فعال این کاربر",
+                    callback_data=f"s2:{selection.token}:all",
+                )
+            ],
+            [InlineKeyboardButton(text="❌ لغو", callback_data=f"n2:{selection.token}:s")],
+        ]
+    )
+
+
+def highlight_tray_keyboard(
+    tray: HighlightTrayRecord,
+    page: int,
+) -> InlineKeyboardMarkup:
+    page_size = HIGHLIGHTS_PER_PAGE
+    total_pages = max(1, (len(tray.highlights) + page_size - 1) // page_size)
+    current = max(1, min(page, total_pages))
+    start = (current - 1) * page_size
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{item.title} ({item.item_count})",
+                callback_data=f"h2:{tray.token}:pick:{item.highlight_id}",
+            )
+        ]
+        for item in tray.highlights[start : start + page_size]
+    ]
+    navigation: list[InlineKeyboardButton] = []
+    if current > 1:
+        navigation.append(
+            InlineKeyboardButton(
+                text="⬅️ قبلی",
+                callback_data=f"h2:{tray.token}:page:{current - 1}",
+            )
+        )
+    navigation.append(
+        InlineKeyboardButton(
+            text=f"{current} / {total_pages}",
+            callback_data=f"h2:{tray.token}:page:{current}",
+        )
+    )
+    if current < total_pages:
+        navigation.append(
+            InlineKeyboardButton(
+                text="بعدی ➡️",
+                callback_data=f"h2:{tray.token}:page:{current + 1}",
+            )
+        )
+    rows.append(navigation)
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="❌ بستن",
+                callback_data=f"h2:{tray.token}:close",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def render_highlight_tray(tray: HighlightTrayRecord, page: int) -> str:
+    page_size = HIGHLIGHTS_PER_PAGE
+    total_pages = max(1, (len(tray.highlights) + page_size - 1) // page_size)
+    current = max(1, min(page, total_pages))
+    start = (current - 1) * page_size
+    lines = [
+        f"⭐ هایلایت‌های {tray.username}",
+        f"تعداد: {len(tray.highlights)}",
+        "",
+    ]
+    for item in tray.highlights[start : start + page_size]:
+        lines.append(f"• {item.title} — {item.item_count} رسانه")
+    lines.append("")
+    lines.append(f"صفحه {current} از {total_pages}")
+    return "\n".join(lines)
 
 
 def selection_keyboard(
@@ -131,29 +224,122 @@ def media_bundle_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def instagram_image_delivery_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+def instagram_image_delivery_keyboard(
+    selection: SelectionRecord,
+    *,
+    highlights_username: str | None = None,
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="🖼 ارسال به‌صورت عکس",
+                callback_data=(f"i2:{selection.token}:{ImageDeliveryMode.PHOTO.value}"),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📎 ارسال به‌صورت فایل",
+                callback_data=(f"i2:{selection.token}:{ImageDeliveryMode.DOCUMENT.value}"),
+            )
+        ],
+    ]
+    if highlights_username:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text="🖼 ارسال به‌صورت عکس",
-                    callback_data=(f"i2:{selection.token}:{ImageDeliveryMode.PHOTO.value}"),
+                    text="⭐ هایلایت‌ها",  # noqa: RUF001
+                    callback_data=f"h2:open:{highlights_username}",
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📎 ارسال به‌صورت فایل",
-                    callback_data=(f"i2:{selection.token}:{ImageDeliveryMode.DOCUMENT.value}"),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="❌ لغو",
-                    callback_data=f"n2:{selection.token}:s",
-                )
-            ],
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="❌ لغو",
+                callback_data=f"n2:{selection.token}:s",
+            )
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def cookie_health_status_text(
+    health_by_provider: dict[CookieService, ProviderCookieHealth],
+) -> str:
+    lines = ["🍪 وضعیت کوکی‌ها"]  # noqa: RUF001
+    for provider in CookieService:
+        health = health_by_provider.get(provider)
+        lines.append(_render_provider_health(provider, health))
+    return "\n\n".join(lines)
+
+
+def _render_provider_health(
+    provider: CookieService,
+    health: ProviderCookieHealth | None,
+) -> str:
+    label = COOKIE_SERVICE_LABELS.get(provider, provider.value)
+    if health is None:
+        return f"{label}\n❓ تأییدنشده"
+    state = health.status
+    icon = {
+        CookieHealthState.HEALTHY: "✅",
+        CookieHealthState.EXPIRING_SOON: "⚠️",
+        CookieHealthState.EXPIRED: "❌",
+        CookieHealthState.AUTH_FAILED: "❌",
+        CookieHealthState.MISSING: "❌",
+        CookieHealthState.MALFORMED: "❌",
+        CookieHealthState.UNVERIFIED: "❓",
+        CookieHealthState.CHECK_ERROR: "⚠️",
+    }[state]
+    label_by_state = {
+        CookieHealthState.HEALTHY: "Healthy",
+        CookieHealthState.EXPIRING_SOON: "Expiring soon",
+        CookieHealthState.EXPIRED: "Expired",
+        CookieHealthState.AUTH_FAILED: "Auth failed",
+        CookieHealthState.MISSING: "Missing",
+        CookieHealthState.MALFORMED: "Malformed",
+        CookieHealthState.UNVERIFIED: "Unverified",
+        CookieHealthState.CHECK_ERROR: "Check error",
+    }
+    lines = [f"{label}\n{icon} {label_by_state[state]}"]
+    static = health.static
+    if static.record_count:
+        lines.append(f"رکوردها: {static.record_count}")
+    if static.earliest_expiry is not None:
+        lines.append(f"انقضا: {_expiry_label(static.earliest_expiry)}")
+        if static.latest_expiry is not None and static.latest_expiry != static.earliest_expiry:
+            lines.append(f"آخرین انقضا: {_expiry_label(static.latest_expiry)}")
+    if not static.permission_ok:
+        lines.append("⚠️ دسترسی‌های فایل کوکی مناسب نیستند")
+    active = health.active
+    if active is not None and active.status is not CookieHealthState.UNVERIFIED:
+        active_label = {
+            CookieHealthState.HEALTHY: "OK",
+            CookieHealthState.AUTH_FAILED: "ناموفق",
+            CookieHealthState.CHECK_ERROR: "خطای شبکه",
+            CookieHealthState.UNVERIFIED: "نامشخص",
+        }.get(active.status, active.status.value)
+        lines.append(f"بررسی فعال: {active_label}")
+    if state is CookieHealthState.AUTH_FAILED or state is CookieHealthState.CHECK_ERROR:
+        reason = active.safe_reason if active is not None else static.safe_reason
+        if reason:
+            lines.append(f"دلیل: {reason}")
+    if state is CookieHealthState.UNVERIFIED:
+        lines.append("اعتبارسنجی فعال نمی‌تواند قطعی تأیید شود")
+    if health.last_checked_at is not None:
+        lines.append(f"آخرین بررسی: {health.last_checked_at.isoformat(timespec='minutes')}")
+    if health.last_successful_auth_check_at is not None:
+        lines.append(
+            "آخرین بررسی معتبر: "
+            f"{health.last_successful_auth_check_at.isoformat(timespec='minutes')}"
+        )
+    return "\n".join(lines)
+
+
+def _expiry_label(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="minutes")
+    return str(value)
 
 
 def render_instagram_image_delivery_prompt(info: MediaInfo) -> str:

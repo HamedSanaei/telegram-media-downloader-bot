@@ -29,6 +29,20 @@ class DownloadMode(StrEnum):
     IMAGES_ZIP = "images_zip"
     YOUTUBE_THUMBNAIL = "youtube_thumbnail"
     SOUNDCLOUD_ARTWORK = "soundcloud_artwork"
+    #: Bulk collection: every active Story of an Instagram account, in source order.
+    INSTAGRAM_ALL_STORIES = "instagram_all_stories"
+    #: Bulk collection: every media item inside one Instagram Highlight, in source order.
+    INSTAGRAM_HIGHLIGHT = "instagram_highlight"
+
+
+#: Collection modes are delivered as per-item batches with a final summary, and their
+#: aggregate size is bounded by the collection limit rather than the single-file limit.
+COLLECTION_MODES = frozenset(
+    {
+        DownloadMode.INSTAGRAM_ALL_STORIES,
+        DownloadMode.INSTAGRAM_HIGHLIGHT,
+    }
+)
 
 
 class OutputContainer(StrEnum):
@@ -93,6 +107,7 @@ class DeliveryStage(StrEnum):
 class JobKind(StrEnum):
     INSPECTION = "inspection"
     DOWNLOAD = "download"
+    HIGHLIGHT_TRAY = "highlight_tray"
 
 
 class JobStatus(StrEnum):
@@ -266,6 +281,8 @@ class DownloadRequest:
     selected_format_ids: tuple[str, ...] = ()
     allow_collection: bool = False
     image_delivery_mode: ImageDeliveryMode | None = None
+    #: Per-job batch safeguard (collection modes only); caps the number of assets.
+    max_assets: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -382,6 +399,30 @@ class SelectionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class HighlightItem:
+    highlight_id: str
+    title: str
+    item_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class HighlightTrayRecord:
+    """One browsable Instagram highlight tray, stored so callback state stays opaque."""
+
+    token: SelectionToken
+    owner_user_id: int
+    chat_id: int
+    username: str
+    highlights: tuple[HighlightItem, ...]
+    created_at: datetime
+    expires_at: datetime
+
+    @property
+    def expired(self) -> bool:
+        return self.expires_at <= datetime.now(UTC)
+
+
+@dataclass(frozen=True, slots=True)
 class JobRecord:
     job_id: JobId
     kind: JobKind
@@ -406,6 +447,8 @@ class JobRecord:
     delivery_file_id: str | None = None
     delivery_file_unique_id: str | None = None
     attempt: int = 0
+    #: Original URL classification captured at creation (for example "profile", "story").
+    url_classification: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -63,6 +63,27 @@ class ArqJobQueue(JobQueue):
         )
         return job_id
 
+    async def enqueue_highlight_tray(
+        self,
+        *,
+        job_id: JobId,
+        chat_id: int,
+        user_id: int,
+        url: str,
+        username: str,
+    ) -> JobId:
+        url = canonicalize_media_url(url).canonical_url
+        await self._redis.enqueue_job(
+            "process_highlight_tray_job",
+            chat_id=chat_id,
+            user_id=user_id,
+            url=url,
+            username=username,
+            _job_id=str(job_id),
+            _queue_name=self._queue_name,
+        )
+        return job_id
+
     async def enqueue_download(
         self,
         *,

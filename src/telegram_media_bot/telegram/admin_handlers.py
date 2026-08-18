@@ -13,6 +13,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message, ReplyKeyboa
 
 from telegram_media_bot.application.ports.cookie_management import CookieManager
 from telegram_media_bot.application.ports.usage_analytics import UsageChartRenderer
+from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.analytics import UsageReport, UsageReportPeriod
@@ -29,6 +30,9 @@ from telegram_media_bot.telegram.admin_menu import (
     ADMIN_BACK_TO_MENU_BUTTON,
     ADMIN_CANCEL_DOWNLOAD_BUTTON,
     ADMIN_COOKIE_DOWNLOAD_BUTTON,
+    ADMIN_COOKIE_HEALTH_BUTTON,
+    ADMIN_COOKIE_HEALTH_CHECK_BUTTON,
+    ADMIN_COOKIE_HEALTH_REFRESH_BUTTON,
     ADMIN_COOKIE_MANAGEMENT_BUTTON,
     ADMIN_COOKIE_UPLOAD_BUTTON,
     ADMIN_DOWNLOAD_BUTTON,
@@ -39,12 +43,15 @@ from telegram_media_bot.telegram.admin_menu import (
     ADMIN_WEEKLY_REPORT_BUTTON,
     AdminCookieState,
     AdminDownloadState,
+    build_admin_cookie_health_inline_keyboard,
+    build_admin_cookie_health_keyboard,
     build_admin_cookie_keyboard,
     build_admin_download_prompt_keyboard,
     build_admin_main_keyboard,
     build_admin_report_inline_keyboard,
 )
 from telegram_media_bot.telegram.texts import ACCESS_DENIED_TEXT, START_TEXT
+from telegram_media_bot.telegram.ui import cookie_health_status_text
 
 logger = structlog.get_logger(__name__)
 
@@ -73,6 +80,10 @@ COOKIE_UPDATE_FAILED_TEXT = "❌ به‌روزرسانی امن فایل کوک�
 COOKIE_DOWNLOAD_FAILED_TEXT = "❌ دریافت فایل کامل کوکی از سرور ممکن نشد."
 COOKIE_UPLOAD_DOCUMENT_REQUIRED_TEXT = "لطفاً فایل cookies.txt را به‌صورت سند تلگرام ارسال کنید."
 COOKIE_PRIVATE_CHAT_REQUIRED_TEXT = "مدیریت کوکی فقط در گفت‌وگوی خصوصی با ربات مجاز است."
+COOKIE_HEALTH_MENU_TEXT = "🍪 سلامت کوکی‌ها"  # noqa: RUF001
+COOKIE_HEALTH_UNAVAILABLE_TEXT = "سرویس سلامت کوکی در دسترس نیست."
+COOKIE_HEALTH_CHECK_PROGRESS_TEXT = "🔍 در حال بررسی سلامت همه کوکی‌ها…"  # noqa: RUF001
+COOKIE_HEALTH_CHECK_FAILED_TEXT = "❌ بررسی سلامت کوکی‌ها با خطا مواجه شد؛ دوباره تلاش کنید."  # noqa: RUF001
 
 _COOKIE_SERVICE_LABELS = {
     CookieService.YOUTUBE: "YouTube",
@@ -110,6 +121,7 @@ def build_admin_router(
     analytics: UsageAnalyticsService | None,
     chart_renderer: UsageChartRenderer | None,
     cookie_manager: CookieManager | None = None,
+    cookie_health_service: CookieHealthService | None = None,
 ) -> Router:
     router = Router(name="admin")
     reports = AdminReportCoordinator()
@@ -155,6 +167,104 @@ def build_admin_router(
             return
         await state.clear()
         await message.answer(COOKIE_MENU_TEXT, reply_markup=build_admin_cookie_keyboard())
+
+    @router.message(F.text == ADMIN_COOKIE_HEALTH_BUTTON)
+    async def open_cookie_health(message: Message, state: FSMContext) -> None:
+        if not await _authorize_message(message, state, settings):
+            return
+        await state.clear()
+        text = COOKIE_HEALTH_MENU_TEXT
+        if cookie_health_service is not None:
+            text = cookie_health_status_text(cookie_health_service.all_health())
+        await message.answer(text, reply_markup=build_admin_cookie_health_keyboard())
+
+    @router.message(F.text == ADMIN_COOKIE_HEALTH_REFRESH_BUTTON)
+    async def refresh_cookie_health(message: Message, state: FSMContext) -> None:
+        if not await _authorize_message(message, state, settings):
+            return
+        if cookie_health_service is None:
+            await message.answer(
+                COOKIE_HEALTH_UNAVAILABLE_TEXT,
+                reply_markup=build_admin_cookie_health_keyboard(),
+            )
+            return
+        status = await message.answer(COOKIE_HEALTH_CHECK_PROGRESS_TEXT)
+        try:
+            updated, _alerts = await asyncio.to_thread(cookie_health_service.refresh_static)
+        except Exception as exc:
+            await status.edit_text(COOKIE_HEALTH_CHECK_FAILED_TEXT)
+            await logger.aerror("admin_cookie_health_refresh_failed", error_type=type(exc).__name__)
+            return
+        await status.edit_text(
+            cookie_health_status_text(updated),
+            reply_markup=build_admin_cookie_health_inline_keyboard(),
+        )
+
+    @router.message(F.text == ADMIN_COOKIE_HEALTH_CHECK_BUTTON)
+    async def check_cookie_health(message: Message, state: FSMContext) -> None:
+        if not await _authorize_message(message, state, settings):
+            return
+        if cookie_health_service is None:
+            await message.answer(
+                COOKIE_HEALTH_UNAVAILABLE_TEXT,
+                reply_markup=build_admin_cookie_health_keyboard(),
+            )
+            return
+        status = await message.answer(COOKIE_HEALTH_CHECK_PROGRESS_TEXT)
+        try:
+            updated, _alerts = await asyncio.to_thread(cookie_health_service.refresh_static)
+            results = await cookie_health_service.run_active_probes()
+            updated, _alerts = cookie_health_service.apply_probe_results(results)
+        except Exception as exc:
+            await status.edit_text(COOKIE_HEALTH_CHECK_FAILED_TEXT)
+            await logger.aerror("admin_cookie_health_check_failed", error_type=type(exc).__name__)
+            return
+        await status.edit_text(
+            cookie_health_status_text(updated),
+            reply_markup=build_admin_cookie_health_inline_keyboard(),
+        )
+
+    @router.callback_query(F.data.startswith("adm:ch:"))
+    async def cookie_health_callback(callback: CallbackQuery) -> None:
+        if not _is_admin_user(callback.from_user.id if callback.from_user else None, settings):
+            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            return
+        if (
+            cookie_health_service is None
+            or callback.data is None
+            or not isinstance(callback.message, Message)
+        ):
+            await callback.answer(COOKIE_HEALTH_UNAVAILABLE_TEXT, show_alert=True)
+            return
+        action = callback.data.removeprefix("adm:ch:")
+        if action == "open":
+            await callback.message.edit_text(
+                cookie_health_status_text(cookie_health_service.all_health()),
+                reply_markup=build_admin_cookie_health_inline_keyboard(),
+            )
+            await callback.answer()
+            return
+        if action not in {"check", "refresh"}:
+            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            return
+        await callback.answer(COOKIE_HEALTH_CHECK_PROGRESS_TEXT)
+        try:
+            updated, _alerts = await asyncio.to_thread(cookie_health_service.refresh_static)
+            if action == "check":
+                results = await cookie_health_service.run_active_probes()
+                updated, _alerts = cookie_health_service.apply_probe_results(results)
+        except Exception as exc:
+            await callback.message.edit_text(COOKIE_HEALTH_CHECK_FAILED_TEXT)
+            await logger.aerror(
+                "admin_cookie_health_callback_failed",
+                action=action,
+                error_type=type(exc).__name__,
+            )
+            return
+        await callback.message.edit_text(
+            cookie_health_status_text(updated),
+            reply_markup=build_admin_cookie_health_inline_keyboard(),
+        )
 
     @router.message(F.text == ADMIN_COOKIE_UPLOAD_BUTTON)
     async def begin_cookie_upload(message: Message, state: FSMContext) -> None:

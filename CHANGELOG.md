@@ -1,5 +1,64 @@
 # Changelog
 
+## 1.3.4 - 2026-08-17
+
+### Added
+
+- **Rich administrator failure diagnostics.** A typed structured `FailureContext` is created as
+  close as possible to the real failure and survives domain/infrastructure -> application
+  service -> worker -> retry -> terminal failure -> admin notification. The final administrator
+  message now preserves adapter, extractor, source, fallback chain and reason, HTTP status,
+  error category, sanitized reason, attempt/max attempts, previous identical failures
+  (`HTTP 403 x1`), media kind, raw/planned format counts, elapsed time, downloaded bytes, and
+  app version. Only fields that exist are shown; absent optional fields are never printed as
+  "unknown".
+- **Central diagnostic sanitizer** (`application/services/diagnostic_sanitizer.py`). URLs are
+  reduced to scheme + hostname + safe path with query parameters stripped unless explicitly
+  classified safe; exception messages and log/database/admin payloads are redacted for cookie
+  values, bearer/API tokens, bot tokens, API ID/hash, proxy passwords, authorization headers,
+  signed CDN query secrets, and long opaque tokens. Synthetic secret-bearing exceptions are
+  covered by regression tests.
+- **Admin Cookie Health Center.** A network-free static validation over the canonical combined
+  cookie file (readable, valid Netscape, provider-domain records, expiry timestamps,
+  malformed records, file-permission contract) plus real but lightweight authenticated probes
+  with bounded concurrency and a short timeout. Providers without a configured
+  authentication-required probe endpoint are honestly reported UNVERIFIED instead of being
+  marked healthy from anonymous public success. Health state, alert deduplication, and
+  reminder markers persist in SQLite so worker/container restarts never reset them.
+- **Cookie expiry/alerts.** A configurable local expiry watcher cron, immediate admin alert +
+  cookie-health button on real runtime authentication failures, and state-transition alerts
+  (HEALTHY -> EXPIRING_SOON -> EXPIRED, HEALTHY -> AUTH_FAILED, recovery notifications) with
+  configurable reminder intervals. One provider registry in `domain/cookies.py` is the single
+  source of truth (YouTube, Instagram, TikTok, X/Twitter, Pinterest, SoundCloud).
+- **Instagram bulk Stories.** After a successful exact-story inspection the user chooses
+  "download this story" (exact MEDIA_ID preserved) or "download all active stories of this
+  account" (internally targets `/stories/USERNAME/`, gallery-dl remains the primary engine).
+  Bulk jobs are delivered as per-item batches with per-item failure isolation and a final
+  summary (total / succeeded / failed), respect cancellation and per-media size limits, and
+  never apply the single-item file limit to the aggregate collection size. Configurable
+  per-job batch safeguards limit stories/highlights items.
+- **Instagram Highlights.** Direct `/stories/highlights/ID/` URLs canonicalize (tracking
+  stripped), inspect, and download every item in the Highlight with mixed image/video support.
+  From an Instagram profile flow a "⭐ هایلایتها" action fetches the user's highlight tray,
+  paginates it, and lets the user select ONE Highlight to download; stable internal highlight
+  IDs live in callback/session state (persisted tray) and large metadata never enters
+  callback data.
+- **Instagram cookie-health gating.** Bulk Stories/Highlight jobs consult Cookie Health first:
+  definitive EXPIRED/AUTH_FAILED/MISSING/MALFORMED states fail early with a useful message;
+  UNKNOWN/UNVERIFIED proceeds normally, and a real extraction auth failure updates Instagram
+  cookie health immediately.
+- **Admin UX.** The admin menu now exposes "🍪 سلامت کوکیها" next to the existing cookie
+  management; the center provides "بررسی سلامت همه کوکیها", "تازهسازی وضعیت", upload, and
+  export. Every cookie-health callback action is ADMIN ONLY and fails closed for other users.
+- HTTP status is preserved on gallery-dl and yt-dlp mapped errors when the adapter observes it.
+
+### Fixed
+
+- `scripts/check_gallerydl_fixtures.py` now matches the v1.3.3 normalized video-only contract
+  (video-only fixtures carry VIDEO assets instead of raising the removed no-images signal).
+- Direct Instagram highlight URLs are classified as `highlight` before the generic story
+  pattern so they never masquerade as a story media id.
+
 ## Unreleased
 
 ### Development tooling
