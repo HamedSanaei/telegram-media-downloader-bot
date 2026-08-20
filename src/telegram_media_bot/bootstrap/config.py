@@ -447,42 +447,31 @@ class PersistenceSection(StrictModel):
         return value
 
 
-class CookieProbeSection(StrictModel):
-    #: URL of a real, lightweight, authentication-required endpoint. Leave unset to mark
-    #: the provider UNVERIFIED instead of trusting anonymous public success.
-    url: str | None = None
-    #: Whether this endpoint genuinely requires authenticated cookies to succeed.
-    auth_required: bool = False
-
-
 class CookieHealthSection(StrictModel):
     enabled: bool = True
     #: Static "expiring soon" threshold (hours before the earliest expiry).
     expiring_soon_hours: float = Field(default=24, ge=1, le=24 * 30)
-    #: Local expiry watcher cadence (minutes; network-free).
-    expiry_watch_interval_minutes: int = Field(default=45, ge=5, le=1440)
-    #: Optional periodic active-probe cadence (minutes; 0 disables periodic probes).
-    active_probe_interval_minutes: int = Field(default=0, ge=0, le=10080)
-    probe_timeout_seconds: int = Field(default=20, ge=5, le=120)
-    probe_concurrency: int = Field(default=2, ge=1, le=8)
     #: Reminder cadence for unresolved failure states (minutes).
     reminder_interval_minutes: int = Field(default=180, ge=15, le=10080)
-    #: Send one notification when a provider returns to HEALTHY.
+    #: Send one notification when local state recovers to HEALTHY.
     recovery_notifications: bool = True
-    probes: dict[str, CookieProbeSection] = Field(default_factory=dict)
 
-    @field_validator("probes")
+    @model_validator(mode="before")
     @classmethod
-    def validate_probe_keys(
-        cls, values: dict[str, CookieProbeSection]
-    ) -> dict[str, CookieProbeSection]:
-        allowed = {"youtube", "instagram", "tiktok", "twitter", "pinterest", "soundcloud"}
-        unknown = set(values) - allowed
-        if unknown:
-            raise ValueError(
-                f"cookie_health.probes contains unsupported providers: {sorted(unknown)}"
-            )
-        return values
+    def ignore_removed_probe_settings(cls, value: object) -> object:
+        """Accept old v1.3.4/v1.3.5 probe keys without keeping live-probe behavior."""
+        if not isinstance(value, dict):
+            return value
+        cleaned = dict(value)
+        for key in (
+            "expiry_watch_interval_minutes",
+            "active_probe_interval_minutes",
+            "probe_timeout_seconds",
+            "probe_concurrency",
+            "probes",
+        ):
+            cleaned.pop(key, None)
+        return cleaned
 
 
 class ObservabilitySection(StrictModel):

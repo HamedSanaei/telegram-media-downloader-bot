@@ -9,11 +9,7 @@ from aiogram.types import InlineKeyboardMarkup
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.cookie_health import (
-    ActiveProbeResult,
-    CookieHealthState,
-    StaticCookieCheck,
-)
+from telegram_media_bot.domain.cookie_health import CookieHealthState, StaticCookieCheck
 from telegram_media_bot.domain.cookies import CookieService
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
@@ -141,12 +137,18 @@ class BatchDownloadService:
     def __init__(self, artifacts: tuple[Path, ...], fail: bool = False) -> None:
         self.artifacts = artifacts
         self.fail = fail
+        self.calls = 0
 
     def download(self, **kwargs: Any) -> DownloadResult:
+        self.calls += 1
         if self.fail:
-            from telegram_media_bot.domain.errors import GalleryDlCookiesExpiredError
+            from telegram_media_bot.domain.errors import GalleryDlAuthenticationRequiredError
 
-            raise GalleryDlCookiesExpiredError("cookies have expired", source="instagram")
+            raise GalleryDlAuthenticationRequiredError(
+                "HTTP 401 login required",
+                http_status=401,
+                extractor="instagram",
+            )
         paths = list(self.artifacts)
         first = paths[0]
         return DownloadResult(
@@ -334,14 +336,9 @@ async def test_collection_cookie_gating_fails_early_when_instagram_blocked(
                 safe_reason="cookies expired",
             )
 
-    class NoopProbe:
-        async def probe(self, provider: CookieService) -> ActiveProbeResult:
-            return ActiveProbeResult(provider, CookieHealthState.UNVERIFIED)
-
     health = CookieHealthService(
         store=store,
         checker=BlockedChecker(),
-        probe=NoopProbe(),
     )
     health.refresh_static()
     record, _ = JobService(repository).create_download(
@@ -397,11 +394,7 @@ async def test_collection_unverified_status_does_not_block(
                 file_ok=True,
             )
 
-    class NoopProbe:
-        async def probe(self, provider: CookieService) -> ActiveProbeResult:
-            return ActiveProbeResult(provider, CookieHealthState.UNVERIFIED)
-
-    health = CookieHealthService(store=store, checker=UnverifiedChecker(), probe=NoopProbe())
+    health = CookieHealthService(store=store, checker=UnverifiedChecker())
     health.refresh_static()
     record, _ = JobService(repository).create_download(
         chat_id=10,
@@ -535,7 +528,6 @@ async def test_runtime_auth_failure_updates_instagram_cookie_health(
                 provider=provider, status=CookieHealthState.HEALTHY, file_ok=True
             )
         ),
-        probe=SimpleNamespace(probe=lambda provider: _unverified(provider)),
     )
     record, _ = JobService(repository).create_download(
         chat_id=10,
@@ -546,10 +538,11 @@ async def test_runtime_auth_failure_updates_instagram_cookie_health(
     repository.set_status_message(record.job_id, 30)
     paths = [tmp_path / "1.jpg"]
     paths[0].write_bytes(b"media")
+    download_service = BatchDownloadService(artifacts=tuple(paths), fail=True)
     context: dict[str, Any] = {
         "settings": configured,
         "repository": repository,
-        "download_service": BatchDownloadService(artifacts=tuple(paths), fail=True),
+        "download_service": download_service,
         "bot": FakeBot(),
         "delivery": BatchDelivery(),
         "metrics": MetricsRegistry(),
@@ -569,6 +562,7 @@ async def test_runtime_auth_failure_updates_instagram_cookie_health(
     health_row = store.load(CookieService.INSTAGRAM)
     assert health_row is not None
     assert health_row.status is CookieHealthState.AUTH_FAILED
+    assert download_service.calls == 1
 
 
 async def test_highlight_tray_job_publishes_browser(settings: Settings, tmp_path: Path) -> None:
@@ -653,7 +647,3 @@ async def test_highlight_tray_empty_is_unavailable(settings: Settings, tmp_path:
     persisted = repository.get_job(tray_record.job_id)
     assert persisted is not None and persisted.status is JobStatus.FAILED
     assert persisted.error_category is ErrorCategory.MEDIA_UNAVAILABLE
-
-
-async def _unverified(provider: CookieService) -> ActiveProbeResult:
-    return ActiveProbeResult(provider, CookieHealthState.UNVERIFIED)

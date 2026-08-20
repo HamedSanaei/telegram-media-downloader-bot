@@ -16,7 +16,6 @@ from telegram_media_bot.infrastructure.cookies.health import (
     NetscapeStaticCookieChecker,
 )
 from telegram_media_bot.infrastructure.cookies.manager import NetscapeCookieManager
-from telegram_media_bot.infrastructure.cookies.probe import GalleryDlCookieProbe
 from telegram_media_bot.infrastructure.persistence.sqlite_cookie_health import (
     SqliteCookieHealthRepository,
 )
@@ -80,11 +79,9 @@ async def run_bot(settings: Settings) -> None:
                 if (cookie_file := settings.effective_cookie_file()) is not None
                 else MissingCookieChecker()
             ),
-            probe=GalleryDlCookieProbe(settings),
             expiring_soon_hours=settings.cookie_health.expiring_soon_hours,
             reminder_interval_minutes=settings.cookie_health.reminder_interval_minutes,
             recovery_notifications=settings.cookie_health.recovery_notifications,
-            probe_concurrency=settings.cookie_health.probe_concurrency,
         )
         dispatcher.include_router(
             build_router(

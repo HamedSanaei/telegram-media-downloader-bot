@@ -127,7 +127,7 @@ class NetscapeCookieManager:
                 )
             return StaticCookieCheck(
                 provider=provider,
-                status=CookieHealthState.CHECK_ERROR,
+                status=CookieHealthState.UNVERIFIED,
                 file_ok=False,
                 safe_reason=sanitize_exception_message(str(exc)) or "cookie store unavailable",
             )

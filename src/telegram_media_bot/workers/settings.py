@@ -27,7 +27,6 @@ from telegram_media_bot.infrastructure.cookies.health import (
     NetscapeStaticCookieChecker,
 )
 from telegram_media_bot.infrastructure.cookies.manager import NetscapeCookieManager
-from telegram_media_bot.infrastructure.cookies.probe import GalleryDlCookieProbe
 from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
 from telegram_media_bot.infrastructure.media_engine_router import RoutedMediaEngine
 from telegram_media_bot.infrastructure.observability.health_server import HealthServer
@@ -52,8 +51,6 @@ from telegram_media_bot.telegram.bot_factory import (
 )
 from telegram_media_bot.telegram.delivery import RoutedDeliveryGateway
 from telegram_media_bot.workers.jobs import (
-    cookie_health_poll_minutes,
-    cookie_health_watcher,
     maintenance_job,
     process_download_job,
     process_highlight_tray_job,
@@ -116,12 +113,12 @@ async def startup(ctx: dict[str, Any]) -> None:
                 if (cookie_file := settings.effective_cookie_file()) is not None
                 else MissingCookieChecker()
             ),
-            probe=GalleryDlCookieProbe(settings),
             expiring_soon_hours=settings.cookie_health.expiring_soon_hours,
             reminder_interval_minutes=settings.cookie_health.reminder_interval_minutes,
             recovery_notifications=settings.cookie_health.recovery_notifications,
-            probe_concurrency=settings.cookie_health.probe_concurrency,
         )
+        if settings.cookie_health.enabled:
+            await asyncio.to_thread(cookie_health_service.refresh_static)
         identity = await bot.get_me()
         ctx.update(
             settings=settings,
@@ -326,14 +323,6 @@ class WorkerSettings(WorkerSettingsBase):
     )
     cron_jobs: tuple[Any, ...] = (
         cron(maintenance_job, minute=None, second={0, 30}, run_at_startup=True),
-        cron(
-            cookie_health_watcher,
-            minute=cookie_health_poll_minutes(
-                _settings.cookie_health.expiry_watch_interval_minutes
-            ),
-            second=15,
-            run_at_startup=True,
-        ),
     )
     on_startup: Any = startup
     on_shutdown: Any = shutdown

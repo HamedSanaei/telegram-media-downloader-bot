@@ -18,7 +18,6 @@ ADMIN_COOKIE_MANAGEMENT_BUTTON = "🍪 مدیریت کوکی‌ها"  # noqa: RU
 ADMIN_COOKIE_HEALTH_BUTTON = "🍪 سلامت کوکی‌ها"  # noqa: RUF001
 ADMIN_COOKIE_UPLOAD_BUTTON = "⬆️ بارگذاری cookies.txt"
 ADMIN_COOKIE_DOWNLOAD_BUTTON = "⬇️ دریافت cookies.txt کامل"
-ADMIN_COOKIE_HEALTH_CHECK_BUTTON = "🔍 بررسی سلامت همه کوکی‌ها"  # noqa: RUF001
 ADMIN_COOKIE_HEALTH_REFRESH_BUTTON = "🔄 تازه‌سازی وضعیت"
 ADMIN_REFRESH_MENU_BUTTON = "🔄 تازه‌سازی منو"
 ADMIN_CANCEL_DOWNLOAD_BUTTON = "❌ لغو"
@@ -35,7 +34,6 @@ ADMIN_MANAGEMENT_BUTTONS = frozenset(
         ADMIN_COOKIE_HEALTH_BUTTON,
         ADMIN_COOKIE_UPLOAD_BUTTON,
         ADMIN_COOKIE_DOWNLOAD_BUTTON,
-        ADMIN_COOKIE_HEALTH_CHECK_BUTTON,
         ADMIN_COOKIE_HEALTH_REFRESH_BUTTON,
         ADMIN_REFRESH_MENU_BUTTON,
         ADMIN_CANCEL_DOWNLOAD_BUTTON,
@@ -92,7 +90,6 @@ def build_admin_cookie_keyboard() -> ReplyKeyboardMarkup:
 def build_admin_cookie_health_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=ADMIN_COOKIE_HEALTH_CHECK_BUTTON)],
             [KeyboardButton(text=ADMIN_COOKIE_HEALTH_REFRESH_BUTTON)],
             [KeyboardButton(text=ADMIN_COOKIE_UPLOAD_BUTTON)],
             [KeyboardButton(text=ADMIN_COOKIE_DOWNLOAD_BUTTON)],
@@ -109,10 +106,6 @@ def build_admin_cookie_health_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text=ADMIN_COOKIE_HEALTH_CHECK_BUTTON,
-                    callback_data="adm:ch:check",
-                ),
                 InlineKeyboardButton(
                     text=ADMIN_COOKIE_HEALTH_REFRESH_BUTTON,
                     callback_data="adm:ch:refresh",

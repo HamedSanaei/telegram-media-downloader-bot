@@ -13,10 +13,17 @@
 - Treat matching Netscape session-cookie records as present but `UNVERIFIED`, never `MISSING`.
   Pinterest and SoundCloud uploads now use the shared provider registry, receive post-replacement
   canonical-byte/identity/count/permission verification with rollback, and trigger an immediate
-  targeted persisted health refresh before the administrator sees success.
-- Schedule the cookie-health watcher on sparse interval-derived ARQ minutes and retain an exact
-  monotonic 45-minute scan gate plus an in-process single-flight lock. Manual administrator checks
-  remain immediate and independent.
+  targeted persisted static health refresh before the administrator sees success.
+- Make Cookie Health passive/local by design after an operator account received an automated-
+  behavior warning. Remove `GalleryDlCookieProbe`, every provider probe URL/timeout/concurrency
+  path, the Cookie Health ARQ cron/watcher, and the administrator "check all" action. Worker
+  startup, admin refresh, and cookie upload now inspect only the canonical Netscape file and never
+  contact a provider. Legacy probe configuration keys remain accepted and ignored for upgrade
+  compatibility.
+- Preserve `AUTH_FAILED` feedback only from the failure already returned by a real user-requested
+  extraction. Successful-empty gallery-dl output remains conservatively unavailable and never
+  triggers a second diagnostic request; authentication markers from the same stderr remain
+  authoritative. Legacy persisted probe success is discarded by the next local static refresh.
 - Treat Telegram's exact `message is not modified` edit error as an idempotent Cookie Health no-op,
   answer each callback once, and continue to propagate unrelated `TelegramBadRequest` failures.
 
@@ -45,11 +52,14 @@
   authentication-required probe endpoint are honestly reported UNVERIFIED instead of being
   marked healthy from anonymous public success. Health state, alert deduplication, and
   reminder markers persist in SQLite so worker/container restarts never reset them.
+  Version 1.3.5 removes the active-probe portion of this historical design for account safety.
 - **Cookie expiry/alerts.** A configurable local expiry watcher cron, immediate admin alert +
   cookie-health button on real runtime authentication failures, and state-transition alerts
   (HEALTHY -> EXPIRING_SOON -> EXPIRED, HEALTHY -> AUTH_FAILED, recovery notifications) with
   configurable reminder intervals. One provider registry in `domain/cookies.py` is the single
   source of truth (YouTube, Instagram, TikTok, X/Twitter, Pinterest, SoundCloud).
+  Version 1.3.5 removes the watcher cron; refresh is now startup/admin/upload local inspection plus
+  passive runtime authentication feedback.
 - **Instagram bulk Stories.** After a successful exact-story inspection the user chooses
   "download this story" (exact MEDIA_ID preserved) or "download all active stories of this
   account" (internally targets `/stories/USERNAME/`, gallery-dl remains the primary engine).
@@ -70,6 +80,7 @@
 - **Admin UX.** The admin menu now exposes "🍪 سلامت کوکیها" next to the existing cookie
   management; the center provides "بررسی سلامت همه کوکیها", "تازهسازی وضعیت", upload, and
   export. Every cookie-health callback action is ADMIN ONLY and fails closed for other users.
+  Version 1.3.5 removes the live "check all" action; refresh is local-only.
 - HTTP status is preserved on gallery-dl and yt-dlp mapped errors when the adapter observes it.
 
 ### Fixed

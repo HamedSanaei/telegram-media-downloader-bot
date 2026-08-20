@@ -63,34 +63,6 @@
           "title": "Expiring Soon Hours",
           "type": "number"
         },
-        "expiry_watch_interval_minutes": {
-          "default": 45,
-          "maximum": 1440,
-          "minimum": 5,
-          "title": "Expiry Watch Interval Minutes",
-          "type": "integer"
-        },
-        "active_probe_interval_minutes": {
-          "default": 0,
-          "maximum": 10080,
-          "minimum": 0,
-          "title": "Active Probe Interval Minutes",
-          "type": "integer"
-        },
-        "probe_timeout_seconds": {
-          "default": 20,
-          "maximum": 120,
-          "minimum": 5,
-          "title": "Probe Timeout Seconds",
-          "type": "integer"
-        },
-        "probe_concurrency": {
-          "default": 2,
-          "maximum": 8,
-          "minimum": 1,
-          "title": "Probe Concurrency",
-          "type": "integer"
-        },
         "reminder_interval_minutes": {
           "default": 180,
           "maximum": 10080,
@@ -102,40 +74,9 @@
           "default": true,
           "title": "Recovery Notifications",
           "type": "boolean"
-        },
-        "probes": {
-          "additionalProperties": {
-            "$ref": "#/$defs/CookieProbeSection"
-          },
-          "title": "Probes",
-          "type": "object"
         }
       },
       "title": "CookieHealthSection",
-      "type": "object"
-    },
-    "CookieProbeSection": {
-      "additionalProperties": false,
-      "properties": {
-        "url": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Url"
-        },
-        "auth_required": {
-          "default": false,
-          "title": "Auth Required",
-          "type": "boolean"
-        }
-      },
-      "title": "CookieProbeSection",
       "type": "object"
     },
     "DownloadMode": {

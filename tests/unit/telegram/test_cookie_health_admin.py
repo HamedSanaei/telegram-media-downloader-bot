@@ -9,14 +9,13 @@ from aiogram.types import Chat, Message
 
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.cookie_health import (
-    ActiveProbeResult,
     CookieHealthState,
     ProviderCookieHealth,
     StaticCookieCheck,
 )
 from telegram_media_bot.domain.cookies import CookieService
 from telegram_media_bot.telegram.admin_menu import (
-    ADMIN_COOKIE_HEALTH_CHECK_BUTTON,
+    ADMIN_COOKIE_HEALTH_BUTTON,
     ADMIN_COOKIE_HEALTH_REFRESH_BUTTON,
     build_admin_cookie_health_keyboard,
 )
@@ -84,7 +83,6 @@ class FakeRepository:
 class FakeHealthService:
     def __init__(self) -> None:
         self.static_calls = 0
-        self.probe_calls = 0
 
     def all_health(self) -> dict[CookieService, ProviderCookieHealth]:
         provider = CookieService.INSTAGRAM
@@ -101,7 +99,13 @@ class FakeHealthService:
             )
         }
 
-    def refresh_static(self) -> tuple[dict[CookieService, ProviderCookieHealth], tuple[Any, ...]]:
+    def refresh_static(
+        self,
+        _providers: tuple[CookieService, ...] | None = None,
+        *,
+        clear_runtime_auth_failure: bool = False,
+    ) -> tuple[dict[CookieService, ProviderCookieHealth], tuple[Any, ...]]:
+        del clear_runtime_auth_failure
         self.static_calls += 1
         provider = CookieService.INSTAGRAM
         health = ProviderCookieHealth(
@@ -114,33 +118,6 @@ class FakeHealthService:
                 record_count=2,
             ),
             last_checked_at=datetime.now(UTC),
-        )
-        return {provider: health}, ()
-
-    async def run_active_probes(
-        self,
-    ) -> dict[CookieService, ActiveProbeResult]:
-        self.probe_calls += 1
-        return {
-            CookieService.INSTAGRAM: ActiveProbeResult(
-                CookieService.INSTAGRAM, CookieHealthState.HEALTHY
-            )
-        }
-
-    def apply_probe_results(
-        self, results: dict[CookieService, ActiveProbeResult]
-    ) -> tuple[dict[CookieService, ProviderCookieHealth], tuple[Any, ...]]:
-        provider = CookieService.INSTAGRAM
-        health = ProviderCookieHealth(
-            provider=provider,
-            status=CookieHealthState.HEALTHY,
-            static=StaticCookieCheck(
-                provider=provider,
-                status=CookieHealthState.HEALTHY,
-                file_ok=True,
-                record_count=2,
-            ),
-            active=results[provider],
         )
         return {provider: health}, ()
 
@@ -175,32 +152,33 @@ def _handler(router: object, name: str) -> Any:
 
 
 async def test_cookie_health_button_is_admin_only(admin_settings: Settings) -> None:
-    router = _router(admin_settings, FakeHealthService())
+    health = FakeHealthService()
+    router = _router(admin_settings, health)
     handler = _handler(router, "open_cookie_health")
-    admin = FakeMessage(99, ADMIN_COOKIE_HEALTH_CHECK_BUTTON)
-    regular = FakeMessage(20, ADMIN_COOKIE_HEALTH_CHECK_BUTTON)
+    admin = FakeMessage(99, ADMIN_COOKIE_HEALTH_BUTTON)
+    regular = FakeMessage(20, ADMIN_COOKIE_HEALTH_BUTTON)
 
     await handler(admin, FakeState())
     await handler(regular, FakeState())
 
     assert regular.answers[-1][0] == ACCESS_DENIED_TEXT
     assert admin.answers[-1][0].startswith("🍪")
+    assert health.static_calls == 1
 
 
-async def test_cookie_health_check_runs_static_and_active_probes(
+async def test_cookie_health_refresh_runs_static_inspection_only(
     admin_settings: Settings,
 ) -> None:
     health = FakeHealthService()
     router = _router(admin_settings, health)
-    handler = _handler(router, "check_cookie_health")
-    message = FakeMessage(99, ADMIN_COOKIE_HEALTH_CHECK_BUTTON)
+    handler = _handler(router, "refresh_cookie_health")
+    message = FakeMessage(99, ADMIN_COOKIE_HEALTH_REFRESH_BUTTON)
 
     await handler(message, FakeState())
 
     assert health.static_calls == 1
-    assert health.probe_calls == 1
     final = message.answers[-1][0]
-    assert "Healthy" in final
+    assert "Expiring soon" in final
     assert "Instagram" in final
 
 
@@ -218,7 +196,7 @@ async def test_cookie_health_callback_fails_closed_for_non_admin(
             language_code=None,
             is_premium=None,
         ),
-        data="adm:ch:check",
+        data="adm:ch:refresh",
         message=None,
     )
     answers: list[str] = []
@@ -282,11 +260,11 @@ async def test_cookie_health_callback_check_for_admin(
     assert edits and "Expiring soon" in edits[-1]
 
 
-def test_cookie_health_keyboard_exposes_check_and_refresh() -> None:
+def test_cookie_health_keyboard_exposes_static_refresh_without_live_check() -> None:
     keyboard = build_admin_cookie_health_keyboard()
     labels = [button.text for row in keyboard.keyboard for button in row]
-    assert ADMIN_COOKIE_HEALTH_CHECK_BUTTON in labels
     assert ADMIN_COOKIE_HEALTH_REFRESH_BUTTON in labels
+    assert all("بررسی سلامت همه" not in label for label in labels)
 
 
 def test_cookie_health_text_never_shows_cookie_values() -> None:

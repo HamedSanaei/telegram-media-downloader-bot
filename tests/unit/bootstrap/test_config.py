@@ -147,6 +147,34 @@ def test_retired_premium_uploader_configuration_is_rejected() -> None:
         Settings.model_validate(raw)
 
 
+def test_removed_cookie_probe_keys_are_accepted_but_not_exposed(settings: Settings) -> None:
+    raw = settings.model_dump()
+    raw["cookie_health"].update(
+        {
+            "expiry_watch_interval_minutes": 45,
+            "active_probe_interval_minutes": 15,
+            "probe_timeout_seconds": 20,
+            "probe_concurrency": 4,
+            "probes": {
+                "instagram": {
+                    "url": "https://www.instagram.com/stories/example/",
+                    "auth_required": True,
+                }
+            },
+        }
+    )
+
+    configured = Settings.model_validate(raw)
+    dumped = configured.cookie_health.model_dump()
+
+    assert set(dumped) == {
+        "enabled",
+        "expiring_soon_hours",
+        "reminder_interval_minutes",
+        "recovery_notifications",
+    }
+
+
 def test_storage_path_must_remain_under_root(settings: Settings) -> None:
     raw = settings.model_dump()
     raw["storage"]["downloads_directory"] = "/tmp/outside"

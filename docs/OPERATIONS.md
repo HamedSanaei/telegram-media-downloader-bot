@@ -111,6 +111,16 @@ Only IDs in `telegram.admin_ids` can use:
   `MISSING`; a successful response means canonical replacement and provider-scoped static refresh
   both completed.
   The next yt-dlp or gallery-dl job opens that same effective file; no process restart is needed.
+- **Cookie Health** is deliberately passive/local. Opening or refreshing the panel, worker startup,
+  and cookie upload only inspect the canonical file (existence/readability, Netscape structure,
+  provider counts, expiry/session records, and permissions). They never contact Instagram or any
+  other provider. `UNVERIFIED` means the file is structurally present but authentication has not
+  been tested with the provider. AUTH_FAILED is learned only from an authentication error already
+  returned by a real user-requested extraction; no follow-up diagnostic request is sent. The old
+  watcher and live "check all" action no longer exist.
+- Old `cookie_health.expiry_watch_interval_minutes`, `active_probe_interval_minutes`,
+  `probe_timeout_seconds`, `probe_concurrency`, and `probes` keys are deprecated no-ops. Existing
+  config files containing them continue to load; operators may remove them during routine cleanup.
 
 No command returns URLs, tokens, cookies, proxy data, internal exception text, or file paths.
 The explicit full-cookie download is the sole exception and is restricted to a current

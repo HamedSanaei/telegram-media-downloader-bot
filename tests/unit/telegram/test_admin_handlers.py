@@ -203,12 +203,16 @@ class UploadCookieHealth:
     def __init__(self, status: CookieHealthState = CookieHealthState.UNVERIFIED) -> None:
         self.providers: tuple[CookieService, ...] | None = None
         self.status = status
+        self.cleared_runtime_failure = False
 
     def refresh_static(
         self,
         providers: tuple[CookieService, ...],
+        *,
+        clear_runtime_auth_failure: bool = False,
     ) -> tuple[dict[CookieService, ProviderCookieHealth], tuple[object, ...]]:
         self.providers = providers
+        self.cleared_runtime_failure = clear_runtime_auth_failure
         return (
             {
                 provider: ProviderCookieHealth(
@@ -549,6 +553,7 @@ async def test_successful_upload_immediately_refreshes_detected_provider_health(
     await _handler(router, "receive_cookie_upload")(message, FakeState())
 
     assert health.providers == (CookieService.YOUTUBE, CookieService.INSTAGRAM)
+    assert health.cleared_runtime_failure is True
     response = message.answers[-1][0]
     assert "UNVERIFIED" in response
     assert "synthetic" not in response

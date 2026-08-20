@@ -43,4 +43,6 @@ Thumbs.db
 # Logs
 *.log
 logs/
+*TEMPgdl-browser.err
+*TEMPgdl-browser.out
 راهنمای-فارسی-اجرای-ربات-دانلودر-تلگرام-با-Docker-در-ویندوز.pdf

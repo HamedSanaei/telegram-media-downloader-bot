@@ -176,8 +176,13 @@ Static cookie health uses that same provider registry. Matching session records 
 not authentication and therefore report `UNVERIFIED`, never `MISSING`. Replacement is verified for
 canonical bytes, uploaded identities, provider counts, mode and POSIX ownership before success;
 verification failure atomically restores the backup. The admin flow immediately persists a static
-refresh for only the detected providers. The periodic worker combines sparse ARQ wake-up minutes,
-the configured monotonic interval gate, and an in-process single-flight lock.
+refresh for only the detected providers. Cookie Health never performs provider validation traffic:
+there is no probe adapter, provider URL, startup probe, or worker cron. Worker startup, an admin
+view/refresh, and a successful upload read only the canonical file. A real user-requested yt-dlp or
+gallery-dl operation may persist `AUTH_FAILED` from the failure it already received, without a
+second request. Upload clears that provider's stale runtime failure before the new local snapshot.
+Legacy active-probe SQLite fields remain readable for compatibility, but old successful probe
+evidence is discarded on the next static refresh and can never override local state.
 
 ## File isolation
 

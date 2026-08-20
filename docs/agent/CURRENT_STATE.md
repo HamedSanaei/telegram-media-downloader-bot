@@ -14,10 +14,10 @@ This file contains starting facts only. Historical fixes and verification eviden
 - Terminal job failures produce a rich structured `FailureContext` (adapter, extractor, source,
   fallback chain, HTTP status, retry history, stage, sanitized reason) rendered to administrators;
   every payload passes the central diagnostic sanitizer.
-- Cookie Health Center: network-free static checks plus lightweight authenticated probes with
-  bounded concurrency, persisted state-transition alert deduplication, a sparse interval-gated watcher,
-  and runtime auth-failure alerts. Bulk Instagram Stories/Highlight jobs gate on definitive
-  cookie failure states; UNVERIFIED never blocks and real auth failures update health immediately.
+- Cookie Health Center is passive/static by design: startup/admin/upload checks read only the
+  canonical Netscape file, no provider probe or health cron exists, and `AUTH_FAILED` is learned
+  only from a real user-requested extraction's existing failure. Bulk Instagram Stories/Highlight
+  jobs gate on definitive cookie failure states; UNVERIFIED never blocks.
 - Public video choices are actual native AV1/H.264 MP4 or VP9 WebM plans. `best_original` is
   native-only and incompatible inline video may be sent as a document.
 - All runtime consumers reopen one canonical Netscape cookies file for subsequent jobs. Divergent

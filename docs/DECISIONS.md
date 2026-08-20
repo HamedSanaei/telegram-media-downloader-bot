@@ -401,3 +401,22 @@ checkout-specific output. It is not a production dependency, source of behaviora
 service, or substitute for source/tests/ADRs. Source defines behavior, tests define expected
 behavior, and detailed documentation retains rationale. A dependency-free AST utility and CI
 guardrail provide deterministic fallback/navigation verification without requiring Graphify.
+
+## ADR-030: Cookie health is passive and local
+
+**Status:** accepted
+
+Repeated authenticated health probes can trigger provider anti-automation and account-security
+systems. Cookie Health therefore has no provider client, probe URL, scheduled watcher, startup
+network validation, or administrator live-check action. Automatic/admin/upload refreshes inspect
+only the canonical Netscape file: readability, format, provider records/counts, expiry/session
+timestamps, and filesystem permissions. Session-only records are `UNVERIFIED`, not `MISSING`, and
+local `HEALTHY` describes structural/expiry state rather than authenticated provider acceptance.
+
+An authentication failure returned by a real user-requested extraction is valid passive evidence
+and may persist `AUTH_FAILED`; Cookie Health must not issue a second request to confirm it. A fresh
+provider upload clears that provider's prior runtime failure and immediately persists a local
+snapshot. Historical SQLite active fields remain readable to avoid a migration, but old network
+probe success is discarded at the next static refresh. Historical probe configuration keys are
+accepted and ignored so strict configuration compatibility is preserved while generated examples
+and schema expose no live-probe controls.

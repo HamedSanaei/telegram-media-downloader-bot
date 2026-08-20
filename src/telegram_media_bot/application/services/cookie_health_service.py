@@ -1,22 +1,19 @@
-"""Cookie Health Center orchestration.
+"""Passive, network-free Cookie Health Center orchestration.
 
-The service combines the network-free static check with optional lightweight authenticated
-probes, persists the combined health state, and decides which state transitions deserve an
-administrator alert. Alert decisions are pure and based only on persisted state, so restarting
-the worker never resets deduplication.
+Automatic and administrator-triggered refreshes inspect only the canonical cookie file. A real
+user-requested extraction may contribute an authentication failure from that same request; the
+service never initiates a provider request of its own.
 """
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from telegram_media_bot.application.ports.cookie_health import (
-    ActiveCookieProbe,
-    StaticCookieChecker,
-)
+import structlog
+
+from telegram_media_bot.application.ports.cookie_health import StaticCookieChecker
 from telegram_media_bot.application.ports.cookie_health_repository import CookieHealthRepository
 from telegram_media_bot.domain.cookie_health import (
     ActiveProbeResult,
@@ -37,6 +34,7 @@ _REMINDER_STATES = frozenset(
 )
 
 _COOKIE_SERVICES = tuple(CookieService)
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,21 +55,17 @@ class CookieHealthService:
         self,
         store: CookieHealthRepository,
         checker: StaticCookieChecker,
-        probe: ActiveCookieProbe,
         *,
         expiring_soon_hours: float = 24,
         reminder_interval_minutes: int = 180,
         recovery_notifications: bool = True,
-        probe_concurrency: int = 2,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
         self._checker = checker
-        self._probe = probe
         self._expiring_soon_hours = expiring_soon_hours
         self._reminder_interval = timedelta(minutes=reminder_interval_minutes)
         self._recovery_notifications = recovery_notifications
-        self._probe_concurrency = max(1, probe_concurrency)
         self._now = now or (lambda: datetime.now(UTC))
 
     def providers(self) -> tuple[CookieService, ...]:
@@ -86,6 +80,8 @@ class CookieHealthService:
     def refresh_static(
         self,
         providers: tuple[CookieService, ...] | None = None,
+        *,
+        clear_runtime_auth_failure: bool = False,
     ) -> tuple[dict[CookieService, ProviderCookieHealth], tuple[CookieHealthAlert, ...]]:
         """Run network-free static checks, persist the merged state, and return transitions."""
         checked_at = self._now()
@@ -100,48 +96,23 @@ class CookieHealthService:
                 expiring_soon_hours=self._expiring_soon_hours,
             )
             previous = stored.get(provider)
-            merged = _merge_static(previous, check, checked_at=checked_at)
+            merged = _merge_static(
+                previous,
+                check,
+                checked_at=checked_at,
+                clear_runtime_auth_failure=clear_runtime_auth_failure,
+            )
             self._store.save(merged)
             updated[provider] = merged
             alert = self._transition_alert(previous, merged, now=checked_at)
             if alert is not None:
                 alerts.append(alert)
                 self._store.save(alert.health)
-        return updated, tuple(alerts)
-
-    async def run_active_probes(
-        self,
-        providers: tuple[CookieService, ...] | None = None,
-    ) -> dict[CookieService, ActiveProbeResult]:
-        """Run lightweight authenticated probes with bounded concurrency."""
-        targets = providers or _COOKIE_SERVICES
-        semaphore = asyncio.Semaphore(self._probe_concurrency)
-
-        async def guarded(provider: CookieService) -> ActiveProbeResult:
-            async with semaphore:
-                return await self._probe.probe(provider)
-
-        results = await asyncio.gather(*(guarded(provider) for provider in targets))
-        return dict(zip(targets, results, strict=True))
-
-    def apply_probe_results(
-        self,
-        results: dict[CookieService, ActiveProbeResult],
-    ) -> tuple[dict[CookieService, ProviderCookieHealth], tuple[CookieHealthAlert, ...]]:
-        """Merge probe outcomes into persisted health and return transitions."""
-        checked_at = self._now()
-        stored = self._store.load_all()
-        updated: dict[CookieService, ProviderCookieHealth] = {}
-        alerts: list[CookieHealthAlert] = []
-        for provider, result in results.items():
-            previous = stored.get(provider) or _unchecked(provider)
-            merged = _merge_probe(previous, result, now=checked_at)
-            self._store.save(merged)
-            updated[provider] = merged
-            alert = self._transition_alert(previous, merged, now=checked_at)
-            if alert is not None:
-                alerts.append(alert)
-                self._store.save(alert.health)
+        logger.info(
+            "cookie_health_static_refresh",
+            providers=[provider.value for provider in targets],
+            clear_runtime_auth_failure=clear_runtime_auth_failure,
+        )
         return updated, tuple(alerts)
 
     def update_from_auth_failure(
@@ -158,9 +129,17 @@ class CookieHealthService:
             status=CookieHealthState.AUTH_FAILED,
             safe_reason=safe_reason,
         )
-        merged = _merge_probe(previous, active, now=checked_at)
+        merged = _merge_runtime_auth_failure(previous, active, now=checked_at)
         self._store.save(merged)
-        return self._transition_alert(previous, merged, now=checked_at)
+        logger.warning(
+            "cookie_health_runtime_auth_failure",
+            provider=provider.value,
+            error_category="authentication",
+        )
+        alert = self._transition_alert(previous, merged, now=checked_at)
+        if alert is not None:
+            self._store.save(alert.health)
+        return alert
 
     def _transition_alert(
         self,
@@ -235,8 +214,17 @@ def _merge_static(
     check: StaticCookieCheck,
     *,
     checked_at: datetime,
+    clear_runtime_auth_failure: bool,
 ) -> ProviderCookieHealth:
-    active = previous.active if previous is not None else None
+    active = None
+    if not clear_runtime_auth_failure and previous is not None:
+        candidate = previous.active
+        if (
+            candidate is not None
+            and candidate.status is CookieHealthState.AUTH_FAILED
+            and candidate.probed_url is None
+        ):
+            active = candidate
     status = _combined_status(check.status, active.status if active is not None else None)
     return ProviderCookieHealth(
         provider=check.provider,
@@ -244,31 +232,26 @@ def _merge_static(
         static=check,
         active=active,
         last_checked_at=checked_at,
-        last_successful_auth_check_at=(
-            previous.last_successful_auth_check_at if previous is not None else None
-        ),
+        last_successful_auth_check_at=None,
         last_notified_state=(previous.last_notified_state if previous is not None else None),
         last_reminder_at=previous.last_reminder_at if previous is not None else None,
     )
 
 
-def _merge_probe(
+def _merge_runtime_auth_failure(
     previous: ProviderCookieHealth,
     result: ActiveProbeResult,
     *,
     now: datetime,
 ) -> ProviderCookieHealth:
     status = _combined_status(previous.static.status, result.status)
-    last_successful = previous.last_successful_auth_check_at
-    if result.status is CookieHealthState.HEALTHY:
-        last_successful = now
     return ProviderCookieHealth(
         provider=result.provider,
         status=status,
         static=previous.static,
         active=result,
         last_checked_at=now,
-        last_successful_auth_check_at=last_successful,
+        last_successful_auth_check_at=None,
         last_notified_state=previous.last_notified_state,
         last_reminder_at=previous.last_reminder_at,
     )
@@ -279,8 +262,6 @@ def _combined_status(
 ) -> CookieHealthState:
     if active is CookieHealthState.AUTH_FAILED:
         return CookieHealthState.AUTH_FAILED
-    if active is CookieHealthState.HEALTHY:
-        return CookieHealthState.HEALTHY
     return static
 
 

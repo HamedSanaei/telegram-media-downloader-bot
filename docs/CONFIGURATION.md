@@ -95,15 +95,14 @@ collection size is bounded by the source/gallery total limits and never by the s
 
 `cookie_health` is admin-only diagnostics over the canonical combined cookie file (the file stays
 the single source of truth): `expiring_soon_hours` (default `24`) controls the static
-EXPIRING_SOON threshold; `expiry_watch_interval_minutes` (default `45`) drives the network-free
-local expiry watcher; `active_probe_interval_minutes` (default `0` = disabled) optionally enables
-periodic authenticated probes; `probe_timeout_seconds` (default `20`) and `probe_concurrency`
-(default `2`) bound the lightweight probes so Telegram callbacks are never blocked;
-`reminder_interval_minutes` (default `180`) deduplicates unresolved-failure reminders; and
+EXPIRING_SOON threshold; `reminder_interval_minutes` (default `180`) deduplicates repeated passive
+runtime-failure alerts; and
 `recovery_notifications` (default `true`) sends one alert when a provider returns to HEALTHY.
-Per-provider `probes` entries (`url` + `auth_required`) must point at real
-authentication-required endpoints; a provider without a configured probe is reported UNVERIFIED
-and is never marked healthy from anonymous public success.
+All refreshes are local/static. Cookie Health has no scheduled watcher and never contacts a
+provider to validate cookies; authentication failures are learned only from an existing real user
+extraction. The removed `expiry_watch_interval_minutes`, `active_probe_interval_minutes`,
+`probe_timeout_seconds`, `probe_concurrency`, and `probes` keys are accepted and ignored so older
+configuration files continue to start. They are omitted from the example and generated schema.
 
 `telegram.upload_as_document: true` accepts native media without requiring Telegram's inline-video
 profile. In particular, VP9 inside MP4 is valid document delivery and is not converted merely

@@ -64,7 +64,7 @@ class GalleryDlCommandBuilder:
         """Unrestricted JSON-Lines inspection used by probes and the highlight tray browser.
 
         The provider must already be validated by the caller; this method intentionally skips
-        the single-item URL pattern so authenticated probe/tray endpoints are reachable.
+        the single-item URL pattern so authenticated tray endpoints are reachable.
         """
         args = self._base(provider)
         args.extend(("-o", "output.jsonl=true", "--dump-json", "--simulate", "--no-download", url))

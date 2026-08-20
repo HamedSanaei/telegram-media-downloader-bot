@@ -266,7 +266,10 @@ def instagram_image_delivery_keyboard(
 def cookie_health_status_text(
     health_by_provider: dict[CookieService, ProviderCookieHealth],
 ) -> str:
-    lines = ["🍪 وضعیت کوکی‌ها"]  # noqa: RUF001
+    lines = [
+        "🍪 وضعیت کوکی‌ها",  # noqa: RUF001
+        "این وضعیت فقط از فایل محلی محاسبه می‌شود و هیچ سرویسی را تماس نمی‌گیرد.",
+    ]
     for provider in CookieService:
         health = health_by_provider.get(provider)
         lines.append(_render_provider_health(provider, health))
@@ -292,7 +295,7 @@ def _render_provider_health(
         CookieHealthState.CHECK_ERROR: "⚠️",
     }[state]
     label_by_state = {
-        CookieHealthState.HEALTHY: "Healthy",
+        CookieHealthState.HEALTHY: "Healthy (local)",
         CookieHealthState.EXPIRING_SOON: "Expiring soon",
         CookieHealthState.EXPIRED: "Expired",
         CookieHealthState.AUTH_FAILED: "Auth failed",
@@ -312,27 +315,16 @@ def _render_provider_health(
     if not static.permission_ok:
         lines.append("⚠️ دسترسی‌های فایل کوکی مناسب نیستند")
     active = health.active
-    if active is not None and active.status is not CookieHealthState.UNVERIFIED:
-        active_label = {
-            CookieHealthState.HEALTHY: "OK",
-            CookieHealthState.AUTH_FAILED: "ناموفق",
-            CookieHealthState.CHECK_ERROR: "خطای شبکه",
-            CookieHealthState.UNVERIFIED: "نامشخص",
-        }.get(active.status, active.status.value)
-        lines.append(f"بررسی فعال: {active_label}")
+    if active is not None and active.status is CookieHealthState.AUTH_FAILED:
+        lines.append("نتیجهٔ اجرای واقعی: احراز هویت ناموفق")
     if state is CookieHealthState.AUTH_FAILED or state is CookieHealthState.CHECK_ERROR:
         reason = active.safe_reason if active is not None else static.safe_reason
         if reason:
             lines.append(f"دلیل: {reason}")
     if state is CookieHealthState.UNVERIFIED:
-        lines.append("اعتبارسنجی فعال نمی‌تواند قطعی تأیید شود")
+        lines.append("فایل کوکی از نظر ساختار موجود است؛ احراز هویت نزد سرویس آزمایش نشده است.")
     if health.last_checked_at is not None:
         lines.append(f"آخرین بررسی: {health.last_checked_at.isoformat(timespec='minutes')}")
-    if health.last_successful_auth_check_at is not None:
-        lines.append(
-            "آخرین بررسی معتبر: "
-            f"{health.last_successful_auth_check_at.isoformat(timespec='minutes')}"
-        )
     return "\n".join(lines)
 
 

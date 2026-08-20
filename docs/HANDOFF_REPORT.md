@@ -9,19 +9,22 @@ Generated: 2026-08-16
   redacted intent metadata and its value is discarded with `igsi`. gallery-dl 1.32.8 is still
   invoked with explicit `output.jsonl=true`. A zero-exit, zero-byte, zero-event response is now
   unavailable/inaccessible content, while malformed non-empty event output remains a strict
-  `GalleryDlOutputChangedError`.
+  `GalleryDlOutputChangedError`. Empty output never triggers a second `--get-urls`, keyword, or
+  authentication diagnostic request; authentication evidence is used only when the same stderr
+  already contains it.
 - Pinterest and SoundCloud commonly export session records (`expires=0`). The previous static
   checker skipped them and falsely produced MISSING after a valid canonical merge. Matching session
   records now produce UNVERIFIED with a non-zero record count. Atomic replacement is verified for
   exact bytes, uploaded identities, provider counts, mode and POSIX ownership, and a failed
   post-write verification restores the durable backup. The admin flow immediately persists a
-  provider-scoped static refresh before reporting success.
-- The worker previously enqueued the watcher wrapper every 30 seconds even though its expensive
-  scan was internally gated at 45 minutes. ARQ now wakes on interval-derived sparse minutes
-  (`0,15,30,45` for 45 minutes); the monotonic gate remains authoritative and an `asyncio.Lock`
-  prevents concurrent scans. Telegram's exact unchanged-message error is an idempotent no-op;
-  unrelated bad requests still fail normally.
-- No configuration, dependency, database schema, cookie path, Docker topology, or runtime-source
+  provider-scoped static refresh before reporting success, with no provider request.
+- Cookie Health is passive/local by design. `GalleryDlCookieProbe`, provider probe configuration,
+  active service methods, the ARQ watcher/cron, and the admin live "check all" action are removed.
+  Startup, admin views/refresh, and uploads only parse the canonical file. A real user extraction
+  can persist AUTH_FAILED from its existing error without a second request. Historical SQLite
+  active fields remain readable, but old probe-success evidence is discarded on static refresh.
+  Telegram's exact unchanged-message error remains an idempotent no-op.
+- No dependency, database schema, cookie path, Docker topology, or runtime-source
   migration is introduced. Nothing was committed, pushed, tagged, published, or deployed during
   preparation.
 

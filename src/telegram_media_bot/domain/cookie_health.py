@@ -1,9 +1,8 @@
 """Cookie Health Center domain model.
 
-Static checks are network-free and only inspect the canonical combined cookie file. Active
-probes are real but lightweight authenticated checks. The persisted health state drives
-state-transition alert deduplication so administrators are never spammed every maintenance
-cycle, and survives worker/container restarts.
+Static checks are network-free and only inspect the canonical combined cookie file. Authentication
+failures are learned passively from real user-requested extraction operations. Persisted state
+drives transition alert deduplication and survives worker/container restarts.
 """
 
 from __future__ import annotations
@@ -59,12 +58,17 @@ class StaticCookieCheck:
 
 @dataclass(frozen=True, slots=True)
 class ActiveProbeResult:
-    """Result of one lightweight authenticated provider probe."""
+    """Backward-compatible persisted shape for passive runtime authentication evidence.
+
+    The historical field/class names remain so existing SQLite rows can be read. New records are
+    created only from failures already returned by a real user-requested extraction; no probe is
+    initiated by Cookie Health.
+    """
 
     provider: CookieService
     status: CookieHealthState
     probed_url: str | None = None
-    #: True when the probe endpoint genuinely requires authentication.
+    #: Legacy field retained for persisted-row compatibility; new passive signals leave it false.
     auth_required_endpoint: bool = False
     http_status: int | None = None
     elapsed_seconds: float | None = None

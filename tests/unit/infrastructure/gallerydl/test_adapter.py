@@ -386,14 +386,33 @@ def test_expired_story_empty_output_is_media_unavailable(settings: Settings) -> 
 def test_successful_empty_instagram_post_is_unavailable_not_output_changed(
     settings: Settings,
 ) -> None:
+    runner = _FixtureRunner(b"")
     engine = GalleryDlEngine(
         settings,
-        runner=cast(GalleryDlRunner, _FixtureRunner(b"")),
+        runner=cast(GalleryDlRunner, runner),
     )
     engine._validator = cast(Any, _AllowValidator())
 
     with pytest.raises(MediaUnavailableError, match="unavailable or inaccessible"):
         engine.inspect("https://www.instagram.com/p/Db8-JS3jOMs/?img_index=2&igsi=synthetic")
+    assert runner.inspections == 1
+    assert len(runner.commands) == 1
+    assert "--get-urls" not in runner.commands[0]
+    assert "--list-keywords" not in runner.commands[0]
+
+
+def test_successful_empty_instagram_output_uses_same_request_auth_evidence(
+    settings: Settings,
+) -> None:
+    runner = _FixtureRunner(b"", stderr=b"HTTP 403 Forbidden: login required")
+    engine = GalleryDlEngine(settings, runner=cast(GalleryDlRunner, runner))
+    engine._validator = cast(Any, _AllowValidator())
+
+    with pytest.raises(GalleryDlAuthenticationRequiredError):
+        engine.inspect("https://www.instagram.com/p/Db8-JS3jOMs/")
+
+    assert runner.inspections == 1
+    assert len(runner.commands) == 1
 
 
 def test_exact_instagram_regression_url_returns_full_carousel_fixture(
@@ -509,9 +528,11 @@ async def test_runner_cancellation_terminates_process_group() -> None:
 
 
 class _FixtureRunner:
-    def __init__(self, payload: bytes) -> None:
+    def __init__(self, payload: bytes, *, stderr: bytes = b"") -> None:
         self.payload = payload
+        self.stderr = stderr
         self.inspections = 0
+        self.commands: list[list[str]] = []
         self.download_commands: list[list[str]] = []
 
     def run(
@@ -523,11 +544,12 @@ class _FixtureRunner:
         **_kwargs: object,
     ) -> GalleryProcessResult:
         del timeout_seconds, is_cancelled
+        self.commands.append(args)
         if "--version" in args:
             return GalleryProcessResult(0, b"1.32.8\n", b"", 0.01)
         if "--dump-json" in args:
             self.inspections += 1
-            return GalleryProcessResult(0, self.payload, b"", 0.01)
+            return GalleryProcessResult(0, self.payload, self.stderr, 0.01)
         workspace = Path(args[args.index("--directory") + 1])
         self.download_commands.append(args)
         events = [event for event in _fixture_payload_events(self.payload) if event[0] == 3]

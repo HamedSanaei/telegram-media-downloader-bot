@@ -6,7 +6,6 @@ import threading
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import PackageNotFoundError, version
-from math import gcd
 from time import monotonic
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -1527,12 +1526,21 @@ async def _record_runtime_auth_failure(ctx: dict[str, Any], exc: BaseException) 
     """A real runtime authentication failure updates Cookie Health and alerts admins (Part B)."""
     if not isinstance(exc, (GalleryDlCookiesExpiredError, AuthenticationRequiredError)):
         return
-    provider: CookieService | None
-    if isinstance(exc, GalleryDlCookiesExpiredError):
-        provider = CookieService.INSTAGRAM
-    else:
-        source = (getattr(exc, "source", None) or "").casefold()
-        provider = CookieService.INSTAGRAM if source == "instagram" else None
+    source = (
+        getattr(exc, "source", None)
+        or getattr(exc, "extractor", None)
+        or ("instagram" if isinstance(exc, GalleryDlCookiesExpiredError) else "")
+    ).casefold()
+    provider = {
+        "youtube": CookieService.YOUTUBE,
+        "youtube:tab": CookieService.YOUTUBE,
+        "instagram": CookieService.INSTAGRAM,
+        "tiktok": CookieService.TIKTOK,
+        "twitter": CookieService.TWITTER,
+        "x": CookieService.TWITTER,
+        "pinterest": CookieService.PINTEREST,
+        "soundcloud": CookieService.SOUNDCLOUD,
+    }.get(source)
     if provider is None:
         return
     health_service = ctx.get("cookie_health_service")
@@ -1605,57 +1613,6 @@ def _cookie_provider_label(provider: CookieService) -> str:
     from telegram_media_bot.domain.cookies import COOKIE_SERVICE_LABELS
 
     return COOKIE_SERVICE_LABELS.get(provider, provider.value)
-
-
-async def cookie_health_watcher(ctx: dict[str, Any]) -> int:
-    """Periodic Cookie Health watcher: network-free expiry checks plus optional active probes."""
-    settings = cast(Settings, ctx["settings"])
-    health_service = ctx.get("cookie_health_service")
-    if not isinstance(health_service, CookieHealthService) or not settings.cookie_health.enabled:
-        return 0
-    lock = ctx.get("cookie_health_watch_lock")
-    if lock is None:
-        lock = asyncio.Lock()
-        ctx["cookie_health_watch_lock"] = lock
-    if not isinstance(lock, asyncio.Lock):
-        raise TypeError("cookie health watcher lock has an invalid type")
-    async with lock:
-        current = monotonic()
-        interval = settings.cookie_health.expiry_watch_interval_minutes * 60
-        last_watch_value = ctx.get("cookie_health_last_watch")
-        if last_watch_value is not None and current - float(last_watch_value) < interval:
-            return 0
-        ctx["cookie_health_last_watch"] = current
-        alert_count = 0
-        _updated, alerts = await asyncio.to_thread(health_service.refresh_static)
-        alert_count += len(alerts)
-        for alert in alerts:
-            await _notify_admins_of_cookie_alert(ctx, alert)
-        active_interval = settings.cookie_health.active_probe_interval_minutes
-        if active_interval > 0:
-            last_probe_value = ctx.get("cookie_health_last_probe")
-            if (
-                last_probe_value is None
-                or current - float(last_probe_value) >= active_interval * 60
-            ):
-                ctx["cookie_health_last_probe"] = current
-                results = await health_service.run_active_probes()
-                _updated, alerts = health_service.apply_probe_results(results)
-                alert_count += len(alerts)
-                for alert in alerts:
-                    await _notify_admins_of_cookie_alert(ctx, alert)
-        await logger.ainfo(
-            "cookie_health_watch_completed",
-            interval_seconds=interval,
-            alert_count=alert_count,
-        )
-        return alert_count
-
-
-def cookie_health_poll_minutes(interval_minutes: int) -> set[int]:
-    """Return a sparse ARQ wake-up cadence that can gate the configured interval precisely."""
-    step = max(1, gcd(interval_minutes, 60))
-    return set(range(0, 60, step))
 
 
 async def _safe_edit(delivery: DeliveryGateway, chat_id: int, message_id: int, text: str) -> None:
