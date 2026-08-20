@@ -4,13 +4,19 @@ import asyncio
 import threading
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from aiogram.exceptions import TelegramBadRequest
 
 import telegram_media_bot.telegram.admin_handlers as admin_module
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.analytics import UsageReport, UsageReportPeriod
+from telegram_media_bot.domain.cookie_health import (
+    CookieHealthState,
+    ProviderCookieHealth,
+    StaticCookieCheck,
+)
 from telegram_media_bot.domain.cookies import (
     MAX_COOKIE_UPLOAD_BYTES,
     CookieService,
@@ -82,6 +88,8 @@ class FakeMessage:
         self.answers: list[tuple[str, object | None]] = []
         self.photos: list[tuple[object, str | None, object | None]] = []
         self.documents: list[tuple[object, str | None, object | None]] = []
+        self.edits: list[str] = []
+        self.edit_error: Exception | None = None
 
     async def answer(self, text: str, reply_markup: object | None = None) -> FakeSentMessage:
         self.answers.append((text, reply_markup))
@@ -104,6 +112,12 @@ class FakeMessage:
         reply_markup: object | None = None,
     ) -> None:
         self.documents.append((document, caption, reply_markup))
+
+    async def edit_text(self, text: str, *, reply_markup: object | None = None) -> None:
+        del reply_markup
+        if self.edit_error is not None:
+            raise self.edit_error
+        self.edits.append(text)
 
 
 class FakeCallback:
@@ -165,11 +179,52 @@ class FakeCookieManager:
             services=(CookieService.YOUTUBE, CookieService.INSTAGRAM),
             replaced=2,
             added=3,
+            uploaded_record_count=5,
+            previous_canonical_record_count=4,
+            new_canonical_record_count=7,
+            preserved_other_provider_count=2,
+            provider_record_counts=(
+                (CookieService.YOUTUBE, 3),
+                (CookieService.INSTAGRAM, 2),
+            ),
         )
 
     def export_combined(self) -> bytes:
         self.exports += 1
         return self.content
+
+
+class StaticCookieHealth:
+    def all_health(self) -> dict[CookieService, object]:
+        return {}
+
+
+class UploadCookieHealth:
+    def __init__(self, status: CookieHealthState = CookieHealthState.UNVERIFIED) -> None:
+        self.providers: tuple[CookieService, ...] | None = None
+        self.status = status
+
+    def refresh_static(
+        self,
+        providers: tuple[CookieService, ...],
+    ) -> tuple[dict[CookieService, ProviderCookieHealth], tuple[object, ...]]:
+        self.providers = providers
+        return (
+            {
+                provider: ProviderCookieHealth(
+                    provider=provider,
+                    status=self.status,
+                    static=StaticCookieCheck(
+                        provider=provider,
+                        status=self.status,
+                        file_ok=True,
+                        record_count=3 if provider is CookieService.YOUTUBE else 2,
+                    ),
+                )
+                for provider in providers
+            },
+            (),
+        )
 
 
 @pytest.fixture
@@ -204,6 +259,76 @@ async def test_download_button_enters_state_and_cancel_restores_menu(
     assert state.value is None
     assert message.answers[-1][0] == ADMIN_DOWNLOAD_CANCELLED
     assert message.answers[-1][1] == build_admin_main_keyboard()
+
+
+async def test_cookie_health_open_edits_changed_text_and_answers_once(
+    admin_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin_module, "CookieHealthService", StaticCookieHealth)
+    monkeypatch.setattr(admin_module, "Message", FakeMessage)
+    router = build_admin_router(
+        settings=admin_settings,
+        submit_url=lambda *_args: None,  # type: ignore[arg-type]
+        analytics=None,
+        chart_renderer=None,
+        cookie_health_service=StaticCookieHealth(),  # type: ignore[arg-type]
+    )
+    callback = FakeCallback(99, "adm:ch:open")
+
+    await _handler(router, "cookie_health_callback")(callback)
+
+    assert len(callback.message.edits) == 1
+    assert callback.answers == [(None, False)]
+
+
+async def test_cookie_health_not_modified_is_an_idempotent_noop(
+    admin_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin_module, "CookieHealthService", StaticCookieHealth)
+    monkeypatch.setattr(admin_module, "Message", FakeMessage)
+    router = build_admin_router(
+        settings=admin_settings,
+        submit_url=lambda *_args: None,  # type: ignore[arg-type]
+        analytics=None,
+        chart_renderer=None,
+        cookie_health_service=StaticCookieHealth(),  # type: ignore[arg-type]
+    )
+    callback = FakeCallback(99, "adm:ch:open")
+    callback.message.edit_error = TelegramBadRequest(
+        method=cast(Any, SimpleNamespace()),
+        message="Bad Request: message is not modified",
+    )
+
+    await _handler(router, "cookie_health_callback")(callback)
+
+    assert callback.answers == [(None, False)]
+
+
+async def test_cookie_health_unrelated_bad_request_is_not_swallowed(
+    admin_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(admin_module, "CookieHealthService", StaticCookieHealth)
+    monkeypatch.setattr(admin_module, "Message", FakeMessage)
+    router = build_admin_router(
+        settings=admin_settings,
+        submit_url=lambda *_args: None,  # type: ignore[arg-type]
+        analytics=None,
+        chart_renderer=None,
+        cookie_health_service=StaticCookieHealth(),  # type: ignore[arg-type]
+    )
+    callback = FakeCallback(99, "adm:ch:open")
+    callback.message.edit_error = TelegramBadRequest(
+        method=cast(Any, SimpleNamespace()),
+        message="Bad Request: message cannot be edited",
+    )
+
+    with pytest.raises(TelegramBadRequest, match="cannot be edited"):
+        await _handler(router, "cookie_health_callback")(callback)
+
+    assert callback.answers == [(None, False)]
 
 
 async def test_valid_admin_url_uses_injected_shared_pipeline_and_clears_state(
@@ -401,6 +526,58 @@ async def test_admin_upload_uses_document_bytes_not_filename_and_reports_counts(
     assert "secret" not in response
 
 
+async def test_successful_upload_immediately_refreshes_detected_provider_health(
+    admin_settings: Settings,
+) -> None:
+    content = b"# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsynthetic\n"
+    cookie_manager = FakeCookieManager(content)
+    health = UploadCookieHealth()
+    router = build_admin_router(
+        settings=admin_settings,
+        submit_url=lambda *_args: None,  # type: ignore[arg-type]
+        analytics=None,
+        chart_renderer=None,
+        cookie_manager=cookie_manager,
+        cookie_health_service=health,  # type: ignore[arg-type]
+    )
+    message = FakeMessage(
+        99,
+        document=SimpleNamespace(file_size=len(content), file_name="arbitrary.bin"),
+        bot=FakeTelegramBot(content),
+    )
+
+    await _handler(router, "receive_cookie_upload")(message, FakeState())
+
+    assert health.providers == (CookieService.YOUTUBE, CookieService.INSTAGRAM)
+    response = message.answers[-1][0]
+    assert "UNVERIFIED" in response
+    assert "synthetic" not in response
+
+
+async def test_upload_is_not_reported_successful_when_refreshed_provider_is_missing(
+    admin_settings: Settings,
+) -> None:
+    content = b"# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsynthetic\n"
+    router = build_admin_router(
+        settings=admin_settings,
+        submit_url=lambda *_args: None,  # type: ignore[arg-type]
+        analytics=None,
+        chart_renderer=None,
+        cookie_manager=FakeCookieManager(content),
+        cookie_health_service=UploadCookieHealth(CookieHealthState.MISSING),  # type: ignore[arg-type]
+    )
+    message = FakeMessage(
+        99,
+        document=SimpleNamespace(file_size=len(content), file_name="cookies.txt"),
+        bot=FakeTelegramBot(content),
+    )
+
+    await _handler(router, "receive_cookie_upload")(message, FakeState())
+
+    assert message.answers[-1][0] == COOKIE_UPDATE_FAILED_TEXT
+    assert "synthetic" not in repr(message.answers)
+
+
 async def test_admin_can_download_complete_combined_cookie_file(
     admin_settings: Settings,
 ) -> None:
@@ -498,7 +675,13 @@ async def test_unexpected_cookie_failure_does_not_log_cookie_secret(
         def __init__(self) -> None:
             self.events: list[tuple[object, dict[str, object]]] = []
 
-        async def aerror(self, event: object, **kwargs: object) -> None:
+        def info(self, event: object, **kwargs: object) -> None:
+            self.events.append((event, kwargs))
+
+        def warning(self, event: object, **kwargs: object) -> None:
+            self.events.append((event, kwargs))
+
+        def error(self, event: object, **kwargs: object) -> None:
             self.events.append((event, kwargs))
 
     logger = CapturingLogger()

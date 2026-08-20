@@ -146,6 +146,17 @@ def test_instagram_post_reel_and_reels_share_urls_canonicalize() -> None:
     assert reels.instagram_kind == "reel"
 
 
+def test_instagram_carousel_presentation_and_tracking_query_are_recorded_but_removed() -> None:
+    intent = canonicalize_media_url(
+        "https://www.instagram.com/p/Db8-JS3jOMs/?img_index=2&igsi=synthetic-share"
+    )
+
+    assert intent.canonical_url == "https://www.instagram.com/p/Db8-JS3jOMs/"
+    assert intent.instagram_kind == "post"
+    assert intent.removed_query_parameters == ("img_index", "igsi")
+    assert "synthetic-share" not in intent.original_url
+
+
 def test_plain_instagram_profile_canonicalizes_to_avatar_target() -> None:
     with_www = canonicalize_media_url("https://www.instagram.com/exampleuser/")
     bare = canonicalize_media_url("https://instagram.com/exampleuser")

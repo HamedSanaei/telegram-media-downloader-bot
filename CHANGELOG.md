@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.3.5 - 2026-08-20
+
+### Fixed
+
+- Classify a successful gallery-dl inspection with no emitted events as unavailable/inaccessible
+  content instead of a JSON Lines contract change. Non-zero HTTP 401/403 and 404/410 failures now
+  retain authentication/unavailable semantics, while malformed non-empty JSONL remains strictly
+  rejected as `GalleryDlOutputChangedError`.
+- Keep Instagram carousel `img_index` as explicitly removed presentation state (alongside stripped
+  tracking such as `igsi`) while inspecting the canonical full post in source order.
+- Treat matching Netscape session-cookie records as present but `UNVERIFIED`, never `MISSING`.
+  Pinterest and SoundCloud uploads now use the shared provider registry, receive post-replacement
+  canonical-byte/identity/count/permission verification with rollback, and trigger an immediate
+  targeted persisted health refresh before the administrator sees success.
+- Schedule the cookie-health watcher on sparse interval-derived ARQ minutes and retain an exact
+  monotonic 45-minute scan gate plus an in-process single-flight lock. Manual administrator checks
+  remain immediate and independent.
+- Treat Telegram's exact `message is not modified` edit error as an idempotent Cookie Health no-op,
+  answer each callback once, and continue to propagate unrelated `TelegramBadRequest` failures.
+
 ## 1.3.4 - 2026-08-17
 
 ### Added

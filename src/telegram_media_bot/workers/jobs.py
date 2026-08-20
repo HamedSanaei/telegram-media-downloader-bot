@@ -6,6 +6,7 @@ import threading
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import PackageNotFoundError, version
+from math import gcd
 from time import monotonic
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -144,7 +145,7 @@ def _project_version() -> str:
     try:
         return version("telegram-media-downloader-bot")
     except PackageNotFoundError:
-        return "1.3.4"
+        return "1.3.5"
 
 
 APP_VERSION = _project_version()
@@ -1612,33 +1613,49 @@ async def cookie_health_watcher(ctx: dict[str, Any]) -> int:
     health_service = ctx.get("cookie_health_service")
     if not isinstance(health_service, CookieHealthService) or not settings.cookie_health.enabled:
         return 0
-    last_watch = float(ctx.get("cookie_health_last_watch") or 0.0)
-    current = monotonic()
-    interval = settings.cookie_health.expiry_watch_interval_minutes * 60
-    if current - last_watch < interval:
-        return 0
-    ctx["cookie_health_last_watch"] = current
-    alert_count = 0
-    _updated, alerts = await asyncio.to_thread(health_service.refresh_static)
-    alert_count += len(alerts)
-    for alert in alerts:
-        await _notify_admins_of_cookie_alert(ctx, alert)
-    active_interval = settings.cookie_health.active_probe_interval_minutes
-    if active_interval > 0:
-        last_probe = float(ctx.get("cookie_health_last_probe") or 0.0)
-        if current - last_probe >= active_interval * 60:
-            ctx["cookie_health_last_probe"] = current
-            results = await health_service.run_active_probes()
-            _updated, alerts = health_service.apply_probe_results(results)
-            alert_count += len(alerts)
-            for alert in alerts:
-                await _notify_admins_of_cookie_alert(ctx, alert)
-    await logger.ainfo(
-        "cookie_health_watch_completed",
-        interval_seconds=interval,
-        alert_count=alert_count,
-    )
-    return alert_count
+    lock = ctx.get("cookie_health_watch_lock")
+    if lock is None:
+        lock = asyncio.Lock()
+        ctx["cookie_health_watch_lock"] = lock
+    if not isinstance(lock, asyncio.Lock):
+        raise TypeError("cookie health watcher lock has an invalid type")
+    async with lock:
+        current = monotonic()
+        interval = settings.cookie_health.expiry_watch_interval_minutes * 60
+        last_watch_value = ctx.get("cookie_health_last_watch")
+        if last_watch_value is not None and current - float(last_watch_value) < interval:
+            return 0
+        ctx["cookie_health_last_watch"] = current
+        alert_count = 0
+        _updated, alerts = await asyncio.to_thread(health_service.refresh_static)
+        alert_count += len(alerts)
+        for alert in alerts:
+            await _notify_admins_of_cookie_alert(ctx, alert)
+        active_interval = settings.cookie_health.active_probe_interval_minutes
+        if active_interval > 0:
+            last_probe_value = ctx.get("cookie_health_last_probe")
+            if (
+                last_probe_value is None
+                or current - float(last_probe_value) >= active_interval * 60
+            ):
+                ctx["cookie_health_last_probe"] = current
+                results = await health_service.run_active_probes()
+                _updated, alerts = health_service.apply_probe_results(results)
+                alert_count += len(alerts)
+                for alert in alerts:
+                    await _notify_admins_of_cookie_alert(ctx, alert)
+        await logger.ainfo(
+            "cookie_health_watch_completed",
+            interval_seconds=interval,
+            alert_count=alert_count,
+        )
+        return alert_count
+
+
+def cookie_health_poll_minutes(interval_minutes: int) -> set[int]:
+    """Return a sparse ARQ wake-up cadence that can gate the configured interval precisely."""
+    step = max(1, gcd(interval_minutes, 60))
+    return set(range(0, 60, step))
 
 
 async def _safe_edit(delivery: DeliveryGateway, chat_id: int, message_id: int, text: str) -> None:

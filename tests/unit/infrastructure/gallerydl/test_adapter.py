@@ -264,6 +264,11 @@ def test_safe_nonzero_mapping_does_not_expose_stderr() -> None:
     )
     secret = map_process_failure(1, b"Login required: secret cookie path C:/private/c.txt")
     assert "private" not in str(secret)
+    assert isinstance(
+        map_process_failure(1, b"HTTP 403 Forbidden"),
+        GalleryDlAuthenticationRequiredError,
+    )
+    assert isinstance(map_process_failure(1, b"HTTP 404 Not Found"), MediaUnavailableError)
 
 
 async def test_runner_bounds_stdout_and_times_out() -> None:
@@ -376,6 +381,34 @@ def test_expired_story_empty_output_is_media_unavailable(settings: Settings) -> 
 
     with pytest.raises(MediaUnavailableError, match="story is expired or unavailable"):
         engine.inspect("https://www.instagram.com/stories/exampleuser/123/")
+
+
+def test_successful_empty_instagram_post_is_unavailable_not_output_changed(
+    settings: Settings,
+) -> None:
+    engine = GalleryDlEngine(
+        settings,
+        runner=cast(GalleryDlRunner, _FixtureRunner(b"")),
+    )
+    engine._validator = cast(Any, _AllowValidator())
+
+    with pytest.raises(MediaUnavailableError, match="unavailable or inaccessible"):
+        engine.inspect("https://www.instagram.com/p/Db8-JS3jOMs/?img_index=2&igsi=synthetic")
+
+
+def test_exact_instagram_regression_url_returns_full_carousel_fixture(
+    settings: Settings,
+) -> None:
+    engine = GalleryDlEngine(
+        settings,
+        runner=cast(GalleryDlRunner, _FixtureRunner(_fixture("instagram-carousel.json"))),
+    )
+    engine._validator = cast(Any, _AllowValidator())
+
+    info = engine.inspect("https://www.instagram.com/p/Db8-JS3jOMs/?img_index=2&igsi=synthetic")
+
+    assert info.webpage_url == "https://www.instagram.com/p/Db8-JS3jOMs/"
+    assert tuple(asset.kind for asset in info.assets) == (MediaKind.IMAGE, MediaKind.IMAGE)
 
 
 def test_story_video_download_succeeds_within_configured_limits(

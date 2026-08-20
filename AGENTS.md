@@ -29,13 +29,30 @@ test, deploy, roll back, and hand over to another engineer or coding agent.
 - Source code is the behavior authority, tests define expected behavior, and the project spec,
   architecture, ADRs, and task history explain intent. Compact files under `docs/agent/` route to
   those authorities; they do not replace them.
-- Ensure `graphify-out/graph.json` represents the current checkout before relying on it, and update
-  it after structural changes. Use bounded `graphify query`, `path`, and `explain` results rather
-  than loading the complete graph or report.
-- When Graphify is unavailable or stale, use the dependency-free
-  `python scripts/agent_context.py ...` fallback and ordinary targeted source inspection.
 - Progressive discovery is not a limit on justified investigation. Cross-component or high-risk
   changes must still load every relevant authoritative document, implementation, and test.
+
+### Mandatory Graphify workflow (every non-trivial code task)
+
+Before broad grep/file exploration, follow these steps in order and record the results so that
+Graphify usage is auditable:
+
+1. Verify Graphify is available: `graphify --version`; record the version or "unavailable".
+2. Check graph freshness: `graphify check-update .`
+3. If stale and Graphify is available: `graphify update .`; record that an update was required.
+4. Run at least one bounded query relevant to the task before broad grep/file exploration:
+   `graphify query "..." --budget 1200 --graph graphify-out/graph.json`
+5. Use `graphify explain` or `graphify path` only when useful for narrowing dependencies or
+   blast radius.
+6. Graphify is discovery tooling only; actual source code and tests remain authoritative.
+7. If Graphify is unavailable or fails, explicitly record that fact and use the dependency-free
+   `python scripts/agent_context.py ...` fallback.
+8. The final task report MUST include a `Graphify usage` section listing: graphify version,
+   freshness result, exact bounded queries used, key symbols/files discovered, whether
+   `graphify update` was required, and whether fallback navigation was used.
+9. Do not dump `graphify-out/graph.json` or `graphify-out/GRAPH_REPORT.md` into model context.
+10. Keep Graphify outside application dependencies and production/CI runtime; it is a local
+    developer tool only, never a runtime or CI dependency.
 
 ## Architecture invariants
 

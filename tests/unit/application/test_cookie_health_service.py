@@ -54,6 +54,7 @@ class StubChecker:
             provider=provider,
             status=status,
             file_ok=status is not CookieHealthState.MISSING,
+            record_count=0 if status is CookieHealthState.MISSING else 1,
         )
 
 
@@ -122,6 +123,27 @@ def test_healthy_initial_state_does_not_alert() -> None:
     )
     _updated, alerts = service.refresh_static()
     assert alerts == ()
+
+
+def test_targeted_refresh_replaces_stale_persisted_missing_state() -> None:
+    store = FakeStore()
+    missing_service = _service(
+        store,
+        checker=StubChecker({CookieService.PINTEREST: CookieHealthState.MISSING}),
+    )
+    missing_service.refresh_static((CookieService.PINTEREST,))
+    service = _service(
+        store,
+        checker=StubChecker({CookieService.PINTEREST: CookieHealthState.UNVERIFIED}),
+    )
+
+    updated, _alerts = service.refresh_static((CookieService.PINTEREST,))
+
+    assert updated[CookieService.PINTEREST].status is CookieHealthState.UNVERIFIED
+    persisted = store.load(CookieService.PINTEREST)
+    assert persisted is not None
+    assert persisted.status is CookieHealthState.UNVERIFIED
+    assert persisted.static.record_count == 1
 
 
 def test_same_failure_state_is_deduplicated_then_reminded() -> None:

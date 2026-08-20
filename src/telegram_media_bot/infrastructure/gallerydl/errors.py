@@ -23,6 +23,12 @@ def map_process_failure(return_code: int, stderr: bytes) -> Exception:
         return GalleryDlRateLimitedError(
             "gallery provider rate limited the request", http_status=http_status or 429
         )
+    if http_status in {401, 403}:
+        return GalleryDlAuthenticationRequiredError(
+            "gallery provider authentication is required", http_status=http_status
+        )
+    if http_status in {404, 410}:
+        return MediaUnavailableError("gallery content is unavailable", http_status=http_status)
     if any(
         marker in text for marker in ("expired cookie", "invalid cookie", "cookies have expired")
     ):
@@ -33,7 +39,16 @@ def map_process_failure(return_code: int, stderr: bytes) -> Exception:
         return GalleryDlAuthenticationRequiredError(
             "gallery provider authentication is required", http_status=http_status
         )
-    if any(marker in text for marker in ("not found", "private", "unavailable", "deleted")):
+    if any(
+        marker in text
+        for marker in (
+            "not found",
+            "private",
+            "unavailable",
+            "deleted",
+            "requested resource does not exist",
+        )
+    ):
         return MediaUnavailableError("gallery content is unavailable", http_status=http_status)
     return GalleryDlExtractionError(
         f"gallery-dl failed with stable exit class {return_code}", http_status=http_status

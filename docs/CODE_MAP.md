@@ -10,7 +10,7 @@
 | `src/telegram_media_bot/application/ports/cookie_management.py` | Framework-free canonical cookie merge/export contract |
 | `src/telegram_media_bot/application/services/` | Orchestrates inspection, policy limits, and selected downloads |
 | `src/telegram_media_bot/application/services/diagnostic_sanitizer.py` | Central secret sanitizer: URL reduction to scheme+hostname+safe path, safe-parameter allowlist, redaction of cookies/tokens/headers/proxy passwords/CDN query secrets, bounded exception-message cleanup |
-| `src/telegram_media_bot/application/services/cookie_health_service.py` | Cookie Health orchestration: static+probe merge, persisted state-transition alerts, reminder/recovery deduplication, runtime auth-failure updates |
+| `src/telegram_media_bot/application/services/cookie_health_service.py` | Cookie Health orchestration: provider-scoped or complete static+probe merge, persisted state-transition alerts, reminder/recovery deduplication, runtime auth-failure updates |
 | `src/telegram_media_bot/application/services/native_options.py` | Builds the public native-only option catalog, enforces codec/transcode invariants, chooses truthful representatives, deduplicates actual plans, and creates opaque option IDs |
 | `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
 | `src/telegram_media_bot/application/services/instagram_delivery.py` | Selects the complete Instagram image/mixed bundle behind the Photo/File confirmation |
@@ -22,7 +22,7 @@
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
 | `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, including strict raw-entry Instagram mixed-carousel video resolution, zero-transcode AV1/H.264 MP4 and VP9 WebM selection, narrow Twitter HLS audio-metadata inference, native/inline compatibility probing, and bounded explicit transcoding |
-| `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, explicit JSON Lines event contract, bounded output/cancellation, strict vendor tuple parsing/error mapping, stable asset normalization, and safe original-image download with Instagram videos disabled when required. The typed result model carries IMAGE/VIDEO/mixed collections (Stories, Reels, video posts, avatar) without conflating "no images" with "no media" |
+| `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, explicit JSON Lines event contract, bounded output/cancellation, strict non-empty vendor tuple parsing/error mapping, successful-empty unavailable classification, stable asset normalization, and safe original-image download with Instagram videos disabled when required. The typed result model carries IMAGE/VIDEO/mixed collections (Stories, Reels, video posts, avatar) without conflating "no images" with "no media" |
 | `src/telegram_media_bot/infrastructure/media_engine_router.py` | Inspection-result routing and fail-closed mixed Instagram merge: validate/download canonical yt-dlp video children before gallery-dl images, then merge exact source ordinals |
 | `src/telegram_media_bot/infrastructure/image_validation.py` | Pillow signature/format/dimension/decompression-bomb validation without altering originals |
 | `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for AV1/H.264 MP4 and VP9 WebM selection, stream-copy arguments, and Best Original policy |
@@ -40,7 +40,7 @@
 | `src/telegram_media_bot/infrastructure/archive/` | Safe 7-Zip multi-volume packaging, deterministic ordered image ZIPs, and SHA-256 manifests |
 | `src/telegram_media_bot/infrastructure/storage/` | Exact job-workspace cleanup, symlink-safe deletion, and startup/maintenance sweeping |
 | `src/telegram_media_bot/telegram/` | Versioned Back/Native/Instagram/Story/Highlight delivery callbacks, real-plan rendering, middleware, tracked exact-byte document delivery, and ordered ten-item media-group planning |
-| `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants (reports, cookie management, Cookie Health), FSM state, and reply/inline keyboard builders |
+| `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants (reports, cookie management, Cookie Health), FSM state, and reply/inline keyboard builders; `admin_handlers.py` verifies cookie writes, refreshes provider health immediately, and makes unchanged status edits idempotent |
 | `src/telegram_media_bot/telegram/admin_handlers.py` | Role-checked menu/download/report/cookie routing, private-chat secret export, bounded in-memory document intake, and per-admin report single-flight coordination |
 | `src/telegram_media_bot/telegram/handlers.py` | Shared URL submission, editable job-status ownership, active-job queue reconciliation, callbacks, and cancellation routing |
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction plus the bounded, cancellable Local Bot API startup readiness wait (`local_api_startup_wait`/`ready`/`timeout`) |

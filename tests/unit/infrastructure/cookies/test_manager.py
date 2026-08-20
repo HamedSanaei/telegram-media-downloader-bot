@@ -98,6 +98,63 @@ def test_supported_cookie_domains_are_detected(
     summary = NetscapeCookieManager(path).merge(_HEADER + _record(domain, "session", "secret"))
 
     assert summary.services == (service,)
+    assert summary.uploaded_record_count == 1
+    assert summary.new_canonical_record_count == 1
+    assert summary.record_count(service) == 1
+
+
+@pytest.mark.parametrize(
+    ("domain", "service"),
+    [
+        ("pinterest.com", CookieService.PINTEREST),
+        ("www.pinterest.com", CookieService.PINTEREST),
+        (".pinterest.com", CookieService.PINTEREST),
+        ("soundcloud.com", CookieService.SOUNDCLOUD),
+        ("www.soundcloud.com", CookieService.SOUNDCLOUD),
+        (".soundcloud.com", CookieService.SOUNDCLOUD),
+    ],
+)
+def test_pinterest_and_soundcloud_upload_into_empty_store(
+    tmp_path: Path,
+    domain: str,
+    service: CookieService,
+) -> None:
+    path = _store(tmp_path, _HEADER)
+
+    summary = NetscapeCookieManager(path).merge(
+        _HEADER + _record(domain, "session", "synthetic-secret")
+    )
+
+    assert summary.services == (service,)
+    assert summary.record_count(service) == 1
+    assert summary.preserved_other_provider_count == 0
+    assert b"synthetic-secret" in path.read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("domain", "service"),
+    [
+        (".pinterest.com", CookieService.PINTEREST),
+        (".soundcloud.com", CookieService.SOUNDCLOUD),
+    ],
+)
+def test_provider_update_preserves_instagram_and_youtube_exactly(
+    tmp_path: Path,
+    domain: str,
+    service: CookieService,
+) -> None:
+    youtube = _record(".youtube.com", "SID", "youtube-preserved")
+    instagram = _record(".instagram.com", "sessionid", "instagram-preserved")
+    path = _store(tmp_path, _HEADER + youtube + instagram)
+
+    summary = NetscapeCookieManager(path).merge(
+        _HEADER + _record(domain, "session", "provider-new")
+    )
+
+    assert youtube in path.read_bytes()
+    assert instagram in path.read_bytes()
+    assert summary.services == (service,)
+    assert summary.preserved_other_provider_count == 2
 
 
 def test_duplicate_keys_are_deduplicated_and_last_uploaded_value_wins(
@@ -224,6 +281,24 @@ def test_success_creates_exact_backup_and_preserves_file_mode(tmp_path: Path) ->
     assert len(backups) == 1
     assert backups[0].read_bytes() == current
     assert stat.S_IMODE(backups[0].stat().st_mode) == stat.S_IMODE(before.st_mode)
+
+
+def test_post_write_verification_failure_rolls_back_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = _HEADER + _record(".youtube.com", "SID", "original-secret")
+    path = _store(tmp_path, current)
+    manager = NetscapeCookieManager(path)
+
+    def fail_verification(**_kwargs: object) -> None:
+        raise CookieStoreWriteError("injected verification failure")
+
+    monkeypatch.setattr(manager, "_verify_replacement", fail_verification)
+
+    with pytest.raises(CookieStoreWriteError, match="injected verification failure"):
+        manager.merge(_HEADER + _record(".youtube.com", "SID", "new-secret"))
+
+    assert path.read_bytes() == current
 
 
 def test_export_returns_complete_combined_file_exactly(tmp_path: Path) -> None:

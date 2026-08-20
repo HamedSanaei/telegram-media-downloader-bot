@@ -11,6 +11,8 @@ from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
 
 pytestmark = pytest.mark.contract
 
+_DB8_REGRESSION_URL = "https://www.instagram.com/p/Db8-JS3jOMs/?img_index=2&igsi=synthetic-contract"
+
 
 @pytest.mark.parametrize(
     ("source", "environment_name"),
@@ -35,3 +37,19 @@ def test_opt_in_gallerydl_normalized_contract(source: str, environment_name: str
     assert info.assets
     assert any(asset.kind is MediaKind.IMAGE for asset in info.assets)
     assert all(asset.provider == source for asset in info.assets)
+
+
+def test_opt_in_db8_instagram_post_returns_accessible_gallery_media() -> None:
+    if os.getenv("RUN_GALLERYDL_CONTRACT_TESTS") != "1":
+        pytest.skip("set RUN_GALLERYDL_CONTRACT_TESTS=1 for live gallery-dl contracts")
+    config = os.getenv("GALLERYDL_CONTRACT_CONFIG")
+    if not config:
+        pytest.skip("set GALLERYDL_CONTRACT_CONFIG with operator cookie access")
+
+    info = GalleryDlEngine(load_settings(Path(config), require_token=False)).inspect(
+        _DB8_REGRESSION_URL
+    )
+
+    assert info.webpage_url == "https://www.instagram.com/p/Db8-JS3jOMs/"
+    assert info.source == "instagram"
+    assert any(asset.kind is MediaKind.IMAGE for asset in info.assets)

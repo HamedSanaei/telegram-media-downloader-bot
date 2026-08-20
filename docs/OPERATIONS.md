@@ -106,7 +106,10 @@ Only IDs in `telegram.admin_ids` can use:
   permitted; it never resends automatically.
 - **Cookie Management** in the private reply-keyboard panel: merge a bounded Netscape document into
   the canonical cookie file or download the complete current file. Service detection ignores the
-  uploaded filename, and summaries expose only service labels plus replaced/added record counts.
+  uploaded filename, and summaries expose only service labels, provider record counts, health
+  state, and replaced/added counts. Session-only exports are honestly `UNVERIFIED` rather than
+  `MISSING`; a successful response means canonical replacement and provider-scoped static refresh
+  both completed.
   The next yt-dlp or gallery-dl job opens that same effective file; no process restart is needed.
 
 No command returns URLs, tokens, cookies, proxy data, internal exception text, or file paths.

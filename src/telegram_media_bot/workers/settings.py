@@ -52,6 +52,7 @@ from telegram_media_bot.telegram.bot_factory import (
 )
 from telegram_media_bot.telegram.delivery import RoutedDeliveryGateway
 from telegram_media_bot.workers.jobs import (
+    cookie_health_poll_minutes,
     cookie_health_watcher,
     maintenance_job,
     process_download_job,
@@ -325,7 +326,14 @@ class WorkerSettings(WorkerSettingsBase):
     )
     cron_jobs: tuple[Any, ...] = (
         cron(maintenance_job, minute=None, second={0, 30}, run_at_startup=True),
-        cron(cookie_health_watcher, minute=None, second={15, 45}, run_at_startup=True),
+        cron(
+            cookie_health_watcher,
+            minute=cookie_health_poll_minutes(
+                _settings.cookie_health.expiry_watch_interval_minutes
+            ),
+            second=15,
+            run_at_startup=True,
+        ),
     )
     on_startup: Any = startup
     on_shutdown: Any = shutdown

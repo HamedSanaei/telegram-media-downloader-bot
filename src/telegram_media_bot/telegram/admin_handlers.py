@@ -7,9 +7,16 @@ from io import BytesIO
 
 import structlog
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message, ReplyKeyboardMarkup
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyKeyboardMarkup,
+)
 
 from telegram_media_bot.application.ports.cookie_management import CookieManager
 from telegram_media_bot.application.ports.usage_analytics import UsageChartRenderer
@@ -17,7 +24,12 @@ from telegram_media_bot.application.services.cookie_health_service import Cookie
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.analytics import UsageReport, UsageReportPeriod
-from telegram_media_bot.domain.cookies import MAX_COOKIE_UPLOAD_BYTES, CookieService
+from telegram_media_bot.domain.cookie_health import CookieHealthState, ProviderCookieHealth
+from telegram_media_bot.domain.cookies import (
+    MAX_COOKIE_UPLOAD_BYTES,
+    CookieService,
+    CookieUpdateSummary,
+)
 from telegram_media_bot.domain.errors import (
     CookieFileTooLargeError,
     CookieStoreUnavailableError,
@@ -238,11 +250,12 @@ def build_admin_router(
             return
         action = callback.data.removeprefix("adm:ch:")
         if action == "open":
-            await callback.message.edit_text(
+            await callback.answer()
+            await _edit_cookie_health_message(
+                callback.message,
                 cookie_health_status_text(cookie_health_service.all_health()),
                 reply_markup=build_admin_cookie_health_inline_keyboard(),
             )
-            await callback.answer()
             return
         if action not in {"check", "refresh"}:
             await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
@@ -254,14 +267,18 @@ def build_admin_router(
                 results = await cookie_health_service.run_active_probes()
                 updated, _alerts = cookie_health_service.apply_probe_results(results)
         except Exception as exc:
-            await callback.message.edit_text(COOKIE_HEALTH_CHECK_FAILED_TEXT)
+            await _edit_cookie_health_message(
+                callback.message,
+                COOKIE_HEALTH_CHECK_FAILED_TEXT,
+            )
             await logger.aerror(
                 "admin_cookie_health_callback_failed",
                 action=action,
                 error_type=type(exc).__name__,
             )
             return
-        await callback.message.edit_text(
+        await _edit_cookie_health_message(
+            callback.message,
             cookie_health_status_text(updated),
             reply_markup=build_admin_cookie_health_inline_keyboard(),
         )
@@ -404,6 +421,7 @@ def build_admin_router(
                 reply_markup=build_admin_cookie_keyboard(),
             )
             return
+        logger.info("cookie_upload_started")
         try:
             if (
                 message.document.file_size is not None
@@ -412,25 +430,67 @@ def build_admin_router(
                 raise CookieFileTooLargeError("declared cookie upload is too large")
             uploaded = await _download_cookie_document(message)
             summary = await asyncio.to_thread(cookie_manager.merge, uploaded)
+            for provider in summary.services:
+                logger.info(
+                    "cookie_upload_provider_detected",
+                    provider=provider.value,
+                    uploaded_record_count=summary.uploaded_record_count,
+                    matched_record_count=summary.record_count(provider),
+                )
+            logger.info(
+                "cookie_upload_merge_completed",
+                uploaded_record_count=summary.uploaded_record_count,
+                previous_canonical_record_count=summary.previous_canonical_record_count,
+                new_canonical_record_count=summary.new_canonical_record_count,
+                preserved_other_provider_count=summary.preserved_other_provider_count,
+            )
+            health_by_provider: dict[CookieService, ProviderCookieHealth] = {}
+            if cookie_health_service is not None:
+                health_by_provider, _alerts = await asyncio.to_thread(
+                    cookie_health_service.refresh_static,
+                    summary.services,
+                )
+                for provider in summary.services:
+                    health = health_by_provider[provider]
+                    logger.info(
+                        "cookie_health_provider_refreshed",
+                        provider=provider.value,
+                        health_after=health.status.value,
+                        matched_record_count=health.static.record_count,
+                    )
+                    if health.status is CookieHealthState.MISSING:
+                        raise CookieStoreWriteError(
+                            "canonical provider verification returned missing"
+                        )
         except CookieFileTooLargeError:
             text = COOKIE_TOO_LARGE_TEXT
+            logger.warning("cookie_upload_failed", error_type="CookieFileTooLargeError")
         except EmptyCookieFileError:
             text = COOKIE_EMPTY_TEXT
+            logger.warning("cookie_upload_failed", error_type="EmptyCookieFileError")
         except UnsupportedCookieDomainsError:
             text = COOKIE_UNSUPPORTED_TEXT
+            logger.warning("cookie_upload_failed", error_type="UnsupportedCookieDomainsError")
         except InvalidCookieFileError:
             text = COOKIE_INVALID_TEXT
+            logger.warning("cookie_upload_failed", error_type="InvalidCookieFileError")
         except CookieStoreUnavailableError:
             text = COOKIE_STORE_UNAVAILABLE_TEXT
+            logger.error("cookie_upload_failed", error_type="CookieStoreUnavailableError")
         except CookieStoreWriteError as exc:
             text = COOKIE_UPDATE_FAILED_TEXT
-            await logger.aerror("admin_cookie_update_failed", error_type=type(exc).__name__)
+            logger.error("cookie_upload_failed", error_type=type(exc).__name__)
         except Exception as exc:
             text = COOKIE_UPDATE_FAILED_TEXT
-            await logger.aerror("admin_cookie_update_failed", error_type=type(exc).__name__)
+            logger.error("cookie_upload_failed", error_type=type(exc).__name__)
         else:
             await state.clear()
-            text = _render_cookie_update_summary(summary.services, summary.replaced, summary.added)
+            text = _render_cookie_update_summary(summary, health_by_provider)
+            logger.info(
+                "cookie_upload_verified",
+                uploaded_record_count=summary.uploaded_record_count,
+                new_canonical_record_count=summary.new_canonical_record_count,
+            )
         await message.answer(text, reply_markup=build_admin_cookie_keyboard())
 
     @router.message(StateFilter(AdminCookieState.awaiting_upload))
@@ -630,12 +690,35 @@ async def _download_cookie_document(message: Message) -> bytes:
 
 
 def _render_cookie_update_summary(
-    services: tuple[CookieService, ...], replaced: int, added: int
+    summary: CookieUpdateSummary,
+    health_by_provider: dict[CookieService, ProviderCookieHealth],
 ) -> str:
-    labels = "، ".join(_COOKIE_SERVICE_LABELS[service] for service in services)
+    labels = "، ".join(_COOKIE_SERVICE_LABELS[service] for service in summary.services)
+    provider_lines = [
+        (
+            f"{_COOKIE_SERVICE_LABELS[service]}: "
+            f"{summary.record_count(service)} رکورد، "
+            f"{health_by_provider[service].status.value.upper() if service in health_by_provider else 'UNVERIFIED'}"
+        )
+        for service in summary.services
+    ]
     return (
         "✅ فایل کوکی با موفقیت به‌روزرسانی شد.\n"
         f"سرویس‌های تشخیص‌داده‌شده: {labels}\n"
-        f"رکوردهای جایگزین‌شده: {replaced}\n"
-        f"رکوردهای افزوده‌شده: {added}"
+        f"رکوردهای جایگزین‌شده: {summary.replaced}\n"
+        f"رکوردهای افزوده‌شده: {summary.added}\n" + "\n".join(provider_lines)
     )
+
+
+async def _edit_cookie_health_message(
+    message: Message,
+    text: str,
+    *,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    try:
+        await message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc).casefold():
+            return
+        raise

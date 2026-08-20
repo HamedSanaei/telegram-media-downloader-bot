@@ -1,10 +1,15 @@
 # Project status
 
-Last updated: 2026-08-17
+Last updated: 2026-08-20
 
 ## Release state
 
-Tasks T001 through T013 are implemented. Patch 1.3.4 adds rich structured administrator
+Tasks T001 through T013 are implemented. Patch 1.3.5 corrects four production regressions without
+changing configuration or runtime topology: gallery-dl successful-empty Instagram inspections no
+longer masquerade as output-contract changes; Pinterest/SoundCloud session cookies are present and
+UNVERIFIED rather than MISSING, with verified canonical writes and immediate targeted health
+refresh; the 45-minute cookie watcher uses sparse ARQ wake-ups plus an exact single-flight scan
+gate; and unchanged Cookie Health Telegram edits are idempotent. Patch 1.3.4 adds rich structured administrator
 failure diagnostics (typed `FailureContext` threaded from the failing layer through retries to
 the terminal admin notification, with a central secret sanitizer), an admin-only Cookie Health
 Center (network-free static validation, real lightweight authenticated probes with bounded

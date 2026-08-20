@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Fail fast when progressive repository-navigation safeguards regress."""
+"""Fail fast when progressive repository-navigation safeguards or the Graphify workflow
+contract regress."""
 
 from __future__ import annotations
 
@@ -31,6 +32,25 @@ SKILL_MARKERS = {
     "persistence-change": ("SQLite/WAL", "non-destructive migrations", "ADR-007"),
     "release-upgrade": ("pre-downtime", "exact service-state", "full rollback"),
 }
+GRAPHIFY_WORKFLOW_FILES = (
+    "AGENTS.md",
+    "PROMPT_FOR_CODEX.md",
+    ".agents/skills/repo-navigation/SKILL.md",
+)
+GRAPHIFY_WORKFLOW_MARKERS = (
+    "graphify --version",
+    "graphify check-update",
+    "graphify update",
+    "graphify query",
+    "--budget 1200",
+    "graphify explain",
+    "graphify path",
+    "discovery tooling only",
+    "scripts/agent_context.py",
+    "Graphify usage",
+    "do not dump",
+    "production/CI",
+)
 QUALITY_COMMANDS = (
     "uv lock --check",
     "uv sync --frozen --group dev",
@@ -116,6 +136,14 @@ def main() -> int:
         if phrase.casefold() in prompt.casefold():
             failures.append(f"PROMPT_FOR_CODEX.md regressed to unconditional loading: {phrase}")
 
+    for relative_path in GRAPHIFY_WORKFLOW_FILES:
+        _require_contains(
+            failures,
+            relative_path,
+            _read(relative_path),
+            GRAPHIFY_WORKFLOW_MARKERS,
+        )
+
     dependencies = tomllib.loads(_read("pyproject.toml"))["project"]["dependencies"]
     if any("graphify" in str(dependency).casefold() for dependency in dependencies):
         failures.append("Graphify must not be a production runtime dependency")
@@ -140,6 +168,7 @@ def main() -> int:
     print(
         "Agent context guard passed "
         f"({len(REQUIRED_AGENT_DOCS)} routing docs, {len(REQUIRED_SKILLS)} skills, "
+        f"{len(GRAPHIFY_WORKFLOW_FILES)} Graphify workflow contracts, "
         f"AGENTS.md={len(agents.encode('utf-8'))} bytes)"
     )
     return 0

@@ -3,7 +3,7 @@
 This file contains starting facts only. Historical fixes and verification evidence remain in
 `docs/STATUS.md` and `docs/HANDOFF_REPORT.md`.
 
-- Package version: `1.3.4`; Python baseline: 3.14 or newer; dependencies are locked by `uv.lock`.
+- Package version: `1.3.5`; Python baseline: 3.14 or newer; dependencies are locked by `uv.lock`.
 - Runtime topology: separate aiogram bot and ARQ worker, Redis for transient queue/cache state,
   SQLite/WAL for durable state, and optional dedicated Local Telegram Bot API service.
 - Media engines: yt-dlp behind the sole Python adapter; gallery-dl 1.32.8 behind an isolated strict
@@ -15,7 +15,7 @@ This file contains starting facts only. Historical fixes and verification eviden
   fallback chain, HTTP status, retry history, stage, sanitized reason) rendered to administrators;
   every payload passes the central diagnostic sanitizer.
 - Cookie Health Center: network-free static checks plus lightweight authenticated probes with
-  bounded concurrency, persisted state-transition alert deduplication, a local expiry watcher,
+  bounded concurrency, persisted state-transition alert deduplication, a sparse interval-gated watcher,
   and runtime auth-failure alerts. Bulk Instagram Stories/Highlight jobs gate on definitive
   cookie failure states; UNVERIFIED never blocks and real auth failures update health immediately.
 - Public video choices are actual native AV1/H.264 MP4 or VP9 WebM plans. `best_original` is
@@ -32,4 +32,3 @@ This file contains starting facts only. Historical fixes and verification eviden
   still fails non-zero.
 - Tasks T001 through T013 are implemented. Before changing an established feature, load its relevant
   task file and current detailed status section rather than treating this summary as history.
-

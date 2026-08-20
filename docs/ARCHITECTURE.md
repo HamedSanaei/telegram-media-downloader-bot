@@ -74,6 +74,12 @@ requested explicitly as JSON Lines and strictly parsed as gallery-dl message tup
 semantic mode, stable asset IDs, and normalized metadata. The worker re-inspects the post before
 download so signed/expiring asset URLs are never durable.
 
+A non-empty malformed event stream is an upstream output-contract failure. A successful process
+that emits no events is instead unavailable/inaccessible content; HTTP/auth/rate details from
+stderr retain their typed failure semantics. Instagram `img_index` is carousel presentation state,
+so the engine inspects the canonical full post and stores only the removed parameter name, never
+its value or tracking payload.
+
 The router tries gallery-dl only for its supported social sources. An image-containing result makes
 it owner of the post plan; a typed no-images result selects yt-dlp. For mixed Instagram posts,
 gallery-dl is invoked with `extractor.instagram.videos=false` in an isolated image sub-workspace,
@@ -165,6 +171,13 @@ hard-link backup in the private `.cookie-backups` directory, writes/fsyncs a sam
 temporary file with the original owner/group/mode, and uses `os.replace`. Unrelated raw lines are
 retained byte-for-byte; neither the application result nor structured logs contains cookie names,
 values, domains, filenames, contents, or backup paths.
+
+Static cookie health uses that same provider registry. Matching session records prove presence but
+not authentication and therefore report `UNVERIFIED`, never `MISSING`. Replacement is verified for
+canonical bytes, uploaded identities, provider counts, mode and POSIX ownership before success;
+verification failure atomically restores the backup. The admin flow immediately persists a static
+refresh for only the detected providers. The periodic worker combines sparse ARQ wake-up minutes,
+the configured monotonic interval gate, and an in-process single-flight lock.
 
 ## File isolation
 

@@ -85,7 +85,10 @@ def canonicalize_media_url(url: str) -> MediaUrlIntent:
             )
             return MediaUrlIntent(original_url=canonical, canonical_url=canonical)
     if parsed.scheme.casefold() in {"http", "https"} and hostname in _INSTAGRAM_HOSTS:
-        return _canonicalize_instagram(parsed.path)
+        return _canonicalize_instagram(
+            parsed.path,
+            parse_qsl(parsed.query, keep_blank_values=True),
+        )
     if parsed.scheme.casefold() not in {"http", "https"} or hostname not in _YOUTUBE_HOSTS:
         return MediaUrlIntent(original_url=candidate, canonical_url=candidate)
 
@@ -134,7 +137,7 @@ def canonicalize_media_url(url: str) -> MediaUrlIntent:
     )
 
 
-def _canonicalize_instagram(path: str) -> MediaUrlIntent:
+def _canonicalize_instagram(path: str, query: list[tuple[str, str]]) -> MediaUrlIntent:
     """Canonicalize Instagram share/tracking URLs before routing (Part D contract).
 
     - Post/Reel/Story with an explicit media identity keep the identity and drop the query.
@@ -145,11 +148,13 @@ def _canonicalize_instagram(path: str) -> MediaUrlIntent:
     - A bare story-account URL (no media id) stays distinct and is rejected as bulk by the
       gallery adapter.
     """
+    removed = tuple(dict.fromkeys(key.casefold() for key, _value in query))
     if _INSTAGRAM_HIGHLIGHT_PATTERN.fullmatch(path) is not None:
         canonical = f"https://www.instagram.com{path.rstrip('/')}/"
         return MediaUrlIntent(
             original_url=canonical,
             canonical_url=canonical,
+            removed_query_parameters=removed,
             instagram_kind="highlight",
         )
     story = _INSTAGRAM_STORY_PATTERN.fullmatch(path)
@@ -158,6 +163,7 @@ def _canonicalize_instagram(path: str) -> MediaUrlIntent:
         return MediaUrlIntent(
             original_url=canonical,
             canonical_url=canonical,
+            removed_query_parameters=removed,
             instagram_kind="story",
         )
     if _INSTAGRAM_STORY_ACCOUNT_PATTERN.fullmatch(path) is not None:
@@ -165,6 +171,7 @@ def _canonicalize_instagram(path: str) -> MediaUrlIntent:
         return MediaUrlIntent(
             original_url=canonical,
             canonical_url=canonical,
+            removed_query_parameters=removed,
             instagram_kind="story_account",
         )
     post = _INSTAGRAM_POST_PATTERN.fullmatch(path)
@@ -178,6 +185,7 @@ def _canonicalize_instagram(path: str) -> MediaUrlIntent:
         return MediaUrlIntent(
             original_url=canonical,
             canonical_url=canonical,
+            removed_query_parameters=removed,
             instagram_kind=kind,
         )
     avatar = _INSTAGRAM_AVATAR_PATTERN.fullmatch(path)
@@ -186,6 +194,7 @@ def _canonicalize_instagram(path: str) -> MediaUrlIntent:
         return MediaUrlIntent(
             original_url=canonical,
             canonical_url=canonical,
+            removed_query_parameters=removed,
             instagram_kind="avatar",
         )
     profile = _INSTAGRAM_PROFILE_PATTERN.fullmatch(path)
@@ -194,6 +203,7 @@ def _canonicalize_instagram(path: str) -> MediaUrlIntent:
         return MediaUrlIntent(
             original_url=canonical,
             canonical_url=canonical,
+            removed_query_parameters=removed,
             instagram_kind="profile",
         )
     # Unknown Instagram path: keep the path, drop tracking query, and leave routing to adapters.
@@ -201,6 +211,7 @@ def _canonicalize_instagram(path: str) -> MediaUrlIntent:
     return MediaUrlIntent(
         original_url=canonical,
         canonical_url=canonical,
+        removed_query_parameters=removed,
         instagram_kind="unsupported",
     )
 

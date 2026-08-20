@@ -77,12 +77,24 @@ class NetscapeCookieManager:
                 uploaded_lines = _parse_document(uploaded, upload=True)
                 merged, summary = _merge_documents(current_lines, uploaded_lines)
                 backup = self._create_atomic_backup(metadata)
+                replacement_completed = False
                 try:
                     self._replace_atomically(merged, metadata)
-                except Exception:
+                    replacement_completed = True
+                    self._verify_replacement(
+                        expected=merged,
+                        original_metadata=metadata,
+                        uploaded_lines=uploaded_lines,
+                        summary=summary,
+                    )
+                except Exception as exc:
                     # The canonical path is unchanged until os.replace succeeds. Keep the durable
-                    # backup for operator recovery when any pre-replacement step fails.
-                    raise
+                    # backup for operator recovery and restore it if post-write verification fails.
+                    if replacement_completed and self._path.exists():
+                        self._restore_backup(backup, metadata)
+                    if isinstance(exc, CookieManagementError):
+                        raise
+                    raise CookieStoreWriteError("cookie post-write verification failed") from exc
                 _fsync_directory(backup.parent)
                 return summary
             except CookieManagementError:
@@ -131,7 +143,9 @@ class NetscapeCookieManager:
                 safe_reason=sanitize_exception_message(str(exc)) or "cookie file is malformed",
                 permission_ok=permission_ok,
             )
-        valid_records: list[tuple[int, str]] = []
+        matching_records = 0
+        persistent_expiries: list[int] = []
+        session_records = 0
         malformed = 0
         domains = cookie_provider_domains(provider)
         for line in lines:
@@ -140,16 +154,18 @@ class NetscapeCookieManager:
                 continue
             if not _matches_provider_domain(record.domain, domains):
                 continue
+            matching_records += 1
             try:
                 expires = int(record.content.split("\t")[4])
             except IndexError, ValueError:
                 malformed += 1
                 continue
             if expires == 0:
-                # Session cookies expire when the browser closes; treat as long-lived.
+                # The record exists, but a static check cannot prove its lifetime or auth state.
+                session_records += 1
                 continue
-            valid_records.append((expires, record.domain))
-        if malformed and not valid_records:
+            persistent_expiries.append(expires)
+        if malformed and matching_records == malformed:
             return StaticCookieCheck(
                 provider=provider,
                 status=CookieHealthState.MALFORMED,
@@ -158,7 +174,7 @@ class NetscapeCookieManager:
                 safe_reason="provider cookie records are malformed",
                 permission_ok=permission_ok,
             )
-        if not valid_records:
+        if matching_records == 0:
             return StaticCookieCheck(
                 provider=provider,
                 status=CookieHealthState.MISSING,
@@ -167,13 +183,39 @@ class NetscapeCookieManager:
                 safe_reason="no provider-domain cookie records found",
                 permission_ok=permission_ok,
             )
-        expires_sorted = sorted(expires for expires, _domain in valid_records)
-        earliest = _expiry_datetime(expires_sorted[0])
-        latest = _expiry_datetime(expires_sorted[-1])
+        if not persistent_expiries:
+            return StaticCookieCheck(
+                provider=provider,
+                status=CookieHealthState.UNVERIFIED,
+                file_ok=True,
+                record_count=matching_records,
+                malformed_record_count=malformed,
+                safe_reason="provider cookies exist but have no persistent expiry",
+                permission_ok=permission_ok,
+            )
+        now_epoch = int(checked_at.timestamp())
+        usable_expiries = sorted(expiry for expiry in persistent_expiries if expiry > now_epoch)
+        if not usable_expiries:
+            status = CookieHealthState.UNVERIFIED if session_records else CookieHealthState.EXPIRED
+            return StaticCookieCheck(
+                provider=provider,
+                status=status,
+                file_ok=True,
+                record_count=matching_records,
+                earliest_expiry=_expiry_datetime(min(persistent_expiries)),
+                latest_expiry=_expiry_datetime(max(persistent_expiries)),
+                malformed_record_count=malformed,
+                safe_reason=(
+                    "provider cookies exist but only session records may remain usable"
+                    if session_records
+                    else "no usable persistent provider cookies remain"
+                ),
+                permission_ok=permission_ok,
+            )
+        earliest = _expiry_datetime(usable_expiries[0])
+        latest = _expiry_datetime(usable_expiries[-1])
         earliest_epoch = int(earliest.timestamp()) if earliest is not None else None
-        if earliest_epoch is not None and earliest_epoch <= int(checked_at.timestamp()):
-            status = CookieHealthState.EXPIRED
-        elif (
+        if (
             earliest_epoch is not None
             and earliest_epoch - checked_at.timestamp() <= expiring_soon_hours * 3600
         ):
@@ -184,13 +226,61 @@ class NetscapeCookieManager:
             provider=provider,
             status=status,
             file_ok=True,
-            record_count=len(valid_records),
+            record_count=matching_records,
             earliest_expiry=earliest,
             latest_expiry=latest,
             malformed_record_count=malformed,
             safe_reason=None,
             permission_ok=permission_ok,
         )
+
+    def _verify_replacement(
+        self,
+        *,
+        expected: bytes,
+        original_metadata: os.stat_result,
+        uploaded_lines: list[_CookieLine],
+        summary: CookieUpdateSummary,
+    ) -> None:
+        actual, metadata = self._read_store_snapshot()
+        if actual != expected:
+            raise CookieStoreWriteError("canonical cookie bytes failed verification")
+        if stat.S_IMODE(metadata.st_mode) != stat.S_IMODE(original_metadata.st_mode):
+            raise CookieStoreWriteError("canonical cookie mode changed during update")
+        if os.name == "posix" and (
+            metadata.st_uid != original_metadata.st_uid
+            or metadata.st_gid != original_metadata.st_gid
+        ):
+            raise CookieStoreWriteError("canonical cookie ownership changed during update")
+        actual_lines = _parse_document(actual, upload=False)
+        actual_records = {
+            line.record.key: line.record
+            for line in actual_lines
+            if line.record is not None and line.record.service in summary.services
+        }
+        uploaded_records = {
+            line.record.key: line.record
+            for line in uploaded_lines
+            if line.record is not None and line.record.service in summary.services
+        }
+        if any(
+            key not in actual_records or actual_records[key].content != record.content
+            for key, record in uploaded_records.items()
+        ):
+            raise CookieStoreWriteError("uploaded cookie identities failed verification")
+        if any(summary.record_count(provider) <= 0 for provider in summary.services):
+            raise CookieStoreWriteError("detected provider has no canonical cookie records")
+
+    def _restore_backup(self, backup: Path, original_metadata: os.stat_result) -> None:
+        try:
+            current_metadata = self._path.stat(follow_symlinks=False)
+            self._replace_atomically(
+                backup.read_bytes(),
+                original_metadata,
+                expected_metadata=current_metadata,
+            )
+        except OSError as exc:
+            raise CookieStoreWriteError("cookie rollback failed") from exc
 
     def _read_store_snapshot(self) -> tuple[bytes, os.stat_result]:
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -246,7 +336,13 @@ class NetscapeCookieManager:
             raise CookieStoreWriteError("atomic cookie backup failed") from exc
         return backup
 
-    def _replace_atomically(self, content: bytes, metadata: os.stat_result) -> None:
+    def _replace_atomically(
+        self,
+        content: bytes,
+        metadata: os.stat_result,
+        *,
+        expected_metadata: os.stat_result | None = None,
+    ) -> None:
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{self._path.name}.",
             suffix=".tmp",
@@ -261,7 +357,9 @@ class NetscapeCookieManager:
             _preserve_owner(temporary, metadata)
             temporary.chmod(stat.S_IMODE(metadata.st_mode))
             current_metadata = self._path.stat(follow_symlinks=False)
-            if self._path.is_symlink() or not _same_snapshot(metadata, current_metadata):
+            if self._path.is_symlink() or not _same_snapshot(
+                expected_metadata or metadata, current_metadata
+            ):
                 raise CookieStoreWriteError("canonical cookie path changed before replacement")
             _atomic_replace(temporary, self._path)
             _fsync_directory(self._path.parent)
@@ -390,10 +488,30 @@ def _merge_documents(
         output.append(uploaded_records[key].content + default_ending)
 
     services = tuple(service for service in CookieService if service in detected)
+    merged_lines = _parse_document("".join(output).encode("utf-8"), upload=False)
+    provider_counts = tuple(
+        (
+            service,
+            sum(
+                line.record is not None and line.record.service is service for line in merged_lines
+            ),
+        )
+        for service in services
+    )
+    current_record_count = sum(line.record is not None for line in current_lines)
+    new_record_count = sum(line.record is not None for line in merged_lines)
     summary = CookieUpdateSummary(
         services=services,
         replaced=sum(key in existing_keys for key in upload_order),
         added=sum(key not in existing_keys for key in upload_order),
+        uploaded_record_count=len(upload_order),
+        previous_canonical_record_count=current_record_count,
+        new_canonical_record_count=new_record_count,
+        preserved_other_provider_count=sum(
+            line.record is not None and line.record.service not in detected
+            for line in current_lines
+        ),
+        provider_record_counts=provider_counts,
     )
     return "".join(output).encode("utf-8"), summary
 

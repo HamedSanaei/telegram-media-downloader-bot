@@ -56,3 +56,14 @@ class CookieUpdateSummary:
     services: tuple[CookieService, ...]
     replaced: int
     added: int
+    uploaded_record_count: int = 0
+    previous_canonical_record_count: int = 0
+    new_canonical_record_count: int = 0
+    preserved_other_provider_count: int = 0
+    provider_record_counts: tuple[tuple[CookieService, int], ...] = ()
+
+    def record_count(self, provider: CookieService) -> int:
+        return next(
+            (count for service, count in self.provider_record_counts if service is provider),
+            0,
+        )

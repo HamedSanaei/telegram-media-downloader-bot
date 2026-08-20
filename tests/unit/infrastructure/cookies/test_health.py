@@ -62,14 +62,14 @@ def test_expiring_soon_detected(tmp_path: Path) -> None:
     assert check.status is CookieHealthState.EXPIRING_SOON
 
 
-def test_mixed_expiry_uses_earliest(tmp_path: Path) -> None:
+def test_expired_record_does_not_hide_a_usable_persistent_record(tmp_path: Path) -> None:
     content = (
         _HEADER
         + _record(".instagram.com", "sessionid", "s", _expires_in(30))
         + _record(".instagram.com", "csrftoken", "c", _expires_in(-2))
     )
     check = _check(_store(tmp_path, content))
-    assert check.status is CookieHealthState.EXPIRED
+    assert check.status is CookieHealthState.HEALTHY
     assert check.record_count == 2
 
 
@@ -112,8 +112,32 @@ def test_missing_cookie_checker_reports_missing_for_every_provider() -> None:
 
 
 def test_session_cookies_do_not_count_as_expired(tmp_path: Path) -> None:
-    # expires=0 session cookies are long-lived in the Netscape contract.
+    # expires=0 proves the provider record exists, but not its authentication lifetime.
     path = _store(tmp_path, _HEADER + _record(".instagram.com", "sessionid", "s", 0))
     check = _check(path)
-    assert check.status is CookieHealthState.MISSING  # no dated records -> nothing to expire
-    assert check.record_count == 0
+    assert check.status is CookieHealthState.UNVERIFIED
+    assert check.record_count == 1
+
+
+@pytest.mark.parametrize(
+    ("provider", "domain"),
+    [
+        (CookieService.PINTEREST, "pinterest.com"),
+        (CookieService.PINTEREST, "www.pinterest.com"),
+        (CookieService.PINTEREST, ".pinterest.com"),
+        (CookieService.SOUNDCLOUD, "soundcloud.com"),
+        (CookieService.SOUNDCLOUD, "www.soundcloud.com"),
+        (CookieService.SOUNDCLOUD, ".soundcloud.com"),
+    ],
+)
+def test_session_provider_records_are_present_not_missing(
+    tmp_path: Path,
+    provider: CookieService,
+    domain: str,
+) -> None:
+    path = _store(tmp_path, _HEADER + _record(domain, "session", "synthetic", 0))
+
+    check = _check(path, provider=provider)
+
+    assert check.status is CookieHealthState.UNVERIFIED
+    assert check.record_count == 1

@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from time import monotonic
+from typing import Never
 from urllib.parse import urlsplit
 
 import structlog
@@ -21,6 +22,7 @@ from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
     DownloadFailedError,
+    GalleryDlExtractionError,
     GalleryDlOutputChangedError,
     GalleryDlUnavailableError,
     GalleryDlUnsupportedUrlError,
@@ -113,9 +115,7 @@ class GalleryDlEngine:
         if result.return_code != 0:
             self._raise_process_failure(result, provider=provider)
         if _empty_gallery_events(result.stdout):
-            if _is_instagram_story_url(canonical):
-                raise MediaUnavailableError("Instagram story is expired or unavailable")
-            raise GalleryDlOutputChangedError("gallery-dl emitted no JSON Lines events")
+            self._raise_empty_inspection(result, provider=provider, canonical=canonical)
         for transient_url in transient_asset_urls(result.stdout):
             self._validator.validate(transient_url)
         try:
@@ -428,6 +428,38 @@ class GalleryDlEngine:
             exit_classification=type(error).__name__,
             retryable=isinstance(error, (RateLimitedError, DownloadFailedError)),
             elapsed_seconds=round(result.elapsed_seconds, 3),
+        )
+        raise error
+
+    @staticmethod
+    def _raise_empty_inspection(
+        result: GalleryProcessResult,
+        *,
+        provider: str,
+        canonical: str,
+    ) -> Never:
+        error: Exception | None = None
+        if result.stderr.strip():
+            mapped = map_process_failure(result.return_code, result.stderr)
+            if type(mapped) is not GalleryDlExtractionError:
+                error = mapped
+        if error is None:
+            reason = (
+                "Instagram story is expired or unavailable"
+                if _is_instagram_story_url(canonical)
+                else "gallery content is unavailable or inaccessible"
+            )
+            error = MediaUnavailableError(reason)
+        if isinstance(error, MediaBotError) and error.extractor is None:
+            error.extractor = provider
+        logger.warning(
+            "gallery_dl_zero_output",
+            adapter="gallery-dl",
+            extractor=provider,
+            exit_code=result.return_code,
+            stdout_event_count=0,
+            stderr_category=type(error).__name__,
+            stage="extraction",
         )
         raise error
 
