@@ -106,6 +106,12 @@ jobs:
             python -m telegram_media_bot.infrastructure.ytdlp.native_selection_smoke
           docker run --rm telegram-media-downloader-bot:ci \
             python -m telegram_media_bot.telegram.native_ui_smoke
+          docker run --rm --network none --read-only \
+            --tmpfs /data:rw,noexec,nosuid,size=64m,mode=1777,uid=10001,gid=10001 \
+            -v "${PWD}/config.example.yaml:/app/config.example.yaml:ro" \
+            telegram-media-downloader-bot:ci \
+            python -m telegram_media_bot.infrastructure.ytdlp.inspection_workspace_smoke \
+              --config /app/config.example.yaml
           docker run --rm --entrypoint sh telegram-media-downloader-bot:ci -c '
             set -eu
             command -v ffmpeg

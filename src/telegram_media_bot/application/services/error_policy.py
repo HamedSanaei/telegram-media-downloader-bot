@@ -9,6 +9,7 @@ from telegram_media_bot.domain.errors import (
     InstagramCookiesUnavailableError,
     InvalidUrlError,
     JobCancelledError,
+    LocalRuntimeError,
     MediaTooLargeError,
     MediaUnavailableError,
     NativeFormatUnavailableError,
@@ -27,6 +28,8 @@ def error_category(exc: BaseException) -> ErrorCategory:
         return ErrorCategory.AUTHENTICATION
     if isinstance(exc, JobCancelledError):
         return ErrorCategory.CANCELLED
+    if isinstance(exc, LocalRuntimeError):
+        return ErrorCategory.LOCAL_RUNTIME
     if isinstance(exc, DeliveryUncertainError):
         return ErrorCategory.DELIVERY_UNCERTAIN
     if isinstance(exc, (DeliveryError, DeliveryTooLargeError, BatchDeliveryFailedError)):

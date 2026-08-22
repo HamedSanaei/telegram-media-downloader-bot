@@ -1,10 +1,26 @@
 # Project status
 
-Last updated: 2026-08-20
+Last updated: 2026-08-22
 
 ## Release state
 
-Tasks T001 through T013 are implemented. Patch 1.3.5 corrects the production Instagram inspection
+Tasks T001 through T013 are implemented. Patch 1.3.6 repairs the production yt-dlp inspection
+failure on read-only application filesystems without changing
+dependency/runtime topology or the passive Cookie Health architecture: `inspect_options()` now
+gives every inspection a private scratch workspace under the configured storage temp hierarchy
+(`paths.home` and `paths.temp` both set, created before `extract_info()`, removed after the run,
+reclaimed by the orphan sweep if a crash leaks it), so yt-dlp `_check_formats` tempfile usage can
+never fall back to `/app`. Local filesystem failures (EROFS/EACCES/EPERM/ENOSPC and other local
+path/I/O errnos) map to the new typed terminal `LocalRuntimeError` with category
+`local_runtime`, safe path-free reasons carrying only exception class and errno, while network-
+shaped OSErrors keep their retryable remote-failure classification. The yt-dlp engine attaches
+`adapter`, pipeline stage (`inspection`/`extraction`/`download`), and URL-provable source onto
+mapped errors, and workers honor that stage hint whenever no specialized classification exists,
+so admin failure alerts no longer report anonymous "unknown/internal/Media download failed"
+diagnoses for infrastructure failures. A committed network-free
+`inspection_workspace_smoke` module reproduces the production conditions (read-only root
+filesystem, no usable ambient temp dir) inside the real container and is enforced in CI.
+Patch 1.3.5 corrects the production Instagram inspection
 and cookie safety regressions without changing dependency/runtime topology: gallery-dl
 successful-empty Instagram inspections are conservatively unavailable and make no second
 diagnostic request; Pinterest/SoundCloud session cookies are present and UNVERIFIED; canonical

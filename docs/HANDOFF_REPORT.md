@@ -1,6 +1,38 @@
 # Handoff verification report
 
-Generated: 2026-08-16
+Generated: 2026-08-22
+
+## v1.3.6 change addendum
+
+- Production `YtDlpEngine.inspect` failed on the read-only application filesystem with
+  `DownloadFailedError("Media download failed")` caused by `OSError [Errno 30] Read-only file
+  system: '/app/tmp*.tmp'`: with no configured `paths`, yt-dlp `_check_formats` resolved its
+  scratch directory to the process working directory after every ambient temp candidate failed.
+  Inspection now receives a private per-run `inspect-*` workspace under the configured storage
+  temp hierarchy (`paths.home` and `paths.temp` both set, directory created before
+  `extract_info()`, removed in a `finally` block, reclaimed by the orphan sweep if a crash leaks
+  it), so format probing can never fall back to `/app`; download jobs keep their exact existing
+  per-job path configuration and Docker `read_only` security is untouched.
+- Local filesystem failures (EROFS, EACCES/EPERM, ENOSPC, related local path/I/O errnos) map to
+  the typed terminal non-retryable `LocalRuntimeError` (category `local_runtime`) with safe,
+  path-free reasons carrying only the original exception class and errno; network-shaped OSErrors
+  keep their retryable remote classification, and auth/rate-limit/unavailable mappings are
+  unchanged. The yt-dlp engine attaches adapter, pipeline stage, and URL-provable source onto
+  mapped errors; workers honor that stage hint when no specialized classification exists, so the
+  administrator alert shows `stage: inspection / adapter: yt-dlp / local_runtime / [Errno 30]`
+  instead of "unknown/internal/Media download failed".
+- A committed network-free `inspection_workspace_smoke` reproduces the exact production
+  conditions inside the real container (read-only rootfs, no usable ambient temp dir): `/app`
+  rejects writes, storage temp is writable, inspection scratch files resolve inside it,
+  `YtDlpEngine.inspect` succeeds for the production YouTube fixture without any `/app/tmp*.tmp`,
+  and the run leaves nothing behind. The smoke is enforced in CI's Docker job. Cookie Health
+  remains passive/local with zero automatic provider probes.
+- Verification: Windows pytest 670 passed / 81.94% coverage; Linux (WSL) pytest 679 passed /
+  82.05% coverage; Ruff check+format, strict mypy (175 files), architecture boundary,
+  agent-context guard, UTF-8 text integrity, detect-secrets, `uv lock --check`, ShellCheck +
+  `bash -n`, `uv build` + clean-wheel install smoke, pip check all green; one controlled live
+  contract inspection of `https://youtu.be/qRk26ZpZZMQ` passed. Nothing was committed, pushed,
+  tagged, published, or deployed during preparation.
 
 ## v1.3.5 change addendum
 

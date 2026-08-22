@@ -144,7 +144,7 @@ def _project_version() -> str:
     try:
         return version("telegram-media-downloader-bot")
     except PackageNotFoundError:
-        return "1.3.5"
+        return "1.3.6"
 
 
 APP_VERSION = _project_version()
@@ -1230,6 +1230,12 @@ def _failure_stage_for_exception(exc: MediaBotError) -> FailureStage:
         return FailureStage.DOWNLOAD
     if isinstance(exc, GalleryDlOutputChangedError):
         return FailureStage.EXTRACTION
+    # The failing adapter may attach the precise pipeline stage for everything else (for
+    # example inspection/extraction/download attribution from the yt-dlp engine); without a
+    # specialized classification above, that hint beats reporting an anonymous "unknown".
+    attached = getattr(exc, "failure_stage", None)
+    if isinstance(attached, FailureStage):
+        return attached
     return FailureStage.UNKNOWN
 
 

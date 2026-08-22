@@ -1,24 +1,30 @@
 from __future__ import annotations
 
+import errno
+import tempfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
 
+from telegram_media_bot.application.services.error_policy import error_category
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     DownloadFailedError,
     JobCancelledError,
+    LocalRuntimeError,
     MediaTooLargeError,
     MediaUnavailableError,
     RateLimitedError,
     UnsafeUrlError,
 )
+from telegram_media_bot.domain.failures import FailureStage
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
     DownloadRequest,
+    ErrorCategory,
     JobId,
     MediaKind,
     NativeVideoCodec,
@@ -683,6 +689,202 @@ def test_upstream_errors_are_translated(
     settings = _without_dns_checks(settings)
     with pytest.raises(RateLimitedError):
         engine_module.YtDlpEngine(settings).inspect("https://example.test/media")
+
+
+class _YtDlpWrapperError(Exception):
+    """Mirror of yt-dlp's DownloadError cause-chain shape (``exc_info`` tuple)."""
+
+    def __init__(self, cause: BaseException) -> None:
+        super().__init__(f"unable to download format: {cause}")
+        self.exc_info = (type(cause), cause, None)
+
+
+def test_inspection_scratch_files_resolve_into_storage_temp_not_the_application_cwd(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Regression B: a read-only application cwd never receives inspection temp files."""
+    app_root = tmp_path / "application-root"
+    app_root.mkdir()
+    monkeypatch.chdir(app_root)
+    captured: dict[str, Any] = {}
+
+    class ProbeYoutubeDL(FakeYoutubeDL):
+        def __init__(self, options: dict[str, Any]) -> None:
+            super().__init__(options)
+            captured["options"] = options
+
+        def extract_info(self, _url: str, *, download: bool) -> dict[str, Any]:
+            # Replicates YoutubeDL._check_formats scratch resolution (yt-dlp 2026.07.04):
+            # get_output_path('temp') joins paths['home'] with paths['temp']; an empty
+            # result makes NamedTemporaryFile fall back to the process working directory.
+            paths = self.options.get("paths") or {}
+            resolved = str(Path(str(paths.get("home") or "")) / str(paths.get("temp") or ""))
+            captured["temp_dir"] = Path(resolved) if resolved else None
+            with tempfile.NamedTemporaryFile(
+                suffix=".tmp", delete=False, dir=resolved or None
+            ) as handle:
+                captured["scratch"] = Path(handle.name)
+            return dict(self.info)
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", ProbeYoutubeDL)
+    configured = _without_dns_checks(settings)
+
+    engine_module.YtDlpEngine(configured).inspect("https://example.test/media")
+
+    temp_root = configured.storage.temp_path()
+    scratch_dir = captured["temp_dir"]
+    assert scratch_dir is not None
+    assert scratch_dir.is_relative_to(temp_root)
+    assert not scratch_dir.is_relative_to(app_root)
+    assert Path(captured["scratch"]).is_relative_to(temp_root)
+    # The private inspection workspace is removed after the run.
+    assert not any(temp_root.glob("inspect-*"))
+    # The simulated application source directory gained no files.
+    assert list(app_root.iterdir()) == []
+
+
+_YOUTUBE_FIXTURE_INFO: dict[str, Any] = {
+    "id": "qRk26ZpZZMQ",
+    "title": "Representative YouTube fixture",
+    "extractor_key": "Youtube",
+    "webpage_url": "https://www.youtube.com/watch?v=qRk26ZpZZMQ",
+    "duration": 212,
+    "thumbnail": "https://i.ytimg.com/vi/qRk26ZpZZMQ/maxresdefault.jpg",
+    "vcodec": "avc1.640028",
+    "acodec": "mp4a.40.2",
+    "ext": "mp4",
+    "formats": [
+        {
+            "format_id": "140",
+            "ext": "m4a",
+            "vcodec": "none",
+            "acodec": "mp4a.40.2",
+            "filesize": 3_300_000,
+        },
+        {
+            "format_id": "137",
+            "ext": "mp4",
+            "vcodec": "avc1.640028",
+            "acodec": "none",
+            "height": 1080,
+            "width": 1920,
+            "fps": 30,
+            "filesize": 61_000_000,
+        },
+    ],
+}
+
+
+class _YouTubeProbeYoutubeDL(FakeYoutubeDL):
+    """Inspect fake that requires yt-dlp-style format-probe scratch files to succeed."""
+
+    info: ClassVar[dict[str, Any]] = _YOUTUBE_FIXTURE_INFO
+
+    def build_format_selector(self, selector: str) -> Any:
+        if selector.startswith("bestaudio"):
+            return lambda context: iter(
+                item for item in reversed(context["formats"]) if item["acodec"] != "none"
+            )
+
+        def video_audio(context: dict[str, Any]) -> Any:
+            videos = [item for item in context["formats"] if item["vcodec"] != "none"]
+            audios = [item for item in context["formats"] if item["acodec"] != "none"]
+            if not videos or not audios:
+                return iter(())
+            return iter(({"requested_formats": [videos[-1], audios[-1]]},))
+
+        return video_audio
+
+    def extract_info(self, _url: str, *, download: bool) -> dict[str, Any]:
+        temp_dir = (self.options.get("paths") or {}).get("temp") or None
+        assert temp_dir is not None, "inspection must configure a writable temp path"
+        # Format probing (_check_formats) creates and writes a scratch file before metadata
+        # processing can complete.
+        with tempfile.NamedTemporaryFile(suffix=".tmp", delete=False, dir=temp_dir) as handle:
+            handle.write(b"probe")
+            scratch = Path(handle.name)
+        try:
+            assert scratch.read_bytes() == b"probe"
+        finally:
+            scratch.unlink(missing_ok=True)
+        return dict(self.info)
+
+
+def test_youtube_fixture_inspection_succeeds_with_required_format_probe_tempfiles(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression D: representative YouTube inspection survives required tempfile usage."""
+    monkeypatch.setattr(engine_module, "YoutubeDL", _YouTubeProbeYoutubeDL)
+    configured = _without_dns_checks(settings)
+
+    info = engine_module.YtDlpEngine(configured).inspect("https://youtu.be/qRk26ZpZZMQ")
+
+    assert info.media_id == "qRk26ZpZZMQ"
+    assert info.source == "youtube"
+    assert info.kind is MediaKind.VIDEO
+    assert info.format_options
+    assert DownloadMode.VIDEO_1080 in {option.mode for option in info.format_options}
+    # No inspection workspace is left behind under the storage temp root.
+    assert not any(configured.storage.temp_path().glob("inspect-*"))
+
+
+def test_read_only_filesystem_failure_maps_to_typed_local_runtime_error(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression E: the production EROFS failure keeps its real cause and attribution."""
+
+    class ReadOnlyWorkspaceYoutubeDL(FakeYoutubeDL):
+        def extract_info(self, _url: str, *, download: bool) -> dict[str, Any]:
+            cause = OSError(errno.EROFS, "Read-only file system", "/app/tmp1qe12lbf.tmp")
+            raise _YtDlpWrapperError(cause)
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", ReadOnlyWorkspaceYoutubeDL)
+    configured = _without_dns_checks(settings)
+
+    with pytest.raises(LocalRuntimeError) as excinfo:
+        engine_module.YtDlpEngine(configured).inspect("https://youtu.be/qRk26ZpZZMQ")
+
+    error = excinfo.value
+    assert not isinstance(error, DownloadFailedError)
+    assert error.retryable is False
+    assert error.os_errno == errno.EROFS
+    assert error.adapter == "yt-dlp"
+    assert error.failure_stage is FailureStage.INSPECTION
+    assert error.source == "youtube"
+    assert error_category(error) is ErrorCategory.LOCAL_RUNTIME
+    assert "[Errno 30]" in str(error)
+    assert "/app" not in str(error)
+    assert "tmp1qe12lbf" not in str(error)
+    # The private inspection workspace is cleaned up even on failure.
+    assert not any(configured.storage.temp_path().glob("inspect-*"))
+
+
+def test_download_failures_carry_download_stage_attribution(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class DownloadFailureYoutubeDL(FakeYoutubeDL):
+        def extract_info(self, _url: str, *, download: bool) -> dict[str, Any]:
+            raise RuntimeError("unexpected upstream interruption")
+
+    monkeypatch.setattr(engine_module, "YoutubeDL", DownloadFailureYoutubeDL)
+    configured = _without_dns_checks(settings)
+
+    with pytest.raises(DownloadFailedError) as excinfo:
+        engine_module.YtDlpEngine(configured).download(
+            DownloadRequest(
+                job_id=JobId("stage-attr"),
+                url="https://example.test/media",
+                mode=DownloadMode.BEST,
+                output_directory=configured.storage.downloads_path() / "stage-attr",
+            )
+        )
+
+    assert excinfo.value.adapter == "yt-dlp"
+    assert excinfo.value.failure_stage is FailureStage.DOWNLOAD
 
 
 def test_cancellation_stops_before_upstream_download(settings: Settings) -> None:

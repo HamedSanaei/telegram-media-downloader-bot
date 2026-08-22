@@ -167,6 +167,8 @@ class ErrorCategory(StrEnum):
     UNSUPPORTED_GALLERY_URL = "unsupported_gallery_url"
     GALLERY_COOKIES_EXPIRED = "gallery_cookies_expired"
     GALLERY_EXTRACTION = "gallery_extraction"
+    #: Local application-environment failure (workspace/filesystem/runtime), never remote.
+    LOCAL_RUNTIME = "local_runtime"
 
 
 class DeliveryMethod(StrEnum):

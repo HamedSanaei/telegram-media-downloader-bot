@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.3.6 - 2026-08-22
+
+### Fixed
+
+- Repair the production yt-dlp inspection failure on the read-only application filesystem.
+  `inspect_options()` now creates a private per-run scratch workspace beneath the configured
+  storage temp hierarchy and points both yt-dlp `paths.home` and `paths.temp` at it, so format
+  probing (`_check_formats` tempfile usage) can never fall back to the process working directory
+  (`/app`) on a read-only root filesystem. The workspace is removed when the run finishes and the
+  orphan sweep reclaims it after the grace period if a crash leaks it; download jobs keep their
+  exact existing per-job path configuration.
+- Classify local infrastructure failures honestly instead of masquerading as remote provider
+  failures. Filesystem OSErrors (EROFS, EACCES/EPERM, ENOSPC, and related local path/I/O errnos)
+  map to a new typed terminal `LocalRuntimeError` with category `local_runtime`, safe path-free
+  reasons carrying only the original exception class and errno, while network-shaped OSErrors
+  (timeouts, connection reset/refused) keep their retryable remote-failure classification and all
+  auth/rate-limit/unavailable mappings are unchanged.
+- Preserve real failure context in administrator diagnostics: the yt-dlp engine attaches
+  adapter, pipeline stage (`inspection`/`extraction`/`download`), and URL-provable source onto
+  mapped errors, and workers honor that stage hint whenever no specialized classification exists.
+  A local runtime failure no longer reports "stage: unknown / category: internal / Media download
+  failed" to administrators.
+
+### Operations
+
+- Add a committed, network-free `inspection_workspace_smoke` module that reproduces the exact
+  production conditions inside the real container (read-only root filesystem, no usable ambient
+  temp directory) and proves `/app` stays read-only, storage temp is writable, inspection scratch
+  files resolve inside it, and `YtDlpEngine.inspect` succeeds without touching `/app`; enforced in
+  CI's Docker job. No Cookie Health behavior changed: refresh remains passive/local with zero
+  automatic provider probes.
+
 ## 1.3.5 - 2026-08-20
 
 ### Fixed

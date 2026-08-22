@@ -194,7 +194,11 @@ Each job uses:
 ```
 
 No user-provided title becomes a directory name. Output paths are resolved and checked beneath the
-configured root.
+configured root. yt-dlp inspection additionally receives a private scratch workspace (an
+`inspect-*` directory created per run under `/data/temp/`) and both `paths.home` and `paths.temp`
+point at it, so format-probe temporary files can never fall back to the read-only application
+directory; the engine deletes it when the run finishes, and the orphan sweep reclaims it after
+the grace period if a crash leaks it.
 
 Interrupted `running` jobs are requeued on startup. Jobs interrupted during `delivering` become
 `delivery_uncertain`; automatic retry is blocked because Telegram has no upload idempotency key.

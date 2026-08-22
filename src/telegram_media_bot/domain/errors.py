@@ -1,3 +1,4 @@
+from telegram_media_bot.domain.failures import FailureStage
 from telegram_media_bot.domain.models import RequiredChannel
 
 
@@ -28,6 +29,10 @@ class MediaBotError(Exception):
         #: Adapter fallback chain when the router fell back to another engine.
         self.fallback_chain: tuple[str, ...] | None = None
         self.fallback_reason: str | None = None
+        #: Pipeline-stage hint (FailureStage) attached by the failing adapter when it knows
+        #: where the failure happened. Workers honor specialized exception-class stages first
+        #: and use this hint only when no better classification exists.
+        self.failure_stage: FailureStage | None = None
 
 
 class ConfigurationError(MediaBotError):
@@ -72,6 +77,38 @@ class PlaylistNotAllowedError(MediaBotError):
 
 class DownloadFailedError(MediaBotError):
     retryable = True
+
+
+class LocalRuntimeError(MediaBotError):
+    """A local application-environment failure, never a remote media failure.
+
+    Unwritable temporary workspaces, permission problems, and exhausted local storage must
+    not masquerade as provider download failures: they are infrastructure conditions the
+    operator has to resolve locally, so they are terminal and non-retryable.
+    """
+
+    retryable = False
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        os_errno: int | None = None,
+        source: str | None = None,
+        http_status: int | None = None,
+        adapter: str | None = None,
+        extractor: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            source=source,
+            http_status=http_status,
+            adapter=adapter,
+            extractor=extractor,
+        )
+        #: Errno of the underlying OS error when one was observed; safe numeric evidence
+        #: that keeps diagnostics useful without exposing filesystem paths or secrets.
+        self.os_errno = os_errno
 
 
 class PostProcessingError(MediaBotError):

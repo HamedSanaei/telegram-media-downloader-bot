@@ -1,3 +1,4 @@
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from telegram_media_bot.infrastructure.ytdlp.options import (
     bounded_format_selector,
     final_media_files,
     inspect_format_option,
+    remove_inspection_workspace,
     video_target_height,
 )
 
@@ -39,6 +41,60 @@ def test_inspect_options_do_not_download(settings: Settings) -> None:
     options = YtDlpOptionsFactory(settings).inspect_options()
     assert options["skip_download"] is True
     assert options["noplaylist"] is False
+
+
+def test_inspect_options_configure_writable_storage_temp_location(
+    settings: Settings,
+) -> None:
+    """Inspection scratch files can never fall back to the (read-only) application cwd."""
+    options = YtDlpOptionsFactory(settings).inspect_options()
+
+    paths = options["paths"]
+    temp_dir = Path(paths["temp"])
+    # Both home and temp are configured so no yt-dlp path resolution reaches the cwd.
+    assert Path(paths["home"]) == temp_dir
+    assert temp_dir.is_relative_to(settings.storage.temp_path())
+    # The directory exists before YoutubeDL.extract_info() runs.
+    assert temp_dir.is_dir()
+    assert not temp_dir.is_relative_to(Path.cwd())
+    remove_inspection_workspace(options)
+    assert not temp_dir.exists()
+
+
+def test_each_inspection_receives_a_private_workspace(settings: Settings) -> None:
+    factory = YtDlpOptionsFactory(settings)
+    first = factory.inspect_options()
+    second = factory.inspect_options()
+
+    first_workspace = Path(first["paths"]["temp"])
+    second_workspace = Path(second["paths"]["temp"])
+    assert first_workspace != second_workspace
+    assert first_workspace.parent == second_workspace.parent
+    # Private workspaces never collide with per-job workspace naming.
+    assert first_workspace.name.startswith("inspect-")
+    remove_inspection_workspace(first)
+    remove_inspection_workspace(second)
+    assert not first_workspace.exists()
+    assert not second_workspace.exists()
+
+
+def test_inspection_temp_location_supports_ytdlp_check_formats_scratch_files(
+    settings: Settings,
+) -> None:
+    """Replicates yt-dlp ``_check_formats`` scratch-file usage against the configured path."""
+    options = YtDlpOptionsFactory(settings).inspect_options()
+    temp_dir = str(Path(options["paths"]["temp"]))
+
+    with tempfile.NamedTemporaryFile(suffix=".tmp", delete=False, dir=temp_dir) as handle:
+        handle.write(b"probe")
+        scratch = Path(handle.name)
+
+    try:
+        assert scratch.parent == Path(temp_dir)
+        assert scratch.read_bytes() == b"probe"
+    finally:
+        scratch.unlink(missing_ok=True)
+    remove_inspection_workspace(options)
 
 
 def test_single_youtube_video_inspection_forces_noplaylist(settings: Settings) -> None:
@@ -72,6 +128,24 @@ def test_semantic_mode_maps_to_configured_selector(settings: Settings, tmp_path:
     assert "max_filesize" not in options
     assert "exec" not in options
     assert "external_downloader" not in options
+
+
+def test_download_options_keep_job_owned_paths(settings: Settings, tmp_path: Path) -> None:
+    """Download path configuration is unchanged by the inspection workspace fix."""
+    job_dir = tmp_path / "job-workspace"
+    request = DownloadRequest(
+        job_id=JobId("job"),
+        url="https://example.test/video",
+        mode=DownloadMode.BEST,
+        output_directory=job_dir,
+    )
+
+    options = YtDlpOptionsFactory(settings).download_options(request)
+
+    assert Path(options["paths"]["home"]) == job_dir
+    assert Path(options["paths"]["temp"]) == job_dir / ".tmp"
+    # Download jobs keep their private per-job temp; they do not share the inspection root.
+    assert not Path(options["paths"]["temp"]).is_relative_to(settings.storage.temp_path())
 
 
 def test_audio_mp3_adds_audio_postprocessor(settings: Settings, tmp_path: Path) -> None:

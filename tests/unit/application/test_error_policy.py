@@ -7,6 +7,7 @@ from telegram_media_bot.domain.errors import (
     GeoRestrictedError,
     InvalidUrlError,
     JobCancelledError,
+    LocalRuntimeError,
     MediaTooLargeError,
     MediaUnavailableError,
     NativeFormatUnavailableError,
@@ -23,6 +24,7 @@ from telegram_media_bot.domain.models import ErrorCategory
     [
         (AuthenticationRequiredError(), ErrorCategory.AUTHENTICATION),
         (JobCancelledError(), ErrorCategory.CANCELLED),
+        (LocalRuntimeError("workspace failure"), ErrorCategory.LOCAL_RUNTIME),
         (DeliveryError(), ErrorCategory.DELIVERY),
         (GeoRestrictedError(), ErrorCategory.GEO_RESTRICTED),
         (InvalidUrlError(), ErrorCategory.INVALID_URL),

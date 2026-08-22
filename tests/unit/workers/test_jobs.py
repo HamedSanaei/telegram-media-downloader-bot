@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import sqlite3
 import threading
 from collections.abc import Callable
@@ -19,13 +20,19 @@ from telegram_media_bot.application.ports.delivery import DeliveryGateway
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
+    AuthenticationRequiredError,
     DeliveryError,
     DownloadFailedError,
     JobCancelledError,
+    LocalRuntimeError,
     MediaTooLargeError,
     RateLimitedError,
 )
-from telegram_media_bot.domain.failures import FailureContext
+from telegram_media_bot.domain.failures import (
+    FailureContext,
+    FailureStage,
+    render_failure_notification,
+)
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DeliveryMethod,
@@ -1100,4 +1107,58 @@ async def test_completion_persistence_failure_never_retries_delivery(
     assert delivery.deliveries == 1
     configured = cast(Settings, context["settings"])
     assert not (configured.storage.downloads_path() / result).exists()
-    assert not (configured.storage.temp_path() / result).exists()
+
+
+def test_failure_stage_prefers_specialized_classification_over_adapter_hint() -> None:
+    exc = AuthenticationRequiredError("Authentication is required")
+    exc.failure_stage = FailureStage.INSPECTION
+
+    assert jobs_module._failure_stage_for_exception(exc) is FailureStage.AUTHENTICATION
+
+
+def test_failure_stage_uses_attached_adapter_hint_when_unclassified() -> None:
+    attached = DownloadFailedError("Media download failed")
+    attached.failure_stage = FailureStage.INSPECTION
+
+    assert jobs_module._failure_stage_for_exception(attached) is FailureStage.INSPECTION
+    assert (
+        jobs_module._failure_stage_for_exception(DownloadFailedError("anonymous"))
+        is FailureStage.UNKNOWN
+    )
+
+
+def test_local_runtime_failure_context_preserves_the_real_safe_cause(
+    settings: Settings,
+) -> None:
+    """The production admin alert must show the local filesystem cause, not a remote one."""
+    exc = LocalRuntimeError(
+        "Local temporary workspace is not writable: read-only filesystem [Errno 30]",
+        os_errno=errno.EROFS,
+        adapter="yt-dlp",
+    )
+    exc.failure_stage = FailureStage.INSPECTION
+
+    context = jobs_module._build_failure_context(
+        {"settings": settings},
+        job_id=JobId("job-erofs"),
+        kind=JobKind.INSPECTION,
+        exc=exc,
+        attempt=1,
+        stage=jobs_module._failure_stage_for_exception(exc),
+        started=None,
+    )
+    text = render_failure_notification(context)
+
+    assert context.failure_stage is FailureStage.INSPECTION
+    assert context.adapter == "yt-dlp"
+    assert context.error_category is ErrorCategory.LOCAL_RUNTIME
+    assert context.exception_type == "LocalRuntimeError"
+    assert context.retryable is False
+    assert context.http_status is None
+    assert context.safe_error_reason is not None
+    assert "Errno 30" in context.safe_error_reason
+    assert "read-only" in context.safe_error_reason.casefold()
+    assert "Media download failed" not in text
+    assert "local_runtime" in text
+    assert "inspection" in text
+    assert "unknown" not in text

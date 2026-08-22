@@ -14,7 +14,10 @@ from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as ytdlp_version
 
 from telegram_media_bot.application.ports.download_engine import CancellationCheck, ProgressSink
-from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
+from telegram_media_bot.application.services.url_canonicalization import (
+    MediaUrlIntent,
+    canonicalize_media_url,
+)
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     DownloadFailedError,
@@ -23,6 +26,7 @@ from telegram_media_bot.domain.errors import (
     MediaTooLargeError,
     MediaUnavailableError,
 )
+from telegram_media_bot.domain.failures import FailureStage
 from telegram_media_bot.domain.models import (
     ComponentHealth,
     ContainerPolicy,
@@ -54,6 +58,7 @@ from telegram_media_bot.infrastructure.ytdlp.options import (
     final_media_files,
     inspect_format_option,
     native_container_selector,
+    remove_inspection_workspace,
     video_target_height,
 )
 from telegram_media_bot.infrastructure.ytdlp.transcoder import (
@@ -105,17 +110,19 @@ class YtDlpEngine:
         if intent.youtube_video_id is not None:
             logger.info("youtube_url_canonicalized", **intent.log_fields)
         try:
-            with YoutubeDL(
-                self._options.inspect_options(single_video=intent.single_video_forced)
-            ) as ydl:
-                raw = ydl.extract_info(intent.canonical_url, download=False)
-                format_options = self._inspect_format_options(ydl, raw)
-                info = self._sanitize(ydl, raw)
+            options = self._options.inspect_options(single_video=intent.single_video_forced)
+            try:
+                with YoutubeDL(options) as ydl:
+                    raw = ydl.extract_info(intent.canonical_url, download=False)
+                    format_options = self._inspect_format_options(ydl, raw)
+                    info = self._sanitize(ydl, raw)
+            finally:
+                remove_inspection_workspace(options)
             self._validate_info_urls(info)
         except MediaBotError:
             raise
         except Exception as exc:
-            raise map_ytdlp_error(exc) from exc
+            raise self._map_failure(exc, FailureStage.INSPECTION, intent) from exc
         mapped = map_media_info(info, original_url=intent.canonical_url)
         artwork_options = list(format_options)
         if mapped.thumbnail_url is not None and mapped.source == "youtube":
@@ -426,7 +433,7 @@ class YtDlpEngine:
         except Exception as exc:
             if isinstance(exc, MediaBotError):
                 raise
-            raise map_ytdlp_error(exc) from exc
+            raise self._map_failure(exc, FailureStage.DOWNLOAD, None) from exc
 
     def download_instagram_video_children(
         self,
@@ -528,14 +535,17 @@ class YtDlpEngine:
             options = self._options.inspect_options(single_video=False)
             # This path deliberately inspects the extractor's raw playlist. Processing the
             # entries would ask yt-dlp to treat Instagram photo children as videos.
-            with YoutubeDL(options) as ydl:
-                raw = ydl.extract_info(intent.canonical_url, download=False, process=False)
-                info = self._sanitize(ydl, raw)
+            try:
+                with YoutubeDL(options) as ydl:
+                    raw = ydl.extract_info(intent.canonical_url, download=False, process=False)
+                    info = self._sanitize(ydl, raw)
+            finally:
+                remove_inspection_workspace(options)
             self._validate_info_urls(info)
         except MediaBotError:
             raise
         except Exception as exc:
-            raise map_ytdlp_error(exc) from exc
+            raise self._map_failure(exc, FailureStage.EXTRACTION, None) from exc
 
         entries = info.get("entries")
         if (
@@ -584,6 +594,28 @@ class YtDlpEngine:
 
     def health(self) -> ComponentHealth:
         return ComponentHealth(name="yt_dlp", healthy=True, detail=ytdlp_version)
+
+    def _map_failure(
+        self,
+        exc: Exception,
+        stage: FailureStage,
+        intent: MediaUrlIntent | None,
+    ) -> Exception:
+        """Map an upstream exception and attach this adapter's safe diagnostic evidence.
+
+        Attribution (adapter, pipeline stage, and the source when the URL already proves it)
+        travels on the typed error into retries and the terminal admin notification, so a
+        local runtime failure can never surface as an anonymous provider failure.
+        """
+        mapped = map_ytdlp_error(exc)
+        if isinstance(mapped, MediaBotError):
+            if mapped.adapter is None:
+                mapped.adapter = "yt-dlp"
+            if mapped.failure_stage is None:
+                mapped.failure_stage = stage
+            if mapped.source is None and intent is not None and intent.youtube_video_id:
+                mapped.source = "youtube"
+        return mapped
 
     def _transcode_options(self) -> dict[str, Any]:
         settings = self._settings.media.transcode

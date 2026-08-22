@@ -21,7 +21,7 @@
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic access, required-channel membership, and rate policy |
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
-| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, including strict raw-entry Instagram mixed-carousel video resolution, zero-transcode AV1/H.264 MP4 and VP9 WebM selection, narrow Twitter HLS audio-metadata inference, native/inline compatibility probing, and bounded explicit transcoding |
+| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, including strict raw-entry Instagram mixed-carousel video resolution, zero-transcode AV1/H.264 MP4 and VP9 WebM selection, narrow Twitter HLS audio-metadata inference, native/inline compatibility probing, bounded explicit transcoding, private per-inspection scratch workspaces under the configured storage temp root (read-only-app-filesystem safe), and a network-free read-only-container inspection smoke |
 | `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, explicit JSON Lines event contract, bounded output/cancellation, strict non-empty vendor tuple parsing/error mapping, successful-empty unavailable classification, stable asset normalization, and safe original-image download with Instagram videos disabled when required. The typed result model carries IMAGE/VIDEO/mixed collections (Stories, Reels, video posts, avatar) without conflating "no images" with "no media" |
 | `src/telegram_media_bot/infrastructure/media_engine_router.py` | Inspection-result routing and fail-closed mixed Instagram merge: validate/download canonical yt-dlp video children before gallery-dl images, then merge exact source ordinals |
 | `src/telegram_media_bot/infrastructure/image_validation.py` | Pillow signature/format/dimension/decompression-bomb validation without altering originals |
@@ -78,7 +78,9 @@
 - `infrastructure/ytdlp/transcoder.py`: separate native-container and inline-streamability probes,
   quality-first MP4 H.264/AAC and WebM VP9/Opus conversion, and size-limited fallback;
 - `infrastructure/ytdlp/mapper.py`: upstream metadata to `MediaInfo`;
-- `infrastructure/ytdlp/error_mapper.py`: upstream errors to project exceptions.
+- `infrastructure/ytdlp/error_mapper.py`: upstream errors to project exceptions; local filesystem
+  failures (EROFS/EACCES/ENOSPC and related errnos) map to terminal `LocalRuntimeError`
+  (`local_runtime`), never to remote download failures.
 
 ## Durable state ownership
 

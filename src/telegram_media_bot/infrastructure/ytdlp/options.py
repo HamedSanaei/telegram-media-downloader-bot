@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import tempfile
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
@@ -47,7 +49,20 @@ class YtDlpOptionsFactory:
         self._settings = settings
 
     def inspect_options(self, *, single_video: bool = False) -> dict[str, Any]:
+        """Build options for metadata-only inspection.
+
+        yt-dlp's format probing (``_check_formats``) writes its scratch files under the
+        configured ``temp`` output path and silently falls back to the process working
+        directory (or the ambient temp resolution) when it is unset, which fails on the
+        read-only application filesystem used in production. Every inspection therefore
+        receives a private workspace beneath the configured writable storage temp root, and
+        both ``home`` and ``temp`` point at it so no yt-dlp path resolution can fall back to
+        the working directory. Callers must delete the workspace with
+        :func:`remove_inspection_workspace` when the ``YoutubeDL`` run finishes; the
+        maintenance sweep reclaims it as an ordinary orphan if a crash leaks it.
+        """
         options = self._base_options()
+        workspace = self._create_inspection_workspace()
         options.update(
             {
                 "skip_download": True,
@@ -57,9 +72,21 @@ class YtDlpOptionsFactory:
                     self._settings.media.instagram.max_videos,
                 ),
                 "noplaylist": single_video,
+                "paths": {"home": str(workspace), "temp": str(workspace)},
             }
         )
         return options
+
+    def _create_inspection_workspace(self) -> Path:
+        """Create a unique writable scratch directory for one inspection run.
+
+        The directory lives under the canonical configured storage temp hierarchy, is owned
+        by the runtime user that creates it, never collides with per-job workspaces (which
+        are named by job id), and is removed by the caller after the run.
+        """
+        root = self._settings.storage.temp_path()
+        root.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix="inspect-", dir=root))
 
     def download_options(
         self,
@@ -177,6 +204,29 @@ class YtDlpOptionsFactory:
         if self._settings.yt_dlp.embed_thumbnail:
             processors.append({"key": "EmbedThumbnail"})
         return processors
+
+
+def inspection_workspace_path(options: Mapping[str, Any]) -> Path | None:
+    """Return the private inspection workspace embedded in ``inspect_options()`` output."""
+    paths = options.get("paths")
+    if not isinstance(paths, Mapping):
+        return None
+    home = paths.get("home")
+    if not isinstance(home, str) or not home:
+        return None
+    return Path(home)
+
+
+def remove_inspection_workspace(options: Mapping[str, Any]) -> None:
+    """Delete the private inspection workspace created for one ``YoutubeDL`` run.
+
+    Removal is best-effort: a leftover directory is reclaimed by the maintenance sweep as an
+    ordinary orphan after the configured grace period.
+    """
+    workspace = inspection_workspace_path(options)
+    if workspace is None:
+        return
+    shutil.rmtree(workspace, ignore_errors=True)
 
 
 def bounded_format_selector(
