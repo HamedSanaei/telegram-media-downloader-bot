@@ -39,7 +39,15 @@ jobs:
       - run: uv run mypy src tests
       - run: uv run pre-commit run detect-secrets --all-files
       - run: uv run pip check
-      - run: uv run pip-audit --local --skip-editable --progress-spinner off
+      # PYSEC-2026-3721 affects the uv-seeded bootstrap pip (<26.2) that pip-audit scans in
+      # --local mode. Tooling pip is not a locked runtime dependency, so refresh it inside the
+      # job environment right before auditing instead of weakening or skipping the audit.
+      # --no-sync is required on both steps: a plain "uv run" would restore the seeded
+      # vulnerable pip before the audit executes.
+      - name: Upgrade seeded tooling pip above the audited vulnerability floor
+        run: uv run --no-sync python -m pip install --upgrade "pip>=26.2"
+      - run: >-
+          uv run --no-sync pip-audit --local --skip-editable --progress-spinner off
       - run: uv build
       - name: Verify wheel, sdist, font license, and clean wheel install
         run: uv run python scripts/check_package_assets.py --install-smoke
