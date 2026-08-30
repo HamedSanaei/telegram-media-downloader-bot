@@ -4,6 +4,8 @@ This file contains starting facts only. Historical fixes and verification eviden
 `docs/STATUS.md` and `docs/HANDOFF_REPORT.md`.
 
 - Package version: `1.3.8`; Python baseline: 3.14 or newer; dependencies are locked by `uv.lock`.
+- Release v1.3.7 is withdrawn. Installers, updaters, archive construction, and publication reject
+  it as a target while preserving the v1.3.7-to-v1.3.8+ forward-recovery path.
 - Runtime topology: separate aiogram bot and ARQ worker, Redis for transient queue/cache state,
   SQLite/WAL for durable state, and optional dedicated Local Telegram Bot API service.
 - Media engines: yt-dlp behind the sole Python adapter; gallery-dl 1.32.8 behind an isolated strict

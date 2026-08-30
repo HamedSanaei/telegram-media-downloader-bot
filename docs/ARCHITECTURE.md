@@ -313,6 +313,16 @@ with a read-only container root, read-only `config.yaml`, and the project's pers
 mounted read-only at `/data`. This mirrors runtime path visibility and UID/GID without permitting
 changes to cookies, SQLite, downloads, or Local Bot API state.
 
+Fresh installers and Linux/Windows updaters carry a small embedded snapshot of the canonical
+`release-policy.json` denylist because each bootstrap must remain independently executable. Tests
+require all snapshots to match the canonical file. A requested blocked tag fails before download;
+the verified archive's package version is checked independently so aliases cannot bypass the
+policy. Candidate rejection occurs before install/configuration/state mutation, image pull, or
+service stop. The policy applies to the target, never the installed version, which preserves a
+forward-recovery path from a withdrawn release. Publication and archive construction consult the
+canonical policy directly. A hosted revocation service is intentionally unnecessary for this
+single known withdrawal and would add a new availability/trust dependency to recovery tooling.
+
 The updater records the exact running set of `bot`, `worker`, `local-api`, and `redis`, then stops
 only running filesystem writers (`bot`, `worker`, and `local-api`). Redis remains online in its
 persistent named volume. The resulting private backup is written to a same-directory temporary

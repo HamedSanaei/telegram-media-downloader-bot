@@ -76,7 +76,7 @@ if [[ "$*" == *"telegram-media-bot doctor"* ]] \
   [[ "$*" == *"run --rm --read-only --user 10001:10001"* ]] || exit 89
   [[ "$*" == *"--tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777"* ]] || exit 90
   [[ "$*" == *"--offline"* ]] || exit 98
-  [[ "$*" == *"--expected-version 1.0.3"* ]] || exit 99
+  [[ "$*" == *"--expected-version ${TMB_TEST_RELEASE_VERSION:-1.0.3}"* ]] || exit 99
   if [[ "${TMB_INTERRUPT_PREFLIGHT:-0}" == "1" ]]; then
     printf 'Traceback (most recent call last):\nKeyboardInterrupt\n' >&2
     kill -INT "$PPID"
@@ -130,7 +130,7 @@ if [[ "$*" == *" ps -a -q"* ]]; then
   printf 'stopped-project-container\n'
 fi
 if [[ "$*" == *"run --rm --no-deps worker python -c"* ]]; then
-  printf '1.0.3\n'
+  printf '%s\n' "${TMB_TEST_RELEASE_VERSION:-1.0.3}"
 fi
 if [[ "$*" == *"operations.update.prune_old_project_images_after_success"* ]]; then
   printf 'true\n'
@@ -280,7 +280,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 [[ -n "$destination" ]]
-printf 'version = "1.0.3"\n' >"$destination/pyproject.toml"
+printf 'version = "%s"\n' "${TMB_TEST_RELEASE_VERSION:-1.0.3}" \
+  >"$destination/pyproject.toml"
 printf 'services: {}\n' >"$destination/docker-compose.yml"
 mkdir -p "$destination/data/state" "$destination/data/cookies" "$destination/data/downloads"
 mkdir -p "$destination/scripts/tests"
@@ -894,6 +895,157 @@ run_cleanup_dry_run_case() {
   fi
 }
 
+run_blocked_updater_requested_case() {
+  local requested_tag="$1" case_name="${1#v}"
+  local case_root="$TEST_ROOT/blocked-updater-requested-$case_name"
+  local log="$case_root/operations.log" output="$case_root/update-output.log"
+  prepare_case "$case_root"
+  : >"$log"
+  cp "$case_root/.env" "$case_root/.env.expected"
+  cp "$case_root/config.yaml" "$case_root/config.yaml.expected"
+  cp "$case_root/pyproject.toml" "$case_root/pyproject.toml.expected"
+  cp "$case_root/data/state/jobs.sqlite3" "$case_root/jobs.sqlite3.expected"
+  cp "$case_root/data/cookies/cookies.txt" "$case_root/cookies.txt.expected"
+  cp "$case_root/running-services" "$case_root/running-services.expected"
+  if (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" TMB_RELEASE_TAG="$requested_tag" \
+      bash scripts/tmb.sh update
+  ) >"$output" 2>&1; then
+    fail "requested blocked updater tag $requested_tag unexpectedly succeeded"
+  fi
+  grep -q 'critical Telegram durable-polling crash bug' "$output" \
+    || fail "requested blocked updater tag $requested_tag lacked guidance"
+  [[ ! -s "$log" ]] \
+    || fail "requested blocked updater tag $requested_tag performed an external operation"
+  cmp "$case_root/.env.expected" "$case_root/.env" \
+    || fail "requested blocked updater tag $requested_tag changed .env"
+  cmp "$case_root/config.yaml.expected" "$case_root/config.yaml" \
+    || fail "requested blocked updater tag $requested_tag changed config"
+  cmp "$case_root/pyproject.toml.expected" "$case_root/pyproject.toml" \
+    || fail "requested blocked updater tag $requested_tag changed application files"
+  cmp "$case_root/jobs.sqlite3.expected" "$case_root/data/state/jobs.sqlite3" \
+    || fail "requested blocked updater tag $requested_tag changed persistent state"
+  cmp "$case_root/cookies.txt.expected" "$case_root/data/cookies/cookies.txt" \
+    || fail "requested blocked updater tag $requested_tag changed cookies"
+  cmp "$case_root/running-services.expected" "$case_root/running-services" \
+    || fail "requested blocked updater tag $requested_tag changed service/Redis state"
+}
+
+run_blocked_updater_candidate_case() {
+  local case_root="$TEST_ROOT/blocked-updater-candidate"
+  local log="$case_root/operations.log" output="$case_root/update-output.log"
+  prepare_case "$case_root"
+  cp "$case_root/.env" "$case_root/.env.expected"
+  cp "$case_root/config.yaml" "$case_root/config.yaml.expected"
+  cp "$case_root/pyproject.toml" "$case_root/pyproject.toml.expected"
+  cp "$case_root/data/state/jobs.sqlite3" "$case_root/jobs.sqlite3.expected"
+  cp "$case_root/data/cookies/cookies.txt" "$case_root/cookies.txt.expected"
+  cp "$case_root/running-services" "$case_root/running-services.expected"
+  if (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" TMB_RELEASE_TAG="candidate-alias" \
+      TMB_TEST_RELEASE_VERSION="1.3.7" bash scripts/tmb.sh update
+  ) >"$output" 2>&1; then
+    fail "blocked updater candidate version unexpectedly succeeded"
+  fi
+  grep -q 'critical Telegram durable-polling crash bug' "$output" \
+    || fail "blocked updater candidate version lacked guidance"
+  if grep -Eq 'docker .* (stop|pull|up|run) |^tar -czf' "$log"; then
+    fail "blocked updater candidate reached image, backup, or service operations"
+  fi
+  cmp "$case_root/.env.expected" "$case_root/.env" \
+    || fail "blocked updater candidate changed .env"
+  cmp "$case_root/config.yaml.expected" "$case_root/config.yaml" \
+    || fail "blocked updater candidate changed config"
+  cmp "$case_root/pyproject.toml.expected" "$case_root/pyproject.toml" \
+    || fail "blocked updater candidate changed application files"
+  cmp "$case_root/jobs.sqlite3.expected" "$case_root/data/state/jobs.sqlite3" \
+    || fail "blocked updater candidate changed persistent state"
+  cmp "$case_root/cookies.txt.expected" "$case_root/data/cookies/cookies.txt" \
+    || fail "blocked updater candidate changed cookies"
+  cmp "$case_root/running-services.expected" "$case_root/running-services" \
+    || fail "blocked updater candidate changed service/Redis state"
+}
+
+run_blocked_installer_requested_case() {
+  local requested_tag="$1" case_name="${1#v}"
+  local case_root="$TEST_ROOT/blocked-installer-requested-$case_name"
+  local log="$case_root/operations.log" output="$case_root/install-output.log"
+  prepare_case "$case_root"
+  : >"$log"
+  if PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+    TMB_CASE_ROOT="$case_root" TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+    TMB_RELEASE_TAG="$requested_tag" \
+    bash "$SOURCE_ROOT/install.sh" >"$output" 2>&1; then
+    fail "requested blocked installer tag $requested_tag unexpectedly succeeded"
+  fi
+  grep -q 'critical Telegram durable-polling crash bug' "$output" \
+    || fail "requested blocked installer tag $requested_tag lacked guidance"
+  [[ ! -s "$log" ]] \
+    || fail "requested blocked installer tag $requested_tag performed an external operation"
+}
+
+run_blocked_installer_candidate_case() {
+  local case_root="$TEST_ROOT/blocked-installer-candidate"
+  local log="$case_root/operations.log" output="$case_root/install-output.log"
+  local install_root="$case_root/fresh-install"
+  prepare_case "$case_root"
+  cat >"$case_root/fake-bin/sudo" <<'EOF'
+#!/usr/bin/env bash
+printf 'sudo %s\n' "$*" >>"$TMB_TEST_LOG"
+"$@"
+EOF
+  chmod +x "$case_root/fake-bin/sudo"
+  if printf '%s\n\n' "$install_root" | \
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_CASE_ROOT="$case_root" TMB_SOURCE_ROOT="$SOURCE_ROOT" \
+      TMB_RELEASE_TAG="candidate-alias" TMB_TEST_RELEASE_VERSION="1.3.7" \
+      TMB_BIN_DIR="$case_root/bin" bash "$SOURCE_ROOT/install.sh" \
+      >"$output" 2>&1; then
+    fail "blocked installer candidate version unexpectedly succeeded"
+  fi
+  grep -q 'critical Telegram durable-polling crash bug' "$output" \
+    || fail "blocked installer candidate version lacked guidance"
+  [[ ! -e "$install_root" ]] \
+    || fail "blocked installer candidate created the application path"
+  if grep -Eq '^(docker|sudo) ' "$log"; then
+    fail "blocked installer candidate reached system, image, or service operations"
+  fi
+}
+
+run_allowed_forward_update_case() {
+  local installed_version="$1" release_version="$2"
+  local case_root="$TEST_ROOT/allowed-$installed_version-to-$release_version"
+  local log="$case_root/operations.log"
+  prepare_case "$case_root"
+  printf 'version = "%s"\n' "$installed_version" >"$case_root/pyproject.toml"
+  sed -i \
+    "s|^TMB_IMAGE=.*|TMB_IMAGE=$IMAGE_REPOSITORY_PLACEHOLDER:$installed_version|" \
+    "$case_root/.env"
+  cp "$case_root/config.yaml" "$case_root/config.yaml.expected"
+  cp "$case_root/data/state/jobs.sqlite3" "$case_root/jobs.sqlite3.expected"
+  (
+    cd "$case_root"
+    PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
+      TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
+      TMB_SOURCE_ROOT="$SOURCE_ROOT" TMB_RELEASE_TAG="v$release_version" \
+      TMB_TEST_RELEASE_VERSION="$release_version" bash scripts/tmb.sh update
+  )
+  grep -q "^TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:$release_version$" \
+    "$case_root/.env" || fail "allowed update to $release_version was not installed"
+  grep -q 'docker .* stop -t 45 bot worker local-api' "$log" \
+    || fail "allowed update to $release_version did not complete the transaction"
+  cmp "$case_root/config.yaml.expected" "$case_root/config.yaml" \
+    || fail "allowed update to $release_version changed config"
+  cmp "$case_root/jobs.sqlite3.expected" "$case_root/data/state/jobs.sqlite3" \
+    || fail "allowed update to $release_version changed persistent state"
+}
+
 run_success_case
 run_missing_cookie_preflight_case
 run_unreadable_cookie_preflight_case
@@ -911,4 +1063,13 @@ run_all_stopped_case
 run_mixed_service_state_case
 run_real_backup_archive_case
 run_cleanup_dry_run_case
+run_blocked_updater_requested_case "v1.3.7"
+run_blocked_updater_requested_case "1.3.7"
+run_blocked_updater_candidate_case
+run_blocked_installer_requested_case "v1.3.7"
+run_blocked_installer_requested_case "1.3.7"
+run_blocked_installer_candidate_case
+IMAGE_REPOSITORY_PLACEHOLDER="example.invalid/tmb"
+run_allowed_forward_update_case "1.3.7" "1.3.8"
+run_allowed_forward_update_case "1.3.8" "1.3.9"
 echo "Linux tmb update recovery tests passed."

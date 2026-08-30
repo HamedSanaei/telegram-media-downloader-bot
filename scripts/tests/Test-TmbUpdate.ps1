@@ -14,7 +14,11 @@ function Invoke-UpdateCase {
     param(
         [string]$Name,
         [bool]$FailChecksum,
-        [bool]$FailDownload = $false
+        [bool]$FailDownload = $false,
+        [string]$InstalledVersion = "1.0.2",
+        [string]$CandidateVersion = "1.0.3",
+        [string]$RequestedTag = "",
+        [bool]$ExpectBlocked = $false
     )
     $CaseRoot = Join-Path $TestRoot $Name
     $ScriptDirectory = Join-Path $CaseRoot "scripts"
@@ -53,12 +57,12 @@ telegram:
     )
     [System.IO.File]::WriteAllText(
         (Join-Path $CaseRoot ".env"),
-        "TMB_IMAGE=example.invalid/tmb:1.0.2`nCOMPOSE_PROFILES=local-api`nAPP_UID=10001`nAPP_GID=10001`nTMB_WORKER_CPUS=1.5`n",
+        "TMB_IMAGE=example.invalid/tmb:$InstalledVersion`nCOMPOSE_PROFILES=local-api`nAPP_UID=10001`nAPP_GID=10001`nTMB_WORKER_CPUS=1.5`n",
         $Utf8NoBom
     )
     [System.IO.File]::WriteAllText(
         (Join-Path $CaseRoot "pyproject.toml"),
-        'version = "1.0.2"',
+        "version = `"$InstalledVersion`"",
         $Utf8NoBom
     )
     "sqlite-v1-state" | Set-Content -Encoding ascii `
@@ -71,9 +75,18 @@ telegram:
         (Join-Path $CaseRoot "data/downloads/large.mp4")
 
     $PreviousLocation = Get-Location
+    $PreviousRequestedTag = $env:TMB_RELEASE_TAG
+    $CaughtMessage = ""
     try {
+        $env:TMB_RELEASE_TAG = $RequestedTag
         & {
-            param($ScriptPath, $OperationLog, $ShouldFailChecksum, $ShouldFailDownload)
+            param(
+                $ScriptPath,
+                $OperationLog,
+                $ShouldFailChecksum,
+                $ShouldFailDownload,
+                $ReleaseVersion
+            )
 
             function docker {
                 $Joined = $args -join " "
@@ -103,7 +116,7 @@ telegram:
                     Write-Output "healthy"
                 }
                 elseif ($Joined -match "run --rm --no-deps worker python -c") {
-                    Write-Output "1.0.3"
+                    Write-Output $ReleaseVersion
                 }
                 elseif ($Joined -match "operations\.update\.prune_old_project_images") {
                     Write-Output "true"
@@ -169,7 +182,7 @@ telegram:
                 $null = $LiteralPath, $Force
                 $Payload = Join-Path $DestinationPath "telegram-media-downloader-bot"
                 New-Item -ItemType Directory -Force $Payload | Out-Null
-                'version = "1.0.3"' | Set-Content -Encoding utf8 `
+                "version = `"$ReleaseVersion`"" | Set-Content -Encoding utf8 `
                     (Join-Path $Payload "pyproject.toml")
                 "services: {}" | Set-Content -Encoding utf8 `
                     (Join-Path $Payload "docker-compose.yml")
@@ -197,37 +210,69 @@ telegram:
             }
 
             . $ScriptPath update
-        } (Join-Path $ScriptDirectory "tmb.ps1") $LogPath $FailChecksum $FailDownload
-        if ($FailChecksum -or $FailDownload) {
+        } (Join-Path $ScriptDirectory "tmb.ps1") $LogPath $FailChecksum $FailDownload `
+            $CandidateVersion
+        if ($FailChecksum -or $FailDownload -or $ExpectBlocked) {
             throw "Expected update failure unexpectedly succeeded."
         }
     }
     catch {
-        if (-not ($FailChecksum -or $FailDownload)) { throw }
+        $CaughtMessage = $_.Exception.Message
+        if (-not ($FailChecksum -or $FailDownload -or $ExpectBlocked)) { throw }
     }
     finally {
+        $env:TMB_RELEASE_TAG = $PreviousRequestedTag
         Set-Location $PreviousLocation
     }
 
     $EnvironmentText = Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot ".env")
     $VersionText = Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "pyproject.toml")
-    $Log = @(Get-Content -Encoding utf8 $LogPath)
-    if ($FailChecksum -or $FailDownload) {
-        Assert-True ($EnvironmentText -match "example\.invalid/tmb:1\.0\.2") `
-            "checksum failure did not restore the previous image"
-        Assert-True ($VersionText -match 'version = "1.0.2"') `
+    $Log = if (Test-Path -LiteralPath $LogPath) {
+        @(Get-Content -Encoding utf8 $LogPath)
+    }
+    else {
+        @()
+    }
+    if ($FailChecksum -or $FailDownload -or $ExpectBlocked) {
+        Assert-True ($EnvironmentText -match [regex]::Escape("example.invalid/tmb:$InstalledVersion")) `
+            "preflight failure changed the previous image"
+        Assert-True ($VersionText -match [regex]::Escape("version = `"$InstalledVersion`"")) `
             "unverified release content was installed"
-        Assert-True (-not ($Log -match " pull$")) "pull ran after checksum failure"
-        Assert-True ([bool]($Log -match " up -d --no-build bot worker local-api$")) `
-            "previous stack was not restarted"
+        Assert-True (-not ($Log -match " (pull|stop|up|run)($| )")) `
+            "preflight failure reached image or service operations"
+        Assert-True (-not ($Log -match "^backup ")) `
+            "preflight failure created a backup"
+        Assert-True (
+            (Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "config.yaml")) -match
+            "V1_CONFIG_SENTINEL"
+        ) "preflight failure changed config"
+        Assert-True (
+            (Get-Content -Raw -Encoding ascii (
+                Join-Path $CaseRoot "data/state/jobs.sqlite3"
+            )) -match "sqlite-v1-state"
+        ) "preflight failure changed or deleted SQLite state"
+        Assert-True (
+            (Get-Content -Raw -Encoding ascii (
+                Join-Path $CaseRoot "data/cookies/cookies.txt"
+            )) -match "cookies-v1-state"
+        ) "preflight failure changed cookies"
+        Assert-True (
+            (Get-Content -Raw -Encoding ascii (
+                Join-Path $CaseRoot "data/telegram-bot-api/state.bin"
+            )) -match "local-api-v1-state"
+        ) "preflight failure changed durable Local API state"
+        if ($ExpectBlocked) {
+            Assert-True ($CaughtMessage -match "critical Telegram durable-polling crash bug") `
+                "blocked release lacked clear operator guidance"
+        }
         return
     }
-    Assert-True ($EnvironmentText -match "telegram-media-downloader-bot:1\.0\.3") `
+    Assert-True ($EnvironmentText -match [regex]::Escape("telegram-media-downloader-bot:$CandidateVersion")) `
         "successful update did not pin the verified version"
     $NormalizedEnvironment = $EnvironmentText.Replace("`r`n", "`n").TrimEnd()
     Assert-True (
         $NormalizedEnvironment -eq
-        "TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.0.3`nCOMPOSE_PROFILES=local-api`nAPP_UID=10001`nAPP_GID=10001`nTMB_WORKER_CPUS=1.5"
+        "TMB_IMAGE=ghcr.io/hamedsanaei/telegram-media-downloader-bot:$CandidateVersion`nCOMPOSE_PROFILES=local-api`nAPP_UID=10001`nAPP_GID=10001`nTMB_WORKER_CPUS=1.5"
     ) "update changed .env beyond TMB_IMAGE"
     $configText = Get-Content -Raw -Encoding utf8 (Join-Path $CaseRoot "config.yaml")
     Assert-True ($configText -match "V1_CONFIG_SENTINEL") `
@@ -262,11 +307,11 @@ telegram:
         "durable state was not backed up"
     Assert-True (-not ($Log -match "backup .*data/downloads")) `
         "runtime downloads were copied into the backup"
-    $StopIndex = [array]::IndexOf($Log, ($Log -match " stop bot worker local-api$")[0])
+    $StopIndex = [array]::IndexOf($Log, ($Log -match " stop -t 45 bot worker local-api$")[0])
     $BackupIndex = [array]::IndexOf($Log, ($Log -match "^backup ")[0])
     $DownloadIndex = [array]::IndexOf($Log, ($Log -match "^download ")[0])
-    Assert-True ($StopIndex -lt $BackupIndex -and $BackupIndex -lt $DownloadIndex) `
-        "stop, consistent backup, and download ordering is wrong"
+    Assert-True ($DownloadIndex -lt $StopIndex -and $StopIndex -lt $BackupIndex) `
+        "download, service stop, and consistent backup ordering is wrong"
     Assert-True ([bool]($Log -match " up -d --no-build --force-recreate bot worker local-api$")) `
         "successful update did not recreate the stack"
     Assert-True ([bool]($Log -match "run --rm --no-deps worker python -c")) `
@@ -287,10 +332,120 @@ telegram:
         "unsafe global prune command was used"
 }
 
+function Invoke-InstallerBlockedCase {
+    param(
+        [string]$Name,
+        [string]$RequestedTag,
+        [string]$CandidateVersion = "1.0.3"
+    )
+    $CaseRoot = Join-Path $TestRoot $Name
+    $OperationLog = Join-Path $CaseRoot "operations.log"
+    New-Item -ItemType Directory -Force $CaseRoot | Out-Null
+    $PreviousLocalAppData = $env:LOCALAPPDATA
+    $PreviousUserProfile = $env:USERPROFILE
+    $PreviousRequestedTag = $env:TMB_RELEASE_TAG
+    $CaughtMessage = ""
+    try {
+        $env:LOCALAPPDATA = Join-Path $CaseRoot "local-app-data"
+        $env:USERPROFILE = Join-Path $CaseRoot "user-profile"
+        $env:TMB_RELEASE_TAG = $RequestedTag
+        & {
+            param($ScriptPath, $LogPath, $ReleaseVersion)
+
+            function Invoke-WebRequest {
+                param(
+                    [switch]$UseBasicParsing,
+                    [Parameter(Position = 0)]
+                    [string]$Uri,
+                    [string]$OutFile
+                )
+                $null = $UseBasicParsing
+                Add-Content -Encoding utf8 $LogPath "download $Uri"
+                if ($OutFile -like "*.sha256") {
+                    "abc  telegram-media-downloader-bot.zip" |
+                        Set-Content -Encoding ascii $OutFile
+                }
+                else {
+                    "fixture" | Set-Content -Encoding ascii $OutFile
+                }
+            }
+
+            function Get-FileHash {
+                param(
+                    [string]$Algorithm,
+                    [Parameter(Position = 0)]
+                    [string]$LiteralPath
+                )
+                $null = $Algorithm, $LiteralPath
+                return [pscustomobject]@{ Hash = "abc" }
+            }
+
+            function Expand-Archive {
+                param(
+                    [string]$LiteralPath,
+                    [string]$DestinationPath,
+                    [switch]$Force
+                )
+                $null = $LiteralPath, $Force
+                $Payload = Join-Path $DestinationPath "telegram-media-downloader-bot"
+                New-Item -ItemType Directory -Force $Payload | Out-Null
+                "version = `"$ReleaseVersion`"" | Set-Content -Encoding utf8 `
+                    (Join-Path $Payload "pyproject.toml")
+            }
+
+            function docker {
+                Add-Content -Encoding utf8 $LogPath ("docker " + ($args -join " "))
+                $global:LASTEXITCODE = 0
+            }
+
+            . $ScriptPath
+        } (Join-Path $SourceRoot "install.ps1") $OperationLog $CandidateVersion
+        throw "Expected blocked installer release unexpectedly succeeded."
+    }
+    catch {
+        $CaughtMessage = $_.Exception.Message
+    }
+    finally {
+        $env:LOCALAPPDATA = $PreviousLocalAppData
+        $env:USERPROFILE = $PreviousUserProfile
+        $env:TMB_RELEASE_TAG = $PreviousRequestedTag
+    }
+
+    Assert-True ($CaughtMessage -match "critical Telegram durable-polling crash bug") `
+        "blocked installer release lacked clear operator guidance"
+    $InstallRoot = Join-Path $CaseRoot "local-app-data/TelegramMediaDownloaderBot"
+    Assert-True (-not (Test-Path -LiteralPath $InstallRoot)) `
+        "blocked installer release created the application path"
+    $Operations = if (Test-Path -LiteralPath $OperationLog) {
+        @(Get-Content -Encoding utf8 $OperationLog)
+    }
+    else {
+        @()
+    }
+    Assert-True (-not ($Operations -match "^docker ")) `
+        "blocked installer release reached image or service operations"
+}
+
 try {
     Invoke-UpdateCase -Name "success" -FailChecksum $false
     Invoke-UpdateCase -Name "checksum-failure" -FailChecksum $true
     Invoke-UpdateCase -Name "download-failure" -FailChecksum $false -FailDownload $true
+    Invoke-UpdateCase -Name "blocked-requested-v" -FailChecksum $false `
+        -RequestedTag "v1.3.7" -ExpectBlocked $true
+    Invoke-UpdateCase -Name "blocked-requested-plain" -FailChecksum $false `
+        -RequestedTag "1.3.7" -ExpectBlocked $true
+    Invoke-UpdateCase -Name "blocked-candidate" -FailChecksum $false `
+        -RequestedTag "candidate-alias" -CandidateVersion "1.3.7" -ExpectBlocked $true
+    Invoke-InstallerBlockedCase -Name "installer-blocked-requested-v" `
+        -RequestedTag "v1.3.7"
+    Invoke-InstallerBlockedCase -Name "installer-blocked-requested-plain" `
+        -RequestedTag "1.3.7"
+    Invoke-InstallerBlockedCase -Name "installer-blocked-candidate" `
+        -RequestedTag "candidate-alias" -CandidateVersion "1.3.7"
+    Invoke-UpdateCase -Name "allowed-1.3.7-to-1.3.8" -FailChecksum $false `
+        -InstalledVersion "1.3.7" -CandidateVersion "1.3.8" -RequestedTag "v1.3.8"
+    Invoke-UpdateCase -Name "allowed-1.3.8-to-1.3.9" -FailChecksum $false `
+        -InstalledVersion "1.3.8" -CandidateVersion "1.3.9" -RequestedTag "v1.3.9"
     Write-Output "Windows tmb update recovery tests passed."
 }
 finally {

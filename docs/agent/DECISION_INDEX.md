@@ -21,10 +21,9 @@ Identify the relevant decision here, then read its complete text in `docs/DECISI
 | cleanup/zero retention | ADR-023 |
 | administrator UX/reporting | ADR-024, ADR-025, ADR-028 |
 | cookies/runtime consumers | ADR-028 |
-| installer/update/rollback | ADR-015, ADR-018, ADR-023 |
-| release safety | ADR-005, ADR-018, ADR-023 |
+| installer/update/rollback | ADR-015, ADR-018, ADR-023, ADR-031 |
+| release safety/withdrawal | ADR-005, ADR-018, ADR-023, ADR-031 |
 | agent navigation/Graphify | ADR-029 |
 
 Supersession matters: ADR-021 supersedes the codec restriction in ADR-020. Status and task history
 may describe later production regressions without replacing the accepted decision.
-

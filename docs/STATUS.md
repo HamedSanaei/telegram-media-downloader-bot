@@ -4,6 +4,20 @@ Last updated: 2026-08-31
 
 ## Release state
 
+Release v1.3.7 is withdrawn as a known-broken production release without rewriting its Git tag or
+history. Fresh Linux/Windows installers and both platform updaters now reject direct `v1.3.7` or
+`1.3.7` targets before download and independently reject verified archives reporting package
+version `1.3.7` before installation, configuration/state mutation, image pull, backup, or service
+stop. The target-only denylist preserves the required v1.3.7 -> v1.3.8+ recovery path. A canonical
+repository policy, enforced standalone snapshots, release-build/publish guards, platform recovery
+fixtures, and operator documentation make later withdrawals explicit without adding a remote
+revocation dependency. The existing GitHub Release is marked prerelease as
+`v1.3.7 — BROKEN / DO NOT USE`, its warning is first, and its six downloadable assets were removed;
+the annotated Git tag and commit remain unchanged. GHCR `v1.3.7`/`1.3.7` still resolve to their old
+isolated digest because the authenticated GitHub token lacks the `read:packages` scope required to
+verify the exact package-version tag set before a safe deletion. Moving `latest`/`1.3` and immutable
+`v1.3.8`/`1.3.8` remain on the v1.3.8 digest.
+
 Patch 1.3.8 preserves the aiogram 3.30.0 ``Default`` serialization crash fix while keeping outbound
 Bot defaults out of inbound snapshots. Durable polling now serializes and persists in Telegram
 order, stops the batch at the first unresolved serialization gap, and requests that exact update ID

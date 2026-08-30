@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Operations
+
+- Withdraw v1.3.7 from every supported install/update target because its inbound Telegram
+  durable-polling serialization regression can crash the bot before persistence and cause a Docker
+  restart loop. Direct tag requests and verified candidate archives are denied before application,
+  configuration, persistent-state, image, or service changes. Existing v1.3.7 deployments remain
+  supported for an immediate forward update to v1.3.8 or newer; the historical tag is retained.
+
 ## 1.3.6 - 2026-08-22
 
 ### Fixed

@@ -7,6 +7,16 @@ PREFIX="telegram-media-downloader-bot"
 TEMPORARY_DIRECTORY="$(mktemp -d)"
 trap 'rm -rf -- "$TEMPORARY_DIRECTORY"' EXIT
 
+PROJECT_VERSION="$(
+  git show "$COMMIT:pyproject.toml" |
+    sed -n 's/^version = "\([^"]*\)"/\1/p' | head -n 1
+)"
+[[ -n "$PROJECT_VERSION" ]] || {
+  echo "Unable to determine release version from $COMMIT." >&2
+  exit 2
+}
+python scripts/check_release_policy.py --version "$PROJECT_VERSION"
+
 mkdir -p "$OUTPUT_DIRECTORY" "$TEMPORARY_DIRECTORY/tree"
 git archive --format=tar --prefix="$PREFIX/" "$COMMIT" \
   | tar -xf - -C "$TEMPORARY_DIRECTORY/tree"

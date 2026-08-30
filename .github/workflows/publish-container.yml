@@ -35,6 +35,7 @@ jobs:
       - name: Verify tag matches package version
         shell: bash
         run: |
+          python scripts/check_release_policy.py --version "$GITHUB_REF_NAME"
           python - <<'PY'
           import os
           import re

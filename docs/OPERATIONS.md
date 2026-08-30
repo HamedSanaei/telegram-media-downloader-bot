@@ -130,6 +130,16 @@ configuration, `.env`, SQLite/WAL/SHM state, cookies, and other Local API state.
 atomically published, and partial files are deleted; Redis continues in its persistent Compose
 volume.
 
+Release v1.3.7 is withdrawn and is not a valid install, update, or rollback target. The standalone
+installers/updaters reject both `v1.3.7`/`1.3.7` requests and any checksummed candidate archive whose
+package version is `1.3.7`. Requested-target rejection precedes network access; candidate rejection
+precedes image pulls, writer stop, backup, source/configuration changes, and all persistent-state
+changes. This is a target-only denylist, so a host currently running v1.3.7 can update normally to
+v1.3.8 or a later allowed release. Operators must choose an explicitly healthy release rather than
+expecting an automatic redirect. The canonical policy is `release-policy.json`; standalone script
+snapshots are kept identical by tests, and release build/publication tooling fails closed on the
+same policy.
+
 An affected v1.2.1 installation must use the checksummed standalone v1.2.2 updater once because its
 installed script cannot replace itself before the faulty old preflight. The exact verification and
 execution sequence is documented in `docs/INSTALLATION.md`; no `gallery_dl` configuration edit is

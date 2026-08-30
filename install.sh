@@ -6,6 +6,29 @@ ARCHIVE_NAME="telegram-media-downloader-bot.tar.gz"
 DEFAULT_INSTALL_DIR="/opt/telegram-media-downloader-bot"
 IMAGE_REPOSITORY="ghcr.io/hamedsanaei/telegram-media-downloader-bot"
 TMB_BIN_DIR="${TMB_BIN_DIR:-/usr/local/bin}"
+# Standalone bootstrap snapshot; tests enforce parity with release-policy.json.
+readonly -a BLOCKED_RELEASE_VERSIONS=("1.3.7")
+INSTALL_TEMPORARY_DIRECTORY=""
+INSTALL_STAGING_DIRECTORY=""
+INSTALL_RELEASE_VERSION=""
+
+assert_release_allowed() {
+  local version="${1:-}" normalized blocked
+  [[ -n "$version" ]] || return 0
+  normalized="${version#v}"
+  for blocked in "${BLOCKED_RELEASE_VERSIONS[@]}"; do
+    if [[ "$normalized" == "$blocked" ]]; then
+      echo "Release $normalized is blocked because it contains a critical Telegram durable-polling crash bug. Use v1.3.8 or newer instead." >&2
+      return 1
+    fi
+  done
+}
+
+cleanup_prepared_install_release() {
+  if [[ -n "$INSTALL_TEMPORARY_DIRECTORY" ]]; then
+    rm -rf -- "$INSTALL_TEMPORARY_DIRECTORY"
+  fi
+}
 
 release_url() {
   if [[ -n "${TMB_RELEASE_TAG:-}" ]]; then
@@ -15,25 +38,32 @@ release_url() {
   fi
 }
 
-install_verified_release() (
-  local destination="$1"
-  local temporary_directory staging_directory
-  temporary_directory="$(mktemp -d)"
-  staging_directory="$temporary_directory/extracted"
-  trap 'rm -rf -- "$temporary_directory"' EXIT
-  mkdir -p "$staging_directory"
+prepare_verified_release() {
+  INSTALL_TEMPORARY_DIRECTORY="$(mktemp -d)"
+  INSTALL_STAGING_DIRECTORY="$INSTALL_TEMPORARY_DIRECTORY/extracted"
+  trap cleanup_prepared_install_release EXIT
+  mkdir -p "$INSTALL_STAGING_DIRECTORY"
   curl -fsSL "$(release_url "$ARCHIVE_NAME")" \
-    -o "$temporary_directory/$ARCHIVE_NAME"
+    -o "$INSTALL_TEMPORARY_DIRECTORY/$ARCHIVE_NAME"
   curl -fsSL "$(release_url "$ARCHIVE_NAME.sha256")" \
-    -o "$temporary_directory/$ARCHIVE_NAME.sha256"
+    -o "$INSTALL_TEMPORARY_DIRECTORY/$ARCHIVE_NAME.sha256"
   (
-    cd "$temporary_directory"
+    cd "$INSTALL_TEMPORARY_DIRECTORY"
     sha256sum --check --status "$ARCHIVE_NAME.sha256"
   )
-  tar -xzf "$temporary_directory/$ARCHIVE_NAME" \
-    -C "$staging_directory" --strip-components=1
-  [[ -f "$staging_directory/pyproject.toml" ]]
-  [[ -f "$staging_directory/docker-compose.yml" ]]
+  tar -xzf "$INSTALL_TEMPORARY_DIRECTORY/$ARCHIVE_NAME" \
+    -C "$INSTALL_STAGING_DIRECTORY" --strip-components=1
+  [[ -f "$INSTALL_STAGING_DIRECTORY/pyproject.toml" ]]
+  INSTALL_RELEASE_VERSION="$(
+    sed -n 's/^version = "\([^"]*\)"/\1/p' \
+      "$INSTALL_STAGING_DIRECTORY/pyproject.toml" | head -n 1
+  )"
+  [[ -n "$INSTALL_RELEASE_VERSION" ]] || {
+    echo "Unable to determine the verified release version." >&2
+    return 1
+  }
+  assert_release_allowed "$INSTALL_RELEASE_VERSION"
+  [[ -f "$INSTALL_STAGING_DIRECTORY/docker-compose.yml" ]]
   local script
   for script in \
     install.sh \
@@ -43,18 +73,23 @@ install_verified_release() (
     scripts/tests/test_tmb_update.sh \
     scripts/tests/test_tmb_upgrade_integration.sh \
     scripts/tests/test_local_api_readiness.sh; do
-    bash -n "$staging_directory/$script"
+    bash -n "$INSTALL_STAGING_DIRECTORY/$script"
   done
   chmod 755 \
-    "$staging_directory/install.sh" \
-    "$staging_directory/manage.sh" \
-    "$staging_directory/scripts/tmb.sh" \
-    "$staging_directory/scripts/build_release_archives.sh" \
-    "$staging_directory/scripts/tests/test_tmb_update.sh" \
-    "$staging_directory/scripts/tests/test_tmb_upgrade_integration.sh" \
-    "$staging_directory/scripts/tests/test_local_api_readiness.sh"
-  mkdir -p "$destination"
-  cp -a "$staging_directory/." "$destination/"
+    "$INSTALL_STAGING_DIRECTORY/install.sh" \
+    "$INSTALL_STAGING_DIRECTORY/manage.sh" \
+    "$INSTALL_STAGING_DIRECTORY/scripts/tmb.sh" \
+    "$INSTALL_STAGING_DIRECTORY/scripts/build_release_archives.sh" \
+    "$INSTALL_STAGING_DIRECTORY/scripts/tests/test_tmb_update.sh" \
+    "$INSTALL_STAGING_DIRECTORY/scripts/tests/test_tmb_upgrade_integration.sh" \
+    "$INSTALL_STAGING_DIRECTORY/scripts/tests/test_local_api_readiness.sh"
+}
+
+install_prepared_release() {
+  local destination="$1"
+  sudo mkdir -p "$destination"
+  sudo chown "$USER":"$(id -gn)" "$destination"
+  cp -a "$INSTALL_STAGING_DIRECTORY/." "$destination/"
   chmod 755 \
     "$destination/install.sh" \
     "$destination/manage.sh" \
@@ -63,18 +98,22 @@ install_verified_release() (
     "$destination/scripts/tests/test_tmb_update.sh" \
     "$destination/scripts/tests/test_tmb_upgrade_integration.sh" \
     "$destination/scripts/tests/test_local_api_readiness.sh"
-)
+}
+
+assert_release_allowed "${TMB_RELEASE_TAG:-}"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "This installer supports Linux only." >&2
   exit 1
 fi
 
+if ! command -v curl >/dev/null 2>&1; then
+  sudo apt-get update
+  sudo apt-get install -y curl
+fi
+prepare_verified_release
+
 if ! command -v docker >/dev/null 2>&1; then
-  if ! command -v curl >/dev/null 2>&1; then
-    sudo apt-get update
-    sudo apt-get install -y curl
-  fi
   echo "Installing Docker Engine from the official Docker installer..."
   curl -fsSL https://get.docker.com | sudo sh
   sudo usermod -aG docker "$USER"
@@ -85,19 +124,13 @@ docker compose version >/dev/null
 
 read -r -p "Installation directory [$DEFAULT_INSTALL_DIR]: " INSTALL_DIR
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-sudo mkdir -p "$INSTALL_DIR"
-sudo chown "$USER":"$(id -gn)" "$INSTALL_DIR"
-install_verified_release "$INSTALL_DIR"
+install_prepared_release "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
 cp -n config.example.yaml config.yaml
 chmod 600 config.yaml
 cp -n .env.example .env
-RELEASE_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml | head -n 1)"
-if [[ -z "$RELEASE_VERSION" ]]; then
-  echo "Unable to determine the verified release version." >&2
-  exit 1
-fi
+RELEASE_VERSION="$INSTALL_RELEASE_VERSION"
 DEFAULT_IMAGE="$IMAGE_REPOSITORY:$RELEASE_VERSION"
 if grep -q '^TMB_IMAGE=' .env; then
   sed -i "s|^TMB_IMAGE=.*|TMB_IMAGE=$DEFAULT_IMAGE|" .env

@@ -47,3 +47,12 @@ standalone updater once because its running updater contains the old phase contr
 - Compare failure rates before promotion.
 - Never auto-merge yt-dlp updates.
 - Document emergency upgrade and rollback procedures.
+
+## Withdrawn-release follow-up
+
+The v1.3.7 withdrawal adds a target-only release denylist shared by publication/archive tooling and
+embedded in each standalone Linux/Windows installer/updater. Direct tag requests fail before
+download and archive aliases fail on their verified package version before application, config,
+state, image, backup, or service operations. Installed v1.3.7 remains allowed to recover forward to
+v1.3.8 or later. Regression fixtures cover both tag spellings, candidate aliases, platform parity,
+unchanged state, and future allowed releases.

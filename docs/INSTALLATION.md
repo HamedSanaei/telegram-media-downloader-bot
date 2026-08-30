@@ -1,5 +1,10 @@
 # Docker installation and `tmb` management
 
+> **Withdrawn release:** v1.3.7 is a known-broken production release and is blocked by both fresh
+> installers and both platform updaters. Do not install, update, or roll back to it. Install
+> v1.3.8 or newer. An existing v1.3.7 installation remains eligible to update forward to v1.3.8
+> or any later allowed release.
+
 The v1.3 runtime image installs the exact locked `gallery-dl==1.32.8` package and preserves its
 GPL-2.0 notice. Upgrading from v1.0.x does not rewrite `config.yaml`, `.env`, SQLite/WAL, Redis,
 cookies, downloads, backups, or Telegram Local Bot API state. A null `gallery_dl.cookies.instagram`
@@ -21,6 +26,12 @@ hidden interactive prompts, optionally collects admins, required channels, yt-dl
 Instagram cookies, then writes only `config.yaml` with restrictive permissions. Set
 `TMB_RELEASE_TAG=vX.Y.Z` before running the installer to select an explicit release. Local API
 migration requires typing `MIGRATE`; normal startup never calls `logOut`.
+
+The requested tag is checked against the repository withdrawal policy before any release download.
+The checksummed archive's own package version is checked again before application/configuration
+paths are created or changed and before images are pulled or services are started. A blocked tag or
+an alias that resolves to blocked package content fails with guidance; it is never redirected
+silently to another release.
 
 Release tags publish both `tar.gz` and ZIP source assets plus their SHA-256 files. CI runs
 ShellCheck for the Linux installer/manager and PSScriptAnalyzer for the Windows equivalents. A tag
@@ -75,6 +86,12 @@ transaction and service state;
 intentionally stopped services remain stopped. `config.yaml`, `.env`, SQLite, cookies, Redis,
 Local API state, downloads, and temp content are preserved. `uninstall` removes local state only
 after the literal `DELETE` confirmation.
+
+Both updaters reject a blocked requested tag before downloading or touching the running project,
+and reject a blocked version discovered inside a verified candidate archive before writer stop,
+backup, image pull, application replacement, or configuration/persistent-state mutation. The
+policy evaluates only the target release: an installation already running v1.3.7 can and should
+update to v1.3.8 or newer.
 
 ### Upgrade from v1.2.2 to v1.3.0
 

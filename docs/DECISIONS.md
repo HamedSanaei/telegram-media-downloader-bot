@@ -422,3 +422,23 @@ snapshot. Historical SQLite active fields remain readable to avoid a migration, 
 probe success is discarded at the next static refresh. Historical probe configuration keys are
 accepted and ignored so strict configuration compatibility is preserved while generated examples
 and schema expose no live-probe controls.
+
+## ADR-031: Withdrawn releases fail closed in standalone bootstrap policy
+
+**Status:** accepted
+
+Release v1.3.7 is a known-broken production artifact and must remain in immutable Git history while
+being unavailable as an install, update, rollback, or publication target. A repository-owned
+`release-policy.json` denylist is authoritative for build/publication tools. Linux and Windows
+installers/updaters embed the same small list because one-line installers and checksummed updater
+assets must work without another runtime file or revocation endpoint; deterministic tests require
+all four snapshots to match the canonical policy.
+
+Both the requested tag and the independently extracted package version are checked. Requested-tag
+rejection happens before download. Candidate-version rejection happens after checksum/extraction
+but before application/configuration/persistent-state mutation, image pull, backup, or service
+stop, preventing aliases from bypassing the withdrawal. The installed version is deliberately not
+blocked: an affected v1.3.7 deployment must retain its forward path to v1.3.8 or later. The updater
+does not silently substitute a release, and healthy older rollback targets remain available. A
+remote revocation service is deferred because the single embedded withdrawal does not justify a
+new availability and trust dependency in disaster-recovery tooling.

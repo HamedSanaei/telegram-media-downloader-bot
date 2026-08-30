@@ -10,7 +10,21 @@ TMB_BIN_DIR="${TMB_BIN_DIR:-/usr/local/bin}"
 UPDATE_HEALTH_TIMEOUT_SECONDS="${TMB_UPDATE_HEALTH_TIMEOUT_SECONDS:-180}"
 PROJECT_SERVICES=(bot worker local-api redis)
 FILESYSTEM_WRITER_SERVICES=(bot worker local-api)
+# Standalone bootstrap snapshot; tests enforce parity with release-policy.json.
+readonly -a BLOCKED_RELEASE_VERSIONS=("1.3.7")
 cd "$ROOT_DIR"
+
+assert_release_allowed() {
+  local version="${1:-}" normalized blocked
+  [[ -n "$version" ]] || return 0
+  normalized="${version#v}"
+  for blocked in "${BLOCKED_RELEASE_VERSIONS[@]}"; do
+    if [[ "$normalized" == "$blocked" ]]; then
+      echo "Release $normalized is blocked because it contains a critical Telegram durable-polling crash bug. Use v1.3.8 or newer instead." >&2
+      return 1
+    fi
+  done
+}
 
 release_url() {
   if [[ -n "${TMB_RELEASE_TAG:-}" ]]; then
@@ -84,6 +98,7 @@ prepare_verified_release() {
     echo "Unable to determine verified release version." >&2
     return 1
   }
+  assert_release_allowed "$RELEASE_VERSION" || return 1
   [[ -f "$RELEASE_STAGING_DIRECTORY/docker-compose.yml" ]] || {
     echo "Verified release is missing docker-compose.yml." >&2
     return 1
@@ -733,6 +748,7 @@ run() {
       ;;
     update)
       local previous_image
+      assert_release_allowed "${TMB_RELEASE_TAG:-}" || return 1
       previous_image="$(configured_image)"
       PREVIOUS_PROJECT_SERVICES=()
       PREVIOUS_WRITER_SERVICES=()

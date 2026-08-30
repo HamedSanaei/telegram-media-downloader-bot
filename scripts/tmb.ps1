@@ -10,7 +10,25 @@ $RootDirectory = Split-Path -Parent $PSScriptRoot
 $ReleaseRoot = "https://github.com/HamedSanaei/telegram-media-downloader-bot/releases"
 $ArchiveName = "telegram-media-downloader-bot.zip"
 $ImageRepository = "ghcr.io/hamedsanaei/telegram-media-downloader-bot"
+# Standalone bootstrap snapshot; tests enforce parity with release-policy.json.
+$BlockedReleaseVersions = @("1.3.7")
 Set-Location $RootDirectory
+
+function Assert-ReleaseAllowed {
+    param([string]$Version)
+    if (-not $Version) { return }
+    $Normalized = if ($Version.StartsWith("v", [System.StringComparison]::Ordinal)) {
+        $Version.Substring(1)
+    }
+    else {
+        $Version
+    }
+    foreach ($Blocked in $BlockedReleaseVersions) {
+        if ([string]::Equals($Normalized, $Blocked, [System.StringComparison]::Ordinal)) {
+            throw "Release $Normalized is blocked because it contains a critical Telegram durable-polling crash bug. Use v1.3.8 or newer instead."
+        }
+    }
+}
 
 function Invoke-Compose {
     param([string[]]$Arguments)
@@ -65,13 +83,15 @@ function Get-VerifiedRelease {
         $VersionMatch = Select-String -Path (Join-Path $Payload "pyproject.toml") `
             -Pattern '^version = "([^"]+)"$'
         if (-not $VersionMatch) { throw "Unable to determine verified release version." }
+        $Version = $VersionMatch.Matches[0].Groups[1].Value
+        Assert-ReleaseAllowed $Version
         if (-not (Test-Path -LiteralPath (Join-Path $Payload "docker-compose.yml"))) {
             throw "Verified release is missing docker-compose.yml."
         }
         return [pscustomobject]@{
             TemporaryDirectory = $TemporaryDirectory
             Payload = $Payload
-            Version = $VersionMatch.Matches[0].Groups[1].Value
+            Version = $Version
         }
     }
     catch {
@@ -270,15 +290,21 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { throw "Configuration failed." }
     }
     "update" {
-        $PreviousImage = Get-ConfiguredImage
-        $PreviousServices = @(Get-RunningApplicationServices)
-        if ($PreviousServices.Count -gt 0) {
-            Invoke-Compose (@("stop", "-t", "45") + $PreviousServices)
-        }
-        $Release = $null
+        Assert-ReleaseAllowed $env:TMB_RELEASE_TAG
+        $Release = Get-VerifiedRelease
+        $PreviousImage = $null
+        $PreviousServices = @()
+        $ServiceStateTouched = $false
+        $EnvironmentMutationStarted = $false
         try {
+            $PreviousImage = Get-ConfiguredImage
+            $PreviousServices = @(Get-RunningApplicationServices)
+            if ($PreviousServices.Count -gt 0) {
+                $ServiceStateTouched = $true
+                Invoke-Compose (@("stop", "-t", "45") + $PreviousServices)
+            }
             New-TmbBackup
-            $Release = Get-VerifiedRelease
+            $EnvironmentMutationStarted = $true
             Set-ConfiguredImage "$ImageRepository`:$($Release.Version)"
             Invoke-Compose @("pull")
             Get-ChildItem -LiteralPath $Release.Payload -Force |
@@ -304,9 +330,13 @@ switch ($Command) {
             }
         }
         catch {
-            Set-ConfiguredImage $PreviousImage
-            Write-Warning "Update failed; restoring the prior image and restarting the stack."
-            Start-TmbServices -Services $PreviousServices
+            if ($EnvironmentMutationStarted) {
+                Set-ConfiguredImage $PreviousImage
+            }
+            if ($ServiceStateTouched) {
+                Write-Warning "Update failed; restoring the prior image and restarting the stack."
+                Start-TmbServices -Services $PreviousServices
+            }
             throw
         }
         finally {
