@@ -237,8 +237,7 @@ jobs:
           # usable PSGallery/NuGet bootstrap; repair it instead of skipping lint.
           if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
               Write-Host "Bootstrapping NuGet package provider..."
-              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 \
-                  -Scope CurrentUser -Force
+              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force
           }
 
           $repository = Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue
@@ -255,8 +254,7 @@ jobs:
           for ($attempt = 1; $attempt -le 3; $attempt++) {
               try {
                   Write-Host "Installing PSScriptAnalyzer (attempt $attempt/3)..."
-                  Install-Module PSScriptAnalyzer -Repository PSGallery \
-                      -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+                  Install-Module PSScriptAnalyzer -Repository PSGallery -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
                   $installed = $true
                   break
               }
