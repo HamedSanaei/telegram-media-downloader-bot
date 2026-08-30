@@ -285,9 +285,9 @@ def test_release_tag_exactly_matches_project_version() -> None:
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.3.7"
+    assert version == "1.3.8"
     assert __version__ == version
-    assert tag == "v1.3.7"
+    assert tag == "v1.3.8"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
     assert 'if tag != f"v{version}":' in workflow
 

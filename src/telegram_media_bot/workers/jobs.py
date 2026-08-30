@@ -146,7 +146,7 @@ def _project_version() -> str:
     try:
         return version("telegram-media-downloader-bot")
     except PackageNotFoundError:
-        return "1.3.7"
+        return "1.3.8"
 
 
 APP_VERSION = _project_version()

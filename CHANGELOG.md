@@ -124,6 +124,8 @@
 
 ## Unreleased
 
+## 1.3.8 - 2026-08-31
+
 ### Fixed
 
 - Repair a release-blocking durable-polling crash: inbound Telegram updates were persisted with
@@ -139,6 +141,12 @@
   update can no longer restart-loop the bot while fresh user traffic keeps flowing. Live-handler
   failures and serialization failures now emit sanitized structured events (no payloads or user
   content).
+
+### Operations
+
+- Bounded per-update serialization retry and terminal quarantine keep a single impossible update
+  from stalling the durable inbox; quarantined rows are purged by the existing terminal-failure
+  retention. No new configuration required.
 
 ## 1.3.7 - 2026-08-30
 
