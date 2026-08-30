@@ -25,6 +25,7 @@ from telegram_media_bot.domain.models import (
     NativeVideoCodec,
     OutputContainer,
     QueueJobStatus,
+    StoryDeliveryMode,
     normalize_container_policy,
 )
 
@@ -97,6 +98,7 @@ class ArqJobQueue(JobQueue):
         native_video_codec: NativeVideoCodec | None = None,
         selected_format_ids: tuple[str, ...] = (),
         image_delivery_mode: ImageDeliveryMode | None = None,
+        story_delivery_mode: StoryDeliveryMode | None = None,
     ) -> JobId:
         url = canonicalize_media_url(url).canonical_url
         container_policy = normalize_container_policy(mode, container_policy)
@@ -111,12 +113,19 @@ class ArqJobQueue(JobQueue):
             native_video_codec=native_video_codec.value if native_video_codec else None,
             selected_format_ids=list(selected_format_ids),
             image_delivery_mode=image_delivery_mode.value if image_delivery_mode else None,
+            story_delivery_mode=story_delivery_mode.value if story_delivery_mode else None,
             _job_id=str(job_id),
             _queue_name=self._queue_name,
         )
         return job_id
 
     async def queue_depth(self) -> int:
+        """Number of outstanding ARQ queue entries (``zcard`` on the queue sorted set).
+
+        ARQ's pessimistic execution keeps a job in the sorted set while it waits, while it runs,
+        and while it is deferred/retried; the entry is removed only at final success/failure.
+        So this counts waiting + running + deferred/retry entries — not a waiting-only backlog.
+        """
         return int(await self._redis.zcard(self._queue_name))
 
     async def abort_job(

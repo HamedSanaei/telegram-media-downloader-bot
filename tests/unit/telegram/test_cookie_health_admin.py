@@ -66,6 +66,9 @@ class FakeUsers:
 
 
 class FakeQueue:
+    async def queue_depth(self) -> int:
+        return 0
+
     async def enqueue_inspection(self, **kwargs: object) -> object:
         return kwargs["job_id"]
 

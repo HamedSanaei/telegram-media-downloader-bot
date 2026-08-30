@@ -57,6 +57,11 @@ tmb backup
 tmb uninstall
 ```
 
+All production services run with the Compose `unless-stopped` restart policy, so a crashed
+container restarts automatically and the full stack (`bot`, `worker`, `local-api`, `redis`)
+recovers after a Docker daemon restart or server reboot. An explicit `tmb stop` or
+`tmb uninstall` intentionally stops or removes services and is never undone by the policy.
+
 The Linux `update` runs from an isolated copy and completes release download, checksum, staged
 Bash/Compose/config validation, and candidate image pulls before downtime. It records all project
 services, stops only the running filesystem writers, keeps Redis/ARQ online, creates a private

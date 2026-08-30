@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from telegram_media_bot.application.ports.job_repository import JobRepository
+from telegram_media_bot.domain.cookies import CookieService
 from telegram_media_bot.domain.errors import (
     JobCancelledError,
     JobNotFoundError,
@@ -45,7 +46,13 @@ from telegram_media_bot.domain.models import (
     SelectionRecord,
     SelectionToken,
     SizeConfidence,
+    StoryDeliveryMode,
     UserProfile,
+)
+from telegram_media_bot.domain.recoverability import (
+    RecoverabilityClass,
+    provider_for_job,
+    recovery_class_for_job,
 )
 
 _ACTIVE_STATUSES = (
@@ -131,7 +138,15 @@ class SqliteJobRepository(JobRepository):
                     cancel_requested INTEGER NOT NULL DEFAULT 0,
                     delivery_file_id TEXT,
                     delivery_file_unique_id TEXT,
-                    attempt INTEGER NOT NULL DEFAULT 0
+                    attempt INTEGER NOT NULL DEFAULT 0,
+                    url_classification TEXT,
+                    story_delivery_mode TEXT,
+                    recoverability_class TEXT,
+                    recovery_attempt_count INTEGER NOT NULL DEFAULT 0,
+                    last_recovery_version TEXT,
+                    failed_app_version TEXT,
+                    last_recovery_attempt_at TEXT,
+                    recovery_notification_sent INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS jobs_idempotency_idx
                     ON jobs(idempotency_key, status);
@@ -200,6 +215,11 @@ class SqliteJobRepository(JobRepository):
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS cookie_remediation_state (
+                    provider TEXT PRIMARY KEY,
+                    available_since TEXT NOT NULL
+                );
                 """
             )
             _ensure_column(connection, "jobs", "container", "TEXT")
@@ -218,6 +238,35 @@ class SqliteJobRepository(JobRepository):
             )
             _ensure_column(connection, "jobs", "image_delivery_mode", "TEXT")
             _ensure_column(connection, "jobs", "url_classification", "TEXT")
+            _ensure_column(connection, "jobs", "story_delivery_mode", "TEXT")
+            _ensure_column(connection, "jobs", "recoverability_class", "TEXT")
+            _ensure_column(
+                connection,
+                "jobs",
+                "recovery_attempt_count",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            _ensure_column(connection, "jobs", "last_recovery_version", "TEXT")
+            _ensure_column(connection, "jobs", "failed_app_version", "TEXT")
+            _ensure_column(connection, "jobs", "last_recovery_attempt_at", "TEXT")
+            _ensure_column(
+                connection,
+                "jobs",
+                "recovery_notification_sent",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS jobs_recoverability_idx "
+                "ON jobs(recoverability_class, status, updated_at)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS jobs_failed_version_idx "
+                "ON jobs(recoverability_class, failed_app_version)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS jobs_recovery_requeued_idx "
+                "ON jobs(recovery_attempt_count, status)"
+            )
 
     def healthy(self) -> bool:
         try:
@@ -400,8 +449,14 @@ class SqliteJobRepository(JobRepository):
                     image_delivery_mode, idempotency_key,
                     created_at, updated_at, status_message_id, source, error_category,
                     error_summary, cancel_requested, delivery_file_id,
-                    delivery_file_unique_id, attempt, url_classification
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    delivery_file_unique_id, attempt, url_classification,
+                    story_delivery_mode, recoverability_class, recovery_attempt_count,
+                    last_recovery_version, failed_app_version, last_recovery_attempt_at,
+                    recovery_notification_sent
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 _job_values(record),
             )
@@ -672,6 +727,225 @@ class SqliteJobRepository(JobRepository):
                 "SELECT cancel_requested FROM jobs WHERE job_id = ?", (job_id,)
             ).fetchone()
         return row is not None and bool(row["cancel_requested"])
+
+    def record_recoverable_failure(
+        self,
+        job_id: JobId,
+        category: ErrorCategory | None,
+        app_version: str,
+    ) -> None:
+        """Classify a new terminal failure for potential automatic remediation.
+
+        Only new failures are classified; historical rows keep their ``None`` safe default so old
+        bugs are never replayed without a fresh failure on a supported request.
+        """
+        if category is None:
+            return
+        with self._connect() as connection:
+            row = connection.execute("SELECT url FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            if row is None:
+                return
+            job = self.get_job(job_id)
+            if job is None:
+                return
+            cls = recovery_class_for_job(job, category)
+            value = cls.value if cls is not RecoverabilityClass.NONE else None
+            connection.execute(
+                """
+                UPDATE jobs SET
+                    recoverability_class = ?,
+                    failed_app_version = ?
+                WHERE job_id = ?
+                """,
+                (value, app_version, job_id),
+            )
+
+    def cookie_recovery_candidates(
+        self,
+        cookie_service: CookieService,
+        *,
+        now: datetime,
+        max_age_days: int,
+        max_attempts: int,
+        limit: int = 25,
+        max_per_user: int | None = None,
+    ) -> tuple[JobRecord, ...]:
+        """Failed, not-yet-cancelled, supported, cookie-recoverable jobs for one provider.
+
+        Oldest-first (``updated_at``) so retries drain deterministically; ``max_per_user`` bounds
+        how many candidates one user can monopolize in a single batch.
+        """
+        age_cutoff = _dump_datetime(now - timedelta(days=max_age_days))
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status = ?
+                  AND cancel_requested = 0
+                  AND recoverability_class = ?
+                  AND recovery_attempt_count < ?
+                  AND updated_at >= ?
+                ORDER BY updated_at ASC LIMIT ?
+                """,
+                (
+                    JobStatus.FAILED.value,
+                    RecoverabilityClass.AFTER_COOKIE_CHANGE.value,
+                    max_attempts,
+                    age_cutoff,
+                    limit * 8,
+                ),
+            ).fetchall()
+        candidates = [row for row in rows if provider_for_job(_job_from_row(row)) is cookie_service]
+        selected = _apply_per_user_cap(candidates, limit=limit, max_per_user=max_per_user)
+        return tuple(_job_from_row(row) for row in selected)
+
+    def app_fix_recovery_candidates(
+        self,
+        current_version: str,
+        *,
+        now: datetime,
+        max_age_days: int,
+        max_attempts: int,
+        limit: int = 25,
+        max_per_user: int | None = None,
+    ) -> tuple[JobRecord, ...]:
+        """Failed app-fix-recoverable jobs newly eligible for one recovery attempt."""
+        age_cutoff = _dump_datetime(now - timedelta(days=max_age_days))
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status = ?
+                  AND cancel_requested = 0
+                  AND recoverability_class = ?
+                  AND failed_app_version IS NOT NULL
+                  AND failed_app_version != ?
+                  AND (last_recovery_version IS NULL OR last_recovery_version != ?)
+                  AND recovery_attempt_count < ?
+                  AND updated_at >= ?
+                ORDER BY updated_at ASC LIMIT ?
+                """,
+                (
+                    JobStatus.FAILED.value,
+                    RecoverabilityClass.AFTER_APP_FIX.value,
+                    current_version,
+                    current_version,
+                    max_attempts,
+                    age_cutoff,
+                    limit * 8,
+                ),
+            ).fetchall()
+        selected = _apply_per_user_cap(rows, limit=limit, max_per_user=max_per_user)
+        return tuple(_job_from_row(row) for row in selected)
+
+    def recovery_requeues(self, limit: int = 50) -> tuple[JobRecord, ...]:
+        """QUEUED jobs previously requeued by recovery (recovering enqueue failures)."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status = ? AND recovery_attempt_count > 0 AND cancel_requested = 0
+                ORDER BY updated_at ASC LIMIT ?
+                """,
+                (JobStatus.QUEUED.value, limit),
+            ).fetchall()
+        return tuple(_job_from_row(row) for row in rows)
+
+    def mark_recovery_requeued(
+        self,
+        job_id: JobId,
+        *,
+        version: str,
+        now: datetime,
+    ) -> JobRecord | None:
+        """Transactionally move a failed job back to QUEUED for one bounded recovery attempt."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                UPDATE jobs SET
+                    status = ?,
+                    updated_at = ?,
+                    recovery_attempt_count = recovery_attempt_count + 1,
+                    last_recovery_version = ?,
+                    last_recovery_attempt_at = ?,
+                    recovery_notification_sent = 0
+                WHERE job_id = ? AND status = ? AND cancel_requested = 0
+                """,
+                (
+                    JobStatus.QUEUED.value,
+                    _dump_datetime(now),
+                    version,
+                    _dump_datetime(now),
+                    job_id,
+                    JobStatus.FAILED.value,
+                ),
+            )
+            connection.execute("COMMIT")
+        if cursor.rowcount != 1:
+            return None
+        loaded = self.get_job(job_id)
+        if loaded is None or loaded.status is not JobStatus.QUEUED:
+            return None
+        return loaded
+
+    def mark_recovery_notification_sent(self, job_id: JobId) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE jobs SET recovery_notification_sent = 1, updated_at = ? WHERE job_id = ?",
+                (_now_text(), job_id),
+            )
+
+    def pending_recoverable_count(self) -> int:
+        """Number of currently recoverable (not yet requeued) failed jobs for operations visibility."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) FROM jobs
+                WHERE status = ? AND cancel_requested = 0
+                  AND recoverability_class IS NOT NULL AND recoverability_class != ?
+                """,
+                (JobStatus.FAILED.value, RecoverabilityClass.NONE.value),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def mark_cookie_remediation_available(
+        self, cookie_service: CookieService, now: datetime
+    ) -> None:
+        """Durably remember that ``cookie_service`` has a freshly validated cookie available.
+
+        This is the trigger that makes maintenance keep draining that provider's eligible backlog in
+        bounded batches, so the administrator does not have to re-upload the cookie repeatedly.
+        """
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO cookie_remediation_state (provider, available_since)
+                VALUES (?, ?)
+                """,
+                (cookie_service.value, _dump_datetime(now)),
+            )
+
+    def clear_cookie_remediation_available(self, cookie_service: CookieService) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM cookie_remediation_state WHERE provider = ?",
+                (cookie_service.value,),
+            )
+
+    def active_cookie_remediation_providers(self) -> tuple[CookieService, ...]:
+        """Providers whose freshly validated cookie still has an undrained eligible backlog."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT provider FROM cookie_remediation_state ORDER BY available_since ASC"
+            ).fetchall()
+        providers: list[CookieService] = []
+        for row in rows:
+            try:
+                providers.append(CookieService(str(row["provider"])))
+            except ValueError:
+                continue
+        return tuple(providers)
 
     def reconcile_abandoned(self, older_than: datetime) -> tuple[JobRecoveryRecord, ...]:
         cutoff = _dump_datetime(older_than)
@@ -1140,6 +1414,25 @@ def _job_from_row(row: sqlite3.Row) -> JobRecord:
         ),
         attempt=int(row["attempt"]),
         url_classification=(str(row["url_classification"]) if row["url_classification"] else None),
+        story_delivery_mode=(
+            StoryDeliveryMode(str(row["story_delivery_mode"]))
+            if row["story_delivery_mode"]
+            else None
+        ),
+        recoverability_class=(
+            str(row["recoverability_class"]) if row["recoverability_class"] else None
+        ),
+        recovery_attempt_count=int(row["recovery_attempt_count"]),
+        last_recovery_version=(
+            str(row["last_recovery_version"]) if row["last_recovery_version"] else None
+        ),
+        failed_app_version=(str(row["failed_app_version"]) if row["failed_app_version"] else None),
+        last_recovery_attempt_at=(
+            _load_datetime(str(row["last_recovery_attempt_at"]))
+            if row["last_recovery_attempt_at"]
+            else None
+        ),
+        recovery_notification_sent=bool(row["recovery_notification_sent"]),
     )
 
 
@@ -1169,6 +1462,15 @@ def _job_values(record: JobRecord) -> tuple[Any, ...]:
         record.delivery_file_unique_id,
         record.attempt,
         record.url_classification,
+        record.story_delivery_mode.value if record.story_delivery_mode else None,
+        record.recoverability_class,
+        record.recovery_attempt_count,
+        record.last_recovery_version,
+        record.failed_app_version,
+        _dump_datetime(record.last_recovery_attempt_at)
+        if record.last_recovery_attempt_at
+        else None,
+        int(record.recovery_notification_sent),
     )
 
 
@@ -1182,6 +1484,28 @@ def _load_datetime(value: str) -> datetime:
 
 def _now_text() -> str:
     return _dump_datetime(datetime.now(UTC))
+
+
+def _apply_per_user_cap(
+    rows: list[sqlite3.Row],
+    *,
+    limit: int,
+    max_per_user: int | None,
+) -> list[sqlite3.Row]:
+    """Oldest-first fairness: keep at most ``max_per_user`` rows per user, up to ``limit`` total."""
+    if max_per_user is None or max_per_user <= 0:
+        return rows[:limit]
+    per_user: dict[int, int] = {}
+    selected: list[sqlite3.Row] = []
+    for row in rows:
+        user_id = int(row["user_id"])
+        if per_user.get(user_id, 0) >= max_per_user:
+            continue
+        selected.append(row)
+        per_user[user_id] = per_user.get(user_id, 0) + 1
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def _ensure_column(

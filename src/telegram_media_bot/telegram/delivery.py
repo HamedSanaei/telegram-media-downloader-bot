@@ -45,6 +45,7 @@ from telegram_media_bot.domain.models import (
     DownloadResult,
     ImageDeliveryMode,
     MediaKind,
+    StoryDeliveryMode,
 )
 from telegram_media_bot.infrastructure.archive.multipart_zip import MultipartZipBuilder
 
@@ -381,6 +382,8 @@ class TelegramDeliveryGateway(DeliveryGateway):
         )
 
     def _preferred_method(self, result: DownloadResult) -> DeliveryMethod:
+        if result.story_delivery_mode is StoryDeliveryMode.FILE:
+            return DeliveryMethod.DOCUMENT
         if (
             result.image_delivery_mode is ImageDeliveryMode.DOCUMENT
             and result.kind is MediaKind.IMAGE
@@ -1049,6 +1052,7 @@ async def _deliver_batch(
             duration_seconds=result.duration_seconds,
             mime_type=artifact.mime_type,
             inline_video_streamable=artifact.inline_video_streamable,
+            story_delivery_mode=result.story_delivery_mode,
         )
         # Stable per-item ordinal identity: the artifact position, not the delivery order,
         # so partial failures never renumber successful items.

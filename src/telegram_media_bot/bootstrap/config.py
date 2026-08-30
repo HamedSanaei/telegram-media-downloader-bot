@@ -485,8 +485,60 @@ class UpdateOperationsSection(StrictModel):
     prune_old_project_images_after_success: bool = True
 
 
+class InboundUpdatesSection(StrictModel):
+    """Retention and cleanup of the durable Telegram inbound-update inbox."""
+
+    #: Maximum age of a reserved-but-unfinished Telegram status effect before it is quarantined.
+    effect_pending_stale_minutes: int = Field(default=10, ge=1, le=1440)
+
+    #: How long COMPLETED update history is kept before bounded purging.
+    completed_retention_days: int = Field(default=14, ge=1, le=365)
+    #: How long TERMINAL_FAILURE history is kept before bounded purging.
+    terminal_failure_retention_days: int = Field(default=30, ge=1, le=365)
+    #: Maximum rows deleted per maintenance pass (bounds SQLite write-lock time).
+    cleanup_batch_size: int = Field(default=500, ge=1, le=5000)
+    #: Unfinished updates older than this are surfaced as stuck (never auto-deleted).
+    stuck_after_minutes: int = Field(default=60, ge=1, le=10080)
+    #: Retention for completed/uncertain side-effect ledger rows.
+    effect_retention_days: int = Field(default=30, ge=1, le=365)
+
+
 class OperationsSection(StrictModel):
     update: UpdateOperationsSection = Field(default_factory=UpdateOperationsSection)
+    inbound_updates: InboundUpdatesSection = Field(default_factory=InboundUpdatesSection)
+
+
+class RecoverySection(StrictModel):
+    """Bounded automatic recovery of explicitly recoverable failed media jobs."""
+
+    cookie_remediation_enabled: bool = True
+    app_fix_recovery_enabled: bool = True
+    #: Maximum automatic recovery attempts per job (cookie remediation and/or app fix).
+    max_recovery_attempts: int = Field(default=2, ge=1, le=10)
+    #: Oldest recoverable failed request that is still eligible for automatic recovery.
+    max_recoverable_age_days: int = Field(default=7, ge=1, le=365)
+    #: Send one concise resume notification when a recovered request restarts (no spam).
+    notify_on_resume: bool = True
+    #: Maximum cookie-remediation candidates requeued per pass (oldest-first).
+    remediation_batch_size: int = Field(default=20, ge=1, le=500)
+    #: Maximum app-fix recovery candidates requeued at startup.
+    startup_recovery_batch_size: int = Field(default=20, ge=1, le=500)
+    #: Maximum recovery-requeue reconciliation candidates per pass.
+    reconciliation_batch_size: int = Field(default=50, ge=1, le=1000)
+    #: Optional absolute outstanding-queue override. Null derives a threshold from queue.max_jobs.
+    queue_pressure_threshold: int | None = Field(default=None, ge=1, le=100000)
+    #: Multiplier applied to queue.max_jobs to derive the outstanding-queue pressure threshold.
+    #: queue.max_jobs is ARQ worker concurrency, so the threshold is "waves of outstanding work"
+    #: relative to how many jobs one worker can run at once.
+    queue_backlog_per_worker_slot: int = Field(default=4, ge=1, le=100)
+    #: Bounded fairness: never take more than this many candidates per user per batch.
+    max_recovery_per_user: int = Field(default=5, ge=1, le=100)
+
+    def effective_queue_pressure_threshold(self, queue_max_jobs: int) -> int:
+        """Absolute outstanding-queue threshold: explicit override or concurrency * multiplier."""
+        if self.queue_pressure_threshold is not None:
+            return self.queue_pressure_threshold
+        return max(1, queue_max_jobs * self.queue_backlog_per_worker_slot)
 
 
 class Settings(StrictModel):
@@ -504,6 +556,7 @@ class Settings(StrictModel):
     observability: ObservabilitySection
     operations: OperationsSection = Field(default_factory=OperationsSection)
     cookie_health: CookieHealthSection = Field(default_factory=CookieHealthSection)
+    recovery: RecoverySection = Field(default_factory=RecoverySection)
 
     @model_validator(mode="after")
     def validate_cookie_file_identity(self) -> Settings:

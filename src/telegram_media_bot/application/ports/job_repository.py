@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Protocol
 
+from telegram_media_bot.domain.cookies import CookieService
 from telegram_media_bot.domain.models import (
     DeliveryItemRecord,
     ErrorCategory,
@@ -80,6 +81,54 @@ class JobRepository(Protocol):
     def is_cancel_requested(self, job_id: JobId) -> bool: ...
 
     def reconcile_abandoned(self, older_than: datetime) -> tuple[JobRecoveryRecord, ...]: ...
+
+    def record_recoverable_failure(
+        self,
+        job_id: JobId,
+        category: ErrorCategory | None,
+        app_version: str,
+    ) -> None: ...
+
+    def cookie_recovery_candidates(
+        self,
+        cookie_service: CookieService,
+        *,
+        now: datetime,
+        max_age_days: int,
+        max_attempts: int,
+        limit: int = 25,
+        max_per_user: int | None = None,
+    ) -> tuple[JobRecord, ...]: ...
+
+    def app_fix_recovery_candidates(
+        self,
+        current_version: str,
+        *,
+        now: datetime,
+        max_age_days: int,
+        max_attempts: int,
+        limit: int = 25,
+        max_per_user: int | None = None,
+    ) -> tuple[JobRecord, ...]: ...
+
+    def recovery_requeues(self, limit: int = 50) -> tuple[JobRecord, ...]: ...
+
+    def mark_recovery_requeued(
+        self, job_id: JobId, *, version: str, now: datetime
+    ) -> JobRecord | None: ...
+
+    def mark_recovery_notification_sent(self, job_id: JobId) -> None: ...
+
+    def pending_recoverable_count(self) -> int: ...
+
+    def mark_cookie_remediation_available(
+        self, cookie_service: CookieService, now: datetime
+    ) -> None:
+        """Durably remember a freshly validated cookie for one provider."""
+
+    def clear_cookie_remediation_available(self, cookie_service: CookieService) -> None: ...
+
+    def active_cookie_remediation_providers(self) -> tuple[CookieService, ...]: ...
 
     def purge_expired(self, now: datetime, job_retention_days: int) -> int: ...
 

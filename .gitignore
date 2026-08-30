@@ -43,6 +43,9 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Agent tool state
+.freebuff/
 *TEMPgdl-browser.err
 *TEMPgdl-browser.out
 راهنمای-فارسی-اجرای-ربات-دانلودر-تلگرام-با-Docker-در-ویندوز.pdf

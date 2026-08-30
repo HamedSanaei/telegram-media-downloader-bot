@@ -21,6 +21,7 @@ from aiogram.types import (
 from telegram_media_bot.application.ports.cookie_management import CookieManager
 from telegram_media_bot.application.ports.usage_analytics import UsageChartRenderer
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
+from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.analytics import UsageReport, UsageReportPeriod
@@ -133,6 +134,7 @@ def build_admin_router(
     chart_renderer: UsageChartRenderer | None,
     cookie_manager: CookieManager | None = None,
     cookie_health_service: CookieHealthService | None = None,
+    recovery_service: JobRecoveryService | None = None,
 ) -> Router:
     router = Router(name="admin")
     reports = AdminReportCoordinator()
@@ -466,6 +468,29 @@ def build_admin_router(
                 uploaded_record_count=summary.uploaded_record_count,
                 new_canonical_record_count=summary.new_canonical_record_count,
             )
+            if recovery_service is not None:
+                total_requeued = 0
+                for provider in summary.services:
+                    try:
+                        remediated = await recovery_service.remediate_cookies(provider)
+                    except Exception as exc:
+                        await logger.aerror(
+                            "cookie_remediation_failed",
+                            provider=provider.value,
+                            error_type=type(exc).__name__,
+                        )
+                        continue
+                    total_requeued += remediated.requeued
+                    await logger.ainfo(
+                        "cookie_remediation_completed",
+                        provider=provider.value,
+                        discovered=remediated.discovered,
+                        requeued=remediated.requeued,
+                    )
+                if total_requeued:
+                    await message.answer(
+                        f"🔁 {total_requeued} درخواست قبلی مرتبط دوباره در صف قرار گرفت."
+                    )
         await message.answer(text, reply_markup=build_admin_cookie_keyboard())
 
     @router.message(StateFilter(AdminCookieState.awaiting_upload))

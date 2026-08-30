@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -9,16 +11,22 @@ import structlog
 from aiogram import Bot
 from arq import cron
 from arq.connections import ArqRedis, RedisSettings
+from arq.jobs import Job as ArqJob
+from arq.jobs import JobStatus as ArqJobStatus
 from arq.typing import WorkerSettingsBase
 
+from telegram_media_bot.application.ports.delivery import DeliveryGateway
 from telegram_media_bot.application.ports.download_engine import DownloadEngine
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.download_service import DownloadService
+from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
 from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.domain.models import (
     ComponentHealth,
     HealthReport,
+    JobId,
     JobKind,
+    JobRecord,
     JobStatus,
     RecoveryDecision,
 )
@@ -33,6 +41,10 @@ from telegram_media_bot.infrastructure.observability.health_server import Health
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_cookie_health import (
     SqliteCookieHealthRepository,
+)
+from telegram_media_bot.infrastructure.persistence.sqlite_effects import SqliteEffectLedger
+from telegram_media_bot.infrastructure.persistence.sqlite_inbound_updates import (
+    SqliteInboundUpdateRepository,
 )
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.queue.arq_queue import ArqJobQueue
@@ -59,6 +71,8 @@ from telegram_media_bot.workers.jobs import (
 
 logger = structlog.get_logger(__name__)
 
+RecoveryNotifier = Callable[[JobRecord], Awaitable[None]]
+
 
 async def startup(ctx: dict[str, Any]) -> None:
     settings = load_settings(require_token=True)
@@ -73,6 +87,10 @@ async def startup(ctx: dict[str, Any]) -> None:
     try:
         repository = SqliteJobRepository(settings.database_path())
         await asyncio.to_thread(repository.initialize)
+        inbound_store = SqliteInboundUpdateRepository(settings.database_path())
+        await asyncio.to_thread(inbound_store.initialize)
+        effect_store = SqliteEffectLedger(settings.database_path())
+        await asyncio.to_thread(effect_store.initialize)
         cookie_health_store = SqliteCookieHealthRepository(settings.database_path())
         await asyncio.to_thread(cookie_health_store.initialize)
         ytdlp_engine = YtDlpEngine(settings)
@@ -123,6 +141,8 @@ async def startup(ctx: dict[str, Any]) -> None:
         ctx.update(
             settings=settings,
             repository=repository,
+            inbound_updates=inbound_store,
+            effect_ledger=effect_store,
             bot=bot,
             engine=engine,
             gallery_engine=gallery_engine,
@@ -225,6 +245,52 @@ async def startup(ctx: dict[str, Any]) -> None:
             failed_paths=startup_cleanup.failed_paths_count,
             duration_seconds=startup_cleanup.duration_seconds,
         )
+        delivery_gateway = cast(DeliveryGateway, ctx["delivery"])
+        effective_recovery_threshold = settings.recovery.effective_queue_pressure_threshold(
+            settings.queue.max_jobs
+        )
+        stale_effects = await asyncio.to_thread(
+            effect_store.reconcile_stale_pending,
+            datetime.now(UTC),
+            stale_after_minutes=settings.operations.inbound_updates.effect_pending_stale_minutes,
+            batch_size=settings.operations.inbound_updates.cleanup_batch_size,
+        )
+        metrics.record_effects_marked_uncertain(stale_effects)
+        metrics.set_effects_stale_pending(effect_store.state_counts().get("pending", 0))
+        recovery_service = JobRecoveryService(
+            repository,
+            queue,
+            max_attempts=settings.recovery.max_recovery_attempts,
+            max_age_days=settings.recovery.max_recoverable_age_days,
+            notify=(
+                _resume_notifier(delivery_gateway) if settings.recovery.notify_on_resume else None
+            ),
+            remediation_batch_size=settings.recovery.remediation_batch_size,
+            startup_recovery_batch_size=settings.recovery.startup_recovery_batch_size,
+            reconciliation_batch_size=settings.recovery.reconciliation_batch_size,
+            queue_pressure_threshold=effective_recovery_threshold,
+            max_recovery_per_user=settings.recovery.max_recovery_per_user,
+            queue_depth_probe=queue.queue_depth,
+        )
+        ctx["recovery_service"] = recovery_service
+        metrics.set_recoverable_batch_size(settings.recovery.remediation_batch_size)
+        metrics.set_recovery_effective_threshold(recovery_service.effective_queue_threshold)
+        startup_outstanding, startup_headroom = await recovery_service.queue_observability()
+        metrics.set_recovery_outstanding_queue_depth(startup_outstanding)
+        metrics.set_recovery_available_headroom(startup_headroom)
+        appfix_recovered = 0
+        if settings.recovery.app_fix_recovery_enabled:
+            appfix_summary = await recovery_service.recover_after_app_fix()
+            appfix_recovered = appfix_summary.requeued
+            for _ in range(appfix_recovered):
+                metrics.record_recovery("app_fix")
+        recovery_requeues_reconciled = await recovery_service.reconcile_recovery_requeues(
+            lambda job_id: _recovery_arq_missing(
+                cast(ArqRedis, ctx["redis"]), settings.redis.queue_name, job_id
+            )
+        )
+        recoverable_pending = recovery_service.pending_recoverable_count()
+        metrics.set_recoverable_pending(recoverable_pending)
         server = HealthServer(
             host=settings.observability.health_host,
             port=settings.observability.health_port,
@@ -240,6 +306,9 @@ async def startup(ctx: dict[str, Any]) -> None:
             recovered_jobs=len(recovered),
             requeued_jobs=requeued_count,
             cancelled_jobs=cancelled_count,
+            appfix_recovered_jobs=appfix_recovered,
+            recovery_requeues_reconciled=recovery_requeues_reconciled,
+            recoverable_jobs_pending=recoverable_pending,
             cleanup_directories=startup_cleanup.directories_deleted,
             cleanup_bytes_reclaimed=startup_cleanup.bytes_reclaimed,
             cleanup_failed_paths=startup_cleanup.failed_paths_count,
@@ -300,6 +369,31 @@ async def _health_report(ctx: dict[str, Any]) -> HealthReport:
             )
         )
     return HealthReport(checks=tuple(checks))
+
+
+def _resume_notifier(delivery: DeliveryGateway) -> RecoveryNotifier:
+    from telegram_media_bot.telegram.texts import RESUME_NOTICE_TEXT
+
+    async def notify(record: JobRecord) -> None:
+        if record.status_message_id is None:
+            return
+        with suppress(Exception):
+            await delivery.edit_text(record.chat_id, record.status_message_id, RESUME_NOTICE_TEXT)
+
+    return notify
+
+
+async def _recovery_arq_missing(
+    redis: ArqRedis,
+    queue_name: str,
+    job_id: JobId,
+) -> bool:
+    """Whether a durable job has no live ARQ job, so its enqueue can be retried safely."""
+    try:
+        status = await ArqJob(str(job_id), redis, _queue_name=queue_name).status()
+    except Exception:
+        return False
+    return status is ArqJobStatus.not_found
 
 
 def _storage_writable(settings: Settings) -> bool:

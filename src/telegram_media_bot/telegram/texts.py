@@ -53,3 +53,4 @@ SELECTION_INVALID_TEXT = "این انتخاب معتبر نیست یا متعل�
 CANCELLED_TEXT = "درخواست لغو شد و فایل‌های موقت پاک می‌شوند."
 CANNOT_CANCEL_TEXT = "این کار پیدا نشد یا دیگر قابل لغو نیست."
 PROCESSING_TEXT = "در حال دریافت… {percent}٪"
+RESUME_NOTICE_TEXT = "مشکل دسترسی این درخواست برطرف شد و دانلود دوباره در حال انجام است."

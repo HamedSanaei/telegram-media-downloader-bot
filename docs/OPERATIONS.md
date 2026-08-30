@@ -19,6 +19,86 @@ Production operators can instead use the Docker-first one-line installers and th
 menu/command documented in `docs/INSTALLATION.md`. The release topology additionally runs the
 official pinned Local Bot API in a dedicated Compose service.
 
+## Service lifecycle and automatic recovery
+
+Every production service (`bot`, `worker`, `local-api`, `redis`) runs with the Compose restart
+policy `unless-stopped`, because an always-on Telegram bot must survive Docker daemon restarts
+and server reboots. Docker owns recovery in every case:
+
+- **Crash recovery** — a container that exits is restarted automatically.
+- **Daemon/host restart** — every service that was running is restored when Docker comes back;
+  the stack never ends up with only Redis online.
+- **Explicit `tmb stop` / `tmb uninstall`** — services are intentionally stopped (`compose down`)
+  and are never resurrected by the policy.
+
+`tmb restart` recreates containers explicitly and is unaffected. The release updater stops only
+running application writers with `compose stop` (Redis stays online), which marks them
+intentionally stopped, so the policy does not race the update transaction; failed transactions
+still restore the exact prior service set. Health checks, startup readiness, and update health
+verification are unchanged — the restart policy is not a replacement for them.
+
+### Durable updates and job recovery
+
+Telegram updates are durably journaled to SQLite before their offset is acknowledged, so a message
+received while the bot is offline or when the process dies mid-handling is replayed after a restart
+until it is answered. Completed updates are never replayed and duplicate deliveries are ignored.
+
+Supported-provider download failures classified as recoverable (expired/invalid cookies, or an
+app/runtime bug later fixed in a new release) can resume automatically: replacing a provider's
+cookie requeues that provider's eligible auth-failed jobs, and an app-fix failure gets one bounded
+retry when a newer version is deployed. Unsupported sources (e.g. Pornhub and other non-supported
+sites), cancelled jobs, and `delivery_uncertain` jobs are never replayed automatically — the
+`/resolve` operator flow still owns those.
+
+Recovery is gradual, never a burst. Cookie/app remediation requeues one bounded batch per pass
+(default 20 jobs, oldest-first with a per-user cap), and the existing maintenance job keeps
+draining the backlog in later passes until it is exhausted — the administrator does not re-upload
+the cookie repeatedly. When the live queue depth is at or above
+`operations.recovery.queue_pressure_threshold`, recovery defers to a later pass. SQLite remains the
+source of truth: if Redis is down when a requeue is committed, startup reconciliation re-enqueues
+it once; duplicate ARQ submissions cannot duplicate delivery. Bounded attempts (`max_recovery_attempts`)
+and a max age (`max_recoverable_age_days`) prevent infinite loops.
+
+Durable Telegram updates are not kept forever. COMPLETED inbox history is purged after
+`operations.inbound_updates.completed_retention_days` (default 14), TERMINAL_FAILURE after
+`terminal_failure_retention_days` (default 30), in batches of at most `cleanup_batch_size` (default
+500) per maintenance pass. RECEIVED/PROCESSING updates are never age-purged — they may be
+unfinished user work — and instead surface as `inbound_updates_stuck` (metric + worker log) when
+older than `stuck_after_minutes`.
+
+A reserved status effect that remains PENDING beyond
+`operations.inbound_updates.effect_pending_stale_minutes` (default 10 minutes) is quarantined as
+UNCERTAIN during startup and maintenance. This is intentionally not retried: SQLite cannot know
+whether Telegram received the request before a crash, so avoiding duplicate visible messages is
+safer than replaying uncertain cosmetic status. The side-effect ledger (inspection status, Story
+delivery-mode prompt, recovery notices) is purged after `effect_retention_days`; fresh PENDING
+rows are never purged, and UNCERTAIN rows become purgeable only after stale reconciliation.
+
+Recovery queue pressure is based on outstanding ARQ queue entries, not a fixed queue capacity.
+ARQ's `queue.max_jobs` is worker concurrency (a semaphore bounding jobs running simultaneously).
+The pressure probe reads `zcard` on the queue sorted set. Because ARQ uses pessimistic execution, a
+job stays in that sorted set while waiting, while running, and while deferred/retried, and is
+removed only at final success or failure — so `queue_depth()` counts **outstanding ARQ queue
+entries** (waiting + running + deferred/retry), not a waiting-only backlog.
+
+Unless `operations.recovery.queue_pressure_threshold` is explicitly set, the effective threshold is
+`queue.max_jobs * operations.recovery.queue_backlog_per_worker_slot` (default multiplier 4). For
+the default `queue.max_jobs = 3` that is a threshold of **12 outstanding entries total** — which
+may include up to 3 running jobs plus remaining waiting/deferred work; the multiplier is a pressure
+heuristic relative to worker concurrency, not a literal queue-capacity calculation. Automatic
+historical recovery only fills spare headroom below that threshold — a batch is trimmed to
+`threshold - current_outstanding_depth` — and is deferred entirely when depth reaches the
+threshold. Fresh user requests keep their existing queue admission behavior and always have
+priority over historical recovery. Startup and maintenance retry deferred recovery in later bounded
+passes. Recovery enqueue reconciliation is durable-state repair (jobs already committed as QUEUED
+in SQLite but missing from Redis) and is therefore not throttled, so it always converges and never
+strands a job.
+
+Durable update processing is at-least-once: an update replayed after a crash reuses the durable
+job and the already-sent status message instead of duplicating them. Final media delivery is never
+auto-retried through this mechanism; uncertain delivery remains `delivery_uncertain` and is owned
+by `/resolve`.
+
 Release rollback uses `TMB_RELEASE_TAG=vX.Y.Z tmb update`. The updater validates the full staged
 Bash/Compose/config payload and pulls candidate images before stopping writers. It records all four
 project services, stops only the running bot/worker/Local API writers, backs up state, installs

@@ -183,6 +183,13 @@ class ImageDeliveryMode(StrEnum):
     DOCUMENT = "document"
 
 
+class StoryDeliveryMode(StrEnum):
+    """Delivery mode for an Instagram all-active-Stories batch."""
+
+    NORMAL = "normal"
+    FILE = "file"
+
+
 class DeliveryProvider(StrEnum):
     BOT_API = "bot_api"
     MULTIPART = "multipart"
@@ -319,6 +326,8 @@ class DownloadResult:
     artifacts: tuple[DownloadArtifact, ...] = ()
     inline_video_streamable: bool = False
     image_delivery_mode: ImageDeliveryMode | None = None
+    #: Delivery mode for an ``INSTAGRAM_ALL_STORIES`` batch; None means the normal media path.
+    story_delivery_mode: StoryDeliveryMode | None = None
 
     @property
     def delivery_artifacts(self) -> tuple[DownloadArtifact, ...]:
@@ -451,6 +460,20 @@ class JobRecord:
     attempt: int = 0
     #: Original URL classification captured at creation (for example "profile", "story").
     url_classification: str | None = None
+    #: Delivery mode for an ``INSTAGRAM_ALL_STORIES`` collection batch; None -> default media.
+    story_delivery_mode: StoryDeliveryMode | None = None
+    #: Explicit recoverability classification captured when the job became terminal.
+    recoverability_class: str | None = None
+    #: Bounded automatic-recovery attempt counter (cookie or app-fix remediation).
+    recovery_attempt_count: int = 0
+    #: App version on which the most recent recovery attempt ran (prevents per-restart loops).
+    last_recovery_version: str | None = None
+    #: App version that produced the terminal failure (used for app-fix gating).
+    failed_app_version: str | None = None
+    #: When the most recent recovery attempt ran (bounds age of retried requests).
+    last_recovery_attempt_at: datetime | None = None
+    #: Whether a resume/status notification was already sent for the current recovery attempt.
+    recovery_notification_sent: bool = False
 
 
 @dataclass(frozen=True, slots=True)

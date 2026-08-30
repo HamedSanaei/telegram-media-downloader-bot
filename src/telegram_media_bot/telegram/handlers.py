@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
@@ -8,7 +9,14 @@ import structlog
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup
+from aiogram.types import (
+    CallbackQuery,
+    ForceReply,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 
 from telegram_media_bot.application.ports.cookie_management import CookieManager
 from telegram_media_bot.application.ports.job_queue import JobQueue
@@ -17,10 +25,12 @@ from telegram_media_bot.application.ports.usage_analytics import UsageChartRende
 from telegram_media_bot.application.ports.user_repository import UserRepository
 from telegram_media_bot.application.services.access_policy import AccessPolicyService
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
+from telegram_media_bot.application.services.effect_ledger import EffectLedgerService
 from telegram_media_bot.application.services.instagram_delivery import (
     instagram_default_bundle_option,
     requires_instagram_image_confirmation,
 )
+from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.application.services.native_options import (
     build_native_option_catalog,
@@ -52,6 +62,7 @@ from telegram_media_bot.domain.models import (
     MediaInfo,
     OutputContainer,
     SelectionToken,
+    StoryDeliveryMode,
     UserProfile,
 )
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
@@ -75,6 +86,7 @@ from telegram_media_bot.telegram.texts import (
     UNSAFE_URL_TEXT,
 )
 from telegram_media_bot.telegram.ui import (
+    STORY_DELIVERY_MODE_PROMPT,
     cancellation_keyboard,
     container_keyboard,
     highlight_tray_keyboard,
@@ -84,6 +96,7 @@ from telegram_media_bot.telegram.ui import (
     render_media_info,
     required_channels_keyboard,
     selection_keyboard,
+    story_delivery_mode_keyboard,
 )
 from telegram_media_bot.telegram.url_extractor import extract_first_url
 
@@ -102,6 +115,7 @@ def build_router(
     usage_chart_renderer: UsageChartRenderer | None = None,
     cookie_manager: CookieManager | None = None,
     cookie_health_service: CookieHealthService | None = None,
+    effects: EffectLedgerService | None = None,
 ) -> Router:
     router = Router(name="main")
     router.message.outer_middleware(CorrelationMiddleware())
@@ -709,7 +723,10 @@ def build_router(
         )
 
     @router.callback_query(F.data.startswith("s2:"))
-    async def choose_story_action(callback: CallbackQuery) -> None:
+    async def choose_story_action(
+        callback: CallbackQuery,
+        durable_update_id: int | None = None,
+    ) -> None:
         if callback.from_user is None or callback.data is None:
             return
         await _save_callback_user(users, callback)
@@ -725,33 +742,46 @@ def build_router(
             if story_url.instagram_kind != "story":
                 raise SelectionOwnershipError("Story action was not offered")
             if action == "all":
+                # Ask the user how the entire active-story batch should be delivered
+                # before creating the bulk job. The chosen mode is persisted on the
+                # durable JobRecord so it survives restart and recovery. The prompt is
+                # a replay-sensitive effect: a replayed callback must not stack prompts.
                 username = _story_username(selection.media.webpage_url)
                 if username is None:
                     raise SelectionOwnershipError("Story account is missing")
-                record, created = await asyncio.to_thread(
-                    jobs.create_download,
-                    chat_id=selection.chat_id,
-                    user_id=selection.owner_user_id,
-                    url=f"https://www.instagram.com/stories/{username}/",
-                    mode=DownloadMode.INSTAGRAM_ALL_STORIES,
-                )
                 if isinstance(callback.message, Message):
-                    await callback.message.edit_text(
-                        QUEUED_TEXT.format(job_id=record.job_id),
-                        reply_markup=cancellation_keyboard(record.job_id),
-                    )
-                    await asyncio.to_thread(
-                        repository.set_status_message, record.job_id, callback.message.message_id
-                    )
-                if created:
-                    await _enqueue_download_or_fail(
-                        queue=queue,
-                        repository=repository,
-                        users=users,
-                        record=record,
-                        callback=callback,
-                    )
-                await callback.answer("ثبت شد" if created else "این دانلود از قبل فعال است")
+                    prompt_message = callback.message
+
+                    async def show_prompt() -> int:
+                        await prompt_message.edit_text(
+                            STORY_DELIVERY_MODE_PROMPT,
+                            reply_markup=story_delivery_mode_keyboard(selection),
+                        )
+                        return prompt_message.message_id
+
+                    async def reuse_prompt(message_id: int) -> None:
+                        if prompt_message.bot is None:
+                            return
+                        with suppress(Exception):
+                            await prompt_message.bot.edit_message_text(
+                                STORY_DELIVERY_MODE_PROMPT,
+                                chat_id=prompt_message.chat.id,
+                                message_id=message_id,
+                                reply_markup=story_delivery_mode_keyboard(selection),
+                            )
+
+                    if effects is not None and durable_update_id is not None:
+                        await effects.send_or_reuse(
+                            effect_key=f"update:{durable_update_id}:story_delivery_mode_prompt",
+                            effect_type="story_delivery_mode_prompt",
+                            update_id=durable_update_id,
+                            chat_id=selection.chat_id,
+                            send=show_prompt,
+                            edit=reuse_prompt,
+                        )
+                    else:
+                        await show_prompt()
+                await callback.answer()
                 return
             if action != "single":
                 raise SelectionOwnershipError("Unknown story action")
@@ -775,6 +805,70 @@ def build_router(
                 url=selection.media.webpage_url,
                 mode=option.mode,
                 selected_format_ids=option.selected_format_ids,
+            )
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(
+                    QUEUED_TEXT.format(job_id=record.job_id),
+                    reply_markup=cancellation_keyboard(record.job_id),
+                )
+                await asyncio.to_thread(
+                    repository.set_status_message, record.job_id, callback.message.message_id
+                )
+            if created:
+                await _enqueue_download_or_fail(
+                    queue=queue,
+                    repository=repository,
+                    users=users,
+                    record=record,
+                    callback=callback,
+                )
+            await callback.answer("ثبت شد" if created else "این دانلود از قبل فعال است")
+        except SelectionExpiredError:
+            await callback.answer(SELECTION_EXPIRED_TEXT, show_alert=True)
+        except SelectionOwnershipError, ValueError:
+            await callback.answer(SELECTION_INVALID_TEXT, show_alert=True)
+        except MembershipRequiredError as exc:
+            if isinstance(callback.message, Message):
+                await callback.message.edit_text(
+                    _membership_text(),
+                    reply_markup=required_channels_keyboard(exc.channels),
+                )
+            await callback.answer("ابتدا در کانال‌های الزامی عضو شوید.", show_alert=True)
+        except AccessDeniedError:
+            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+        except UserRateLimitError:
+            await callback.answer(RATE_LIMIT_TEXT, show_alert=True)
+        except PolicyBackendError:
+            await callback.answer(SERVICE_UNAVAILABLE_TEXT, show_alert=True)
+
+    @router.callback_query(F.data.startswith("s3:"))
+    async def choose_all_stories_delivery_mode(callback: CallbackQuery) -> None:
+        """Create the all-active-Stories job after the user picks a delivery mode."""
+        if callback.from_user is None or callback.data is None:
+            return
+        await _save_callback_user(users, callback)
+        try:
+            await access_policy.authorize_request(callback.from_user.id, consume_rate_limit=False)
+            _prefix, raw_token, raw_mode = callback.data.split(":", maxsplit=2)
+            mode = StoryDeliveryMode(raw_mode)
+            selection = await asyncio.to_thread(
+                repository.get_selection,
+                SelectionToken(raw_token),
+                callback.from_user.id,
+            )
+            story_url = canonicalize_media_url(selection.media.webpage_url)
+            if story_url.instagram_kind != "story":
+                raise SelectionOwnershipError("Story action was not offered")
+            username = _story_username(selection.media.webpage_url)
+            if username is None:
+                raise SelectionOwnershipError("Story account is missing")
+            record, created = await asyncio.to_thread(
+                jobs.create_download,
+                chat_id=selection.chat_id,
+                user_id=selection.owner_user_id,
+                url=f"https://www.instagram.com/stories/{username}/",
+                mode=DownloadMode.INSTAGRAM_ALL_STORIES,
+                story_delivery_mode=mode,
             )
             if isinstance(callback.message, Message):
                 await callback.message.edit_text(
@@ -969,6 +1063,8 @@ def build_router(
     async def submit_url(
         message: Message,
         invalid_markup: ReplyKeyboardMarkup | None = None,
+        *,
+        durable_update_id: int | None = None,
     ) -> bool:
         if message.from_user is None:
             return False
@@ -1012,6 +1108,51 @@ def build_router(
             url=intent.canonical_url,
         )
         is_admin = message.from_user.id in settings.telegram.admin_ids
+        effect_key = (
+            f"update:{durable_update_id}:inspection_status"
+            if durable_update_id is not None
+            else None
+        )
+        admin_markup = build_admin_main_keyboard() if is_admin else None
+
+        async def send_inspection_status(
+            text: str,
+            *,
+            reply_markup: InlineKeyboardMarkup
+            | ReplyKeyboardMarkup
+            | ReplyKeyboardRemove
+            | ForceReply
+            | None = None,
+        ) -> int | None:
+            """Replay-safe inspection status: reuse/skip when already sent for this update."""
+            if effects is None or effect_key is None:
+                response = await message.answer(text, reply_markup=reply_markup)
+                return response.message_id
+
+            async def send_fresh() -> int:
+                response = await message.answer(text, reply_markup=reply_markup)
+                return response.message_id
+
+            async def edit_existing(message_id: int) -> None:
+                if message.bot is None:
+                    return
+                with suppress(Exception):
+                    await message.bot.edit_message_text(
+                        text,
+                        chat_id=message.chat.id,
+                        message_id=message_id,
+                    )
+
+            outcome = await effects.send_or_reuse(
+                effect_key=effect_key,
+                effect_type="inspection_status",
+                update_id=durable_update_id,
+                chat_id=message.chat.id,
+                send=send_fresh,
+                edit=edit_existing,
+            )
+            return outcome.message_id
+
         if not created:
             try:
                 await queue.enqueue_inspection(
@@ -1023,7 +1164,7 @@ def build_router(
             except Exception as exc:
                 await message.answer(
                     SERVICE_UNAVAILABLE_TEXT,
-                    reply_markup=build_admin_main_keyboard() if is_admin else None,
+                    reply_markup=admin_markup,
                 )
                 await logger.aexception(
                     "inspection_reconcile_failed",
@@ -1032,10 +1173,13 @@ def build_router(
                     error_type=type(exc).__name__,
                 )
                 return True
-            await message.answer(
-                INSPECTION_ACTIVE_TEXT,
-                reply_markup=build_admin_main_keyboard() if is_admin else None,
+            status_message_id = await send_inspection_status(
+                INSPECTION_ACTIVE_TEXT, reply_markup=admin_markup
             )
+            if status_message_id is not None:
+                await asyncio.to_thread(
+                    repository.set_status_message, record.job_id, status_message_id
+                )
             await logger.ainfo(
                 "inspection_reconciled",
                 job_id=record.job_id,
@@ -1043,12 +1187,13 @@ def build_router(
                 status_message_reused=record.status_message_id is not None,
             )
             return True
-        response = await message.answer(
-            INSPECTION_QUEUED_TEXT.format(job_id=record.job_id),
+        status_message_id = await send_inspection_status(
+            INSPECTION_QUEUED_TEXT.format(job_id=record.job_id)
         )
-        await asyncio.to_thread(repository.set_status_message, record.job_id, response.message_id)
+        if status_message_id is not None:
+            await asyncio.to_thread(repository.set_status_message, record.job_id, status_message_id)
         if is_admin:
-            await message.answer(ADMIN_MENU_TEXT, reply_markup=build_admin_main_keyboard())
+            await message.answer(ADMIN_MENU_TEXT, reply_markup=admin_markup)
         await asyncio.to_thread(
             users.record_request,
             message.from_user.id,
@@ -1069,7 +1214,13 @@ def build_router(
                 error_category=ErrorCategory.INTERNAL,
                 error_summary="queue_enqueue_failed",
             )
-            await response.edit_text("ثبت کار در صف ممکن نشد؛ دوباره تلاش کنید.")
+            if status_message_id is not None and message.bot is not None:
+                with suppress(Exception):
+                    await message.bot.edit_message_text(
+                        "ثبت کار در صف ممکن نشد؛ دوباره تلاش کنید.",
+                        chat_id=message.chat.id,
+                        message_id=status_message_id,
+                    )
             await logger.aexception(
                 "inspection_enqueue_failed",
                 job_id=record.job_id,
@@ -1085,14 +1236,26 @@ def build_router(
             chart_renderer=usage_chart_renderer,
             cookie_manager=cookie_manager,
             cookie_health_service=cookie_health_service,
+            recovery_service=JobRecoveryService(
+                repository,
+                queue,
+                max_attempts=settings.recovery.max_recovery_attempts,
+                max_age_days=settings.recovery.max_recoverable_age_days,
+                remediation_batch_size=settings.recovery.remediation_batch_size,
+                queue_pressure_threshold=settings.recovery.effective_queue_pressure_threshold(
+                    settings.queue.max_jobs
+                ),
+                max_recovery_per_user=settings.recovery.max_recovery_per_user,
+                queue_depth_probe=queue.queue_depth,
+            ),
         )
     )
 
     url_router = Router(name="url")
 
     @url_router.message()
-    async def enqueue_url(message: Message) -> None:
-        await submit_url(message)
+    async def enqueue_url(message: Message, durable_update_id: int | None = None) -> None:
+        await submit_url(message, durable_update_id=durable_update_id)
 
     router.include_router(url_router)
     return router
@@ -1229,6 +1392,7 @@ async def _enqueue_download_or_fail(
             native_video_codec=record.native_video_codec,
             selected_format_ids=record.selected_format_ids,
             image_delivery_mode=record.image_delivery_mode,
+            story_delivery_mode=record.story_delivery_mode,
         )
     except Exception as exc:
         await asyncio.to_thread(

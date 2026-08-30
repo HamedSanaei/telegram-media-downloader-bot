@@ -134,8 +134,10 @@ recorded in `docs/HANDOFF_REPORT.md` after the release-quality run.
 - Linux updates execute from an isolated runner, validate the complete staged Bash/Compose/config
   payload before stopping services, atomically replace top-level application entries with rollback
   snapshots, probe real runtime-user writes plus SQLite WAL, verify post-start health, and restore
-  the prior application/image/permissions/service set on failure. Container restart retries are
-  bounded to prevent a persistent permission failure from consuming CPU indefinitely.
+  the prior application/image/permissions/service set on failure. Every production service
+  (`bot`, `worker`, `local-api`, `redis`) uses the `unless-stopped` Compose restart policy, so
+  crashed containers and the full stack recover automatically after Docker daemon restarts and
+  host reboots; explicit operator stops remain intentional.
 - Terminal job workspaces are removed idempotently after success, failure, cancellation, timeout,
   or uncertain delivery; startup and maintenance sweepers preserve active jobs while reclaiming
   stale or terminal directories, with structured cleanup metrics.

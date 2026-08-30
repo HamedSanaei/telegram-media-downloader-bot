@@ -4,6 +4,7 @@ import asyncio
 import secrets
 import threading
 from contextlib import suppress
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import PackageNotFoundError, version
 from time import monotonic
@@ -97,6 +98,7 @@ from telegram_media_bot.domain.models import (
     ProgressEvent,
     SelectionRecord,
     SelectionToken,
+    StoryDeliveryMode,
 )
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.storage.workspace import (
@@ -144,7 +146,7 @@ def _project_version() -> str:
     try:
         return version("telegram-media-downloader-bot")
     except PackageNotFoundError:
-        return "1.3.6"
+        return "1.3.7"
 
 
 APP_VERSION = _project_version()
@@ -473,6 +475,12 @@ async def process_inspection_job(
             error_summary=type(exc).__name__,
             attempt=attempt,
         )
+        await asyncio.to_thread(
+            repository.record_recoverable_failure,
+            job_id,
+            ErrorCategory.INTERNAL,
+            APP_VERSION,
+        )
         metrics.record_job(outcome="failed", error=ErrorCategory.INTERNAL.value)
         await _notify_failure(ctx, chat_id, record.status_message_id if record else None)
         context = _build_failure_context(
@@ -630,6 +638,12 @@ async def process_highlight_tray_job(
             error_summary=type(exc).__name__,
             attempt=attempt,
         )
+        await asyncio.to_thread(
+            repository.record_recoverable_failure,
+            job_id,
+            ErrorCategory.INTERNAL,
+            APP_VERSION,
+        )
         metrics.record_job(outcome="failed", error=ErrorCategory.INTERNAL.value)
         await _notify_failure(ctx, chat_id, record.status_message_id if record else None)
         context = _build_failure_context(
@@ -661,6 +675,7 @@ async def process_download_job(
     native_video_codec: str | None = None,
     selected_format_ids: list[str] | tuple[str, ...] | None = None,
     image_delivery_mode: str | None = None,
+    story_delivery_mode: str | None = None,
 ) -> str:
     url = canonicalize_media_url(url).canonical_url
     settings = cast(Settings, ctx["settings"])
@@ -746,6 +761,11 @@ async def process_download_job(
             if image_delivery_mode
             else record.image_delivery_mode
         )
+        selected_story_delivery_mode = (
+            StoryDeliveryMode(story_delivery_mode)
+            if story_delivery_mode
+            else record.story_delivery_mode
+        )
         _gate_collection_cookies(ctx, selected_mode)
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
         reporter = asyncio.create_task(
@@ -796,6 +816,11 @@ async def process_download_job(
         await asyncio.to_thread(
             repository.transition, job_id, JobStatus.DELIVERING, source=result.source
         )
+        if (
+            selected_mode is DownloadMode.INSTAGRAM_ALL_STORIES
+            and selected_story_delivery_mode is not None
+        ):
+            result = replace(result, story_delivery_mode=selected_story_delivery_mode)
         if selected_mode in COLLECTION_MODES:
             summary_title = (
                 "📚 دانلود استوری‌ها تمام شد"  # noqa: RUF001
@@ -1047,6 +1072,12 @@ async def process_download_job(
             error_summary=type(exc).__name__,
             attempt=attempt,
         )
+        await asyncio.to_thread(
+            repository.record_recoverable_failure,
+            job_id,
+            ErrorCategory.INTERNAL,
+            APP_VERSION,
+        )
         metrics.record_job(outcome="failed", error=ErrorCategory.INTERNAL.value)
         await _record_failed_usage(repository, job_id, user_id)
         await _notify_failure(ctx, chat_id, record.status_message_id if record else None)
@@ -1101,6 +1132,7 @@ async def maintenance_job(ctx: dict[str, Any]) -> int:
         return 0
     ctx["maintenance_last_run"] = current
     repository = cast(JobRepository, ctx["repository"])
+    metrics = cast(MetricsRegistry, ctx["metrics"])
     now = datetime.now(UTC)
     purged = await asyncio.to_thread(
         repository.purge_expired, now, settings.storage.job_retention_days
@@ -1112,7 +1144,6 @@ async def maintenance_job(ctx: dict[str, Any]) -> int:
         now,
         cleanup_reason="maintenance",
     )
-    metrics = cast(MetricsRegistry, ctx["metrics"])
     metrics.record_workspace_cleanup(
         files_deleted=cleanup.files_deleted,
         directories_deleted=cleanup.directories_deleted,
@@ -1120,14 +1151,74 @@ async def maintenance_job(ctx: dict[str, Any]) -> int:
         failed_paths=cleanup.failed_paths_count,
         duration_seconds=cleanup.duration_seconds,
     )
-    await logger.ainfo(
-        "maintenance_completed",
-        purged_records=purged,
-        removed_directories=cleanup.directories_deleted,
-        bytes_reclaimed=cleanup.bytes_reclaimed,
-        failed_paths_count=cleanup.failed_paths_count,
-    )
-    return purged + cleanup.directories_deleted
+    total_removed = purged + cleanup.directories_deleted
+    log_context: dict[str, object] = {
+        "purged_records": purged,
+        "removed_directories": cleanup.directories_deleted,
+        "bytes_reclaimed": cleanup.bytes_reclaimed,
+        "failed_paths_count": cleanup.failed_paths_count,
+    }
+
+    # Inbound-update retention: bounded purge of terminal history + stuck visibility.
+    inbound_store = ctx.get("inbound_updates")
+    if inbound_store is not None:
+        inbox = settings.operations.inbound_updates
+        purged_inbound = await asyncio.to_thread(
+            inbound_store.purge_retention,
+            now,
+            completed_retention_days=inbox.completed_retention_days,
+            terminal_failure_retention_days=inbox.terminal_failure_retention_days,
+            batch_size=inbox.cleanup_batch_size,
+        )
+        stuck = await asyncio.to_thread(
+            inbound_store.stuck_count,
+            now - timedelta(minutes=inbox.stuck_after_minutes),
+        )
+        metrics.record_inbound_purged(purged_inbound)
+        metrics.set_inbound_stuck(stuck)
+        total_removed += purged_inbound
+        log_context["purged_inbound_updates"] = purged_inbound
+        log_context["inbound_updates_stuck"] = stuck
+        if stuck:
+            await logger.awarning(
+                "inbound_updates_stuck",
+                stuck_updates=stuck,
+                older_than_minutes=inbox.stuck_after_minutes,
+            )
+
+    # Side-effect ledger: quarantine stale reservations before purging terminal history.
+    effect_store = ctx.get("effect_ledger")
+    if effect_store is not None:
+        stale_effects = await asyncio.to_thread(
+            effect_store.reconcile_stale_pending,
+            now,
+            stale_after_minutes=settings.operations.inbound_updates.effect_pending_stale_minutes,
+            batch_size=settings.operations.inbound_updates.cleanup_batch_size,
+        )
+        metrics.record_effects_marked_uncertain(stale_effects)
+        effect_states = await asyncio.to_thread(effect_store.state_counts)
+        metrics.set_effects_stale_pending(effect_states.get("pending", 0))
+        purged_effects = await asyncio.to_thread(
+            effect_store.purge_retention,
+            now,
+            retention_days=settings.operations.inbound_updates.effect_retention_days,
+            batch_size=settings.operations.inbound_updates.cleanup_batch_size,
+        )
+        total_removed += purged_effects
+        log_context["purged_effects"] = purged_effects
+
+    # Bounded recovery: keep draining fresh-cookie backlogs gradually (no busy loop).
+    recovery_service = ctx.get("recovery_service")
+    if recovery_service is not None:
+        recovery_summary = await recovery_service.recover_maintenance_batch()
+        if recovery_summary.deferred:
+            metrics.record_recovery_deferred()
+        log_context["recovery_requeued"] = recovery_summary.requeued
+        log_context["recovery_discovered"] = recovery_summary.discovered
+        log_context["recovery_deferred"] = recovery_summary.deferred
+
+    await logger.ainfo("maintenance_completed", **log_context)
+    return total_removed
 
 
 async def _handle_controlled_failure(
@@ -1171,6 +1262,7 @@ async def _handle_controlled_failure(
         error_summary=type(exc).__name__,
         attempt=attempt,
     )
+    await asyncio.to_thread(repository.record_recoverable_failure, job_id, category, APP_VERSION)
     metrics.record_job(outcome="failed", error=category.value)
     if record is not None and record.kind is JobKind.DOWNLOAD:
         await _record_failed_usage(repository, job_id, record.user_id)

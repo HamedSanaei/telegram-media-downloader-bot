@@ -24,6 +24,7 @@ from telegram_media_bot.domain.models import (
     OutputContainer,
     SelectionRecord,
     SelectionToken,
+    StoryDeliveryMode,
 )
 from telegram_media_bot.telegram.handlers import build_router
 from telegram_media_bot.telegram.texts import (
@@ -142,33 +143,39 @@ class FakeRepository:
 class FakeJobs:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self._records: list[JobRecord] = []
 
     def _record(self, **kwargs: object) -> tuple[JobRecord, bool]:
         self.calls.append(kwargs)
         now = datetime.now(UTC)
-        return (
-            JobRecord(
-                job_id=JobId(f"job-{len(self.calls)}"),
-                kind=JobKind.DOWNLOAD,
-                status=JobStatus.QUEUED,
-                chat_id=cast(int, kwargs["chat_id"]),
-                user_id=cast(int, kwargs["user_id"]),
-                url=str(kwargs["url"]),
-                mode=cast(DownloadMode, kwargs.get("mode")),
-                idempotency_key="key",
-                created_at=now,
-                updated_at=now,
-                container=cast(OutputContainer, kwargs.get("container")),
-                container_policy=ContainerPolicy.NATIVE_ONLY,
-                selected_format_ids=tuple(
-                    cast(tuple[str, ...], kwargs.get("selected_format_ids") or ())
-                ),
+        record = JobRecord(
+            job_id=JobId(f"job-{len(self._records) + 1}"),
+            kind=JobKind.DOWNLOAD,
+            status=JobStatus.QUEUED,
+            chat_id=cast(int, kwargs["chat_id"]),
+            user_id=cast(int, kwargs["user_id"]),
+            url=str(kwargs["url"]),
+            mode=cast(DownloadMode, kwargs.get("mode")),
+            idempotency_key=_fake_idem_key(kwargs),
+            created_at=now,
+            updated_at=now,
+            container=cast(OutputContainer, kwargs.get("container")),
+            container_policy=ContainerPolicy.NATIVE_ONLY,
+            selected_format_ids=tuple(
+                cast(tuple[str, ...], kwargs.get("selected_format_ids") or ())
             ),
-            True,
+            story_delivery_mode=cast(StoryDeliveryMode, kwargs.get("story_delivery_mode")),
         )
+        return record, True
 
     def create_download(self, **kwargs: object) -> tuple[JobRecord, bool]:
-        return self._record(**kwargs)
+        key = _fake_idem_key(kwargs)
+        for existing in self._records:
+            if existing.idempotency_key == key:
+                return existing, False
+        record, _created = self._record(**kwargs)
+        self._records.append(record)
+        return record, True
 
     def create_highlight_tray(self, **kwargs: object) -> tuple[JobRecord, bool]:
         record, created = self._record(**kwargs)
@@ -203,6 +210,9 @@ class FakeQueue:
         self.trays.append(kwargs)
         return cast(JobId, kwargs["job_id"])
 
+    async def queue_depth(self) -> int:
+        return 0
+
 
 class FakeValidator:
     def __init__(self, **_kwargs: object) -> None:
@@ -210,6 +220,16 @@ class FakeValidator:
 
     def validate(self, url: str) -> str:
         return url
+
+
+def _fake_idem_key(kwargs: dict[str, object]) -> str:
+    mode = kwargs.get("mode")
+    mode_s = mode.value if isinstance(mode, DownloadMode) else "inspect"
+    parts = ["download", str(kwargs["user_id"]), str(kwargs["url"]), mode_s]
+    mode_value = kwargs.get("story_delivery_mode")
+    if isinstance(mode_value, StoryDeliveryMode):
+        parts.append(mode_value.value)
+    return "|".join(parts)
 
 
 def _story_selection(token: str, url: str, owner: int = 20) -> SelectionRecord:
@@ -306,7 +326,8 @@ def test_story_single_keeps_exact_media_id(settings: Settings) -> None:
     assert queue.downloads[0]["job_id"] == JobId("job-1")
 
 
-def test_story_all_targets_stories_account_collection(settings: Settings) -> None:
+def test_story_all_asks_for_delivery_mode_before_creating_job(settings: Settings) -> None:
+    """s2:...:all now shows the delivery-mode prompt instead of creating a job."""
     router, jobs, queue, repository = _router(settings)
     token = "tok_story_all"
     repository.selections[token] = _story_selection(
@@ -318,9 +339,69 @@ def test_story_all_targets_stories_account_collection(settings: Settings) -> Non
 
     asyncio.run(_handler(router, "choose_story_action")(callback))
 
+    # No job should be created yet; the user must first pick a delivery mode.
+    assert jobs.calls == []
+    assert queue.downloads == []
+
+
+def test_story_all_normal_mode_creates_all_stories_job(settings: Settings) -> None:
+    router, jobs, queue, repository = _router(settings)
+    token = "tok_story_normal"
+    repository.selections[token] = _story_selection(
+        token, "https://www.instagram.com/stories/exampleuser/3964254748584813861/"
+    )
+    callback = FakeCallback(20, f"s3:{token}:{StoryDeliveryMode.NORMAL.value}")
+
+    import asyncio
+
+    asyncio.run(_handler(router, "choose_all_stories_delivery_mode")(callback))
+
+    assert len(jobs.calls) == 1
     assert jobs.calls[0]["url"] == "https://www.instagram.com/stories/exampleuser/"
     assert jobs.calls[0]["mode"] is DownloadMode.INSTAGRAM_ALL_STORIES
+    assert cast(StoryDeliveryMode, jobs.calls[0]["story_delivery_mode"]).value == "normal"
     assert queue.downloads[0]["mode"] is DownloadMode.INSTAGRAM_ALL_STORIES
+
+
+def test_story_all_file_mode_creates_all_stories_job(settings: Settings) -> None:
+    router, jobs, queue, repository = _router(settings)
+    token = "tok_story_file"
+    repository.selections[token] = _story_selection(
+        token, "https://www.instagram.com/stories/exampleuser/3964254748584813861/"
+    )
+
+    import asyncio
+
+    first = FakeCallback(20, f"s2:{token}:all")
+    asyncio.run(_handler(router, "choose_story_action")(first))
+
+    callback = FakeCallback(20, f"s3:{token}:file")
+    asyncio.run(_handler(router, "choose_all_stories_delivery_mode")(callback))
+
+    assert len(jobs.calls) == 1
+    assert jobs.calls[0]["url"] == "https://www.instagram.com/stories/exampleuser/"
+    assert jobs.calls[0]["mode"] is DownloadMode.INSTAGRAM_ALL_STORIES
+    assert cast(StoryDeliveryMode, jobs.calls[0]["story_delivery_mode"]).value == "file"
+    assert cast(StoryDeliveryMode, queue.downloads[0]["story_delivery_mode"]).value == "file"
+
+
+def test_story_all_delivery_mode_callback_is_idempotent(settings: Settings) -> None:
+    """Tapping the s3 mode button twice must not create two bulk jobs."""
+    router, jobs, queue, repository = _router(settings)
+    token = "tok_story_dup"
+    repository.selections[token] = _story_selection(
+        token, "https://www.instagram.com/stories/exampleuser/3964254748584813861/"
+    )
+
+    import asyncio
+
+    callback = FakeCallback(20, f"s3:{token}:file")
+    asyncio.run(_handler(router, "choose_all_stories_delivery_mode")(callback))
+    same = FakeCallback(20, f"s3:{token}:file")
+    asyncio.run(_handler(router, "choose_all_stories_delivery_mode")(same))
+
+    assert len(jobs.calls) == 1
+    assert len(queue.downloads) == 1
 
 
 def test_story_callback_rejects_non_story_selection(settings: Settings) -> None:

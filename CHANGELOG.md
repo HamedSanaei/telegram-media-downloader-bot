@@ -124,6 +124,70 @@
 
 ## Unreleased
 
+## 1.3.7 - 2026-08-30
+
+### Added
+
+- Durable Telegram update inbox: inbound updates are journaled to SQLite before the polling offset
+  advances, so an update that arrives while the bot is offline — or that the process received and
+  then crashed on — is replayed after restart until it is handled. Duplicate deliveries are
+  deduplicated, successfully completed updates are never replayed, and unanswered user requests
+  survive bot restarts.
+- Recoverable supported-media jobs: terminal failures are classified by a typed, centralized
+  recoverability vocabulary. Cookie/auth failures of a supported provider are requeued after an
+  administrator successfully replaces that provider's cookie, and explicitly recoverable
+  application/runtime failures receive a single automatic retry when a newer app version is
+  deployed.
+- All-active Instagram Stories delivery-mode selection: before creating the bulk job the user
+  picks **normal** media delivery (`📱 دانلود معمولی`) or **file** delivery
+  (`📁 دانلود به صورت فایل`); the choice is persisted on the durable job, survives restarts and
+  recovery, and the callback is idempotent.
+- Durable Telegram side-effect ledger: replay-sensitive handler messages (initial inspection
+  status, Story delivery-mode prompt, recovery resume notices) are not duplicated when an inbound
+  update replays after a crash — deterministic effect keys, edit/reuse of an already-known
+  message, and an explicit `UNCERTAIN` state for Telegram calls whose outcome is unknown.
+
+### Fixed
+
+- `bot`, `worker`, and `local-api` no longer remain offline after a Docker daemon restart or
+  server reboot: every production service (`bot`, `worker`, `local-api`, `redis`) now uses the
+  `unless-stopped` Compose restart policy. Explicit `tmb stop` / `tmb uninstall` still stop
+  services permanently.
+- Automatic recovery excludes unsupported sources and never replays `delivery_uncertain` jobs;
+  bounded attempts and a max age prevent infinite loops.
+- Stale Telegram side-effect reservations are reconciled safely: `PENDING` effects older than the
+  configurable 10-minute threshold are boundedly transitioned to `UNCERTAIN` rather than blindly
+  resent. Fresh `PENDING`, `COMPLETED`, and existing `UNCERTAIN` effects are untouched.
+
+### Operations
+
+- Bound the durable Telegram inbox: COMPLETED updates are purged after 14 days and
+  TERMINAL_FAILURE after 30 days in bounded batches of at most 500 per maintenance pass.
+  RECEIVED/PROCESSING updates are never age-purged (they may be unfinished user work) and instead
+  surface as `inbound_updates_stuck` when older than one hour. Cleanup is transaction-safe,
+  idempotent, and integrated into the existing maintenance job; retention is configurable under
+  `operations.inbound_updates`.
+- Make recoverable-job requeue gradual instead of a burst: cookie remediation requeues one bounded
+  batch (default 20) per pass and the existing maintenance lifecycle keeps draining the backlog
+  until it is exhausted — no repeated cookie upload needed. Recovery is provider-isolated,
+  oldest-first with a per-user cap for fairness, and bounded by max age (7 days) and max attempts.
+  A durable per-provider marker remembers that a fresh cookie is available, and SQLite-first
+  transitions keep Redis loss recoverable.
+- Recovery queue pressure is outstanding-queue aware: ARQ `queue.max_jobs` is worker concurrency
+  (a job stays in the queue sorted set while waiting, running, or deferred/retried — removed only
+  at final success/failure), so `queue_depth()` counts outstanding ARQ queue entries. The pressure
+  threshold is derived as `queue.max_jobs * queue_backlog_per_worker_slot` (default multiplier 4),
+  with an explicit `queue_pressure_threshold` override. Automatic historical recovery only fills
+  the spare headroom below the threshold (each batch trimmed to
+  `threshold - current_outstanding_depth`) and defers entirely once depth reaches it; fresh user
+  traffic keeps its existing admission behavior.
+- App-fix startup recovery, cookie remediation, and maintenance backlog draining are bounded the
+  same way; requeue reconciliation is durable-state repair (SQLite is source of truth, Redis is
+  the execution queue) and always converges. Effect ledger rows are bounded and purged with the
+  maintenance lifecycle.
+- Stuck inbound-update and effect observability: aggregate metrics and structured logs surface
+  unexpectedly old unfinished updates and stale pending effects without update/user identifiers.
+
 ### Development tooling
 
 - Add project-scoped Graphify navigation guidance and exclusions, compact agent routing indexes,

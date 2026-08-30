@@ -8,8 +8,9 @@ x-app-common: &app-common
       APP_UID: "${APP_UID:-10001}"
       APP_GID: "${APP_GID:-10001}"
   image: "${TMB_IMAGE:-telegram-media-downloader-bot:local}"
-  # Bound crash retries so a startup/permission failure cannot spin forever.
-  restart: "on-failure:5"
+  # Always-on production services must survive Docker daemon restarts and host reboots;
+  # Docker owns restart recovery. Explicit operator stops (`tmb stop`) remain intentional.
+  restart: unless-stopped
   read_only: true
   security_opt:
     - no-new-privileges:true

@@ -212,8 +212,10 @@ reach running/healthy state; selected online checks apply only to originally run
 bot services, followed by an exact original-running-set assertion. The default operator doctor
 retains its full live behavior. Any
 failure after the stop phase restores the prior application/image/permissions/command when changed
-and always restores the original service state. Compose bounds automatic restart attempts to avoid
-an unbounded high-CPU crash loop.
+and always restores the original service state. Every production service uses the `unless-stopped`
+restart policy so the stack survives Docker daemon restarts and host reboots; the update
+transaction still stops writers explicitly (an intentional stop the policy never undoes) and
+treats a post-start crash/restart state as a rollback trigger.
 
 ## ADR-019: Ordinary MP4 is a native codec contract
 

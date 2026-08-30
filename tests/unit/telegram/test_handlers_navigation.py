@@ -99,6 +99,9 @@ class FakeQueue:
     def __init__(self) -> None:
         self.enqueued = 0
 
+    async def queue_depth(self) -> int:
+        return 0
+
     async def enqueue_download(self, **_kwargs: object) -> object:
         self.enqueued += 1
         raise AssertionError("navigation must not enqueue a download")

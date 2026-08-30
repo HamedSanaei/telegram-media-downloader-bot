@@ -16,6 +16,7 @@ from telegram_media_bot.domain.models import (
     JobStatus,
     NativeVideoCodec,
     OutputContainer,
+    StoryDeliveryMode,
     normalize_container_policy,
 )
 
@@ -83,6 +84,7 @@ class JobService:
         native_video_codec: NativeVideoCodec | None = None,
         selected_format_ids: tuple[str, ...] = (),
         image_delivery_mode: ImageDeliveryMode | None = None,
+        story_delivery_mode: StoryDeliveryMode | None = None,
     ) -> tuple[JobRecord, bool]:
         container_policy = normalize_container_policy(mode, container_policy)
         return self._create(
@@ -96,6 +98,7 @@ class JobService:
             native_video_codec=native_video_codec,
             selected_format_ids=selected_format_ids,
             image_delivery_mode=image_delivery_mode,
+            story_delivery_mode=story_delivery_mode,
         )
 
     def _create(
@@ -111,6 +114,7 @@ class JobService:
         native_video_codec: NativeVideoCodec | None = None,
         selected_format_ids: tuple[str, ...] = (),
         image_delivery_mode: ImageDeliveryMode | None = None,
+        story_delivery_mode: StoryDeliveryMode | None = None,
     ) -> tuple[JobRecord, bool]:
         intent = canonicalize_media_url(url)
         url = intent.canonical_url
@@ -123,6 +127,7 @@ class JobService:
             native_video_codec=native_video_codec,
             selected_format_ids=selected_format_ids,
             image_delivery_mode=image_delivery_mode,
+            story_delivery_mode=story_delivery_mode,
         )
         existing = self._repository.find_active_job(key)
         if existing is not None:
@@ -144,6 +149,7 @@ class JobService:
             native_video_codec=native_video_codec,
             selected_format_ids=selected_format_ids,
             image_delivery_mode=image_delivery_mode,
+            story_delivery_mode=story_delivery_mode,
             url_classification=intent.instagram_kind,
         )
         persisted = self._repository.create_job(candidate)
@@ -160,6 +166,7 @@ def _idempotency_key(
     native_video_codec: NativeVideoCodec | None = None,
     selected_format_ids: tuple[str, ...] = (),
     image_delivery_mode: ImageDeliveryMode | None = None,
+    story_delivery_mode: StoryDeliveryMode | None = None,
 ) -> str:
     parts = [kind.value, str(user_id), url, mode.value if mode else "inspect"]
     if container is not None:
@@ -168,6 +175,8 @@ def _idempotency_key(
         parts.append(native_video_codec.value)
     if image_delivery_mode is not None:
         parts.append(image_delivery_mode.value)
+    if story_delivery_mode is not None:
+        parts.append(story_delivery_mode.value)
     parts.extend(selected_format_ids)
     material = "\x00".join(parts)
     return hashlib.sha256(material.encode("utf-8")).hexdigest()

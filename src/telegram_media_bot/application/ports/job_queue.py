@@ -8,6 +8,7 @@ from telegram_media_bot.domain.models import (
     JobId,
     NativeVideoCodec,
     OutputContainer,
+    StoryDeliveryMode,
 )
 
 
@@ -48,12 +49,19 @@ class JobQueue(Protocol):
         native_video_codec: NativeVideoCodec | None = None,
         selected_format_ids: tuple[str, ...] = (),
         image_delivery_mode: ImageDeliveryMode | None = None,
+        story_delivery_mode: StoryDeliveryMode | None = None,
     ) -> JobId:
         """Enqueue a download and return its opaque project job ID."""
         ...
 
     async def queue_depth(self) -> int:
-        """Return the configured queue depth."""
+        """Return the number of outstanding entries in the ARQ queue sorted set.
+
+        ARQ uses pessimistic execution: a job remains in the queue sorted set while it is waiting,
+        while it runs, and while it is deferred for retry, and is removed only when it finishes
+        with a final success or failure. ``zcard`` therefore includes waiting jobs, currently
+        running jobs, and deferred/retry entries — not just a waiting-only backlog.
+        """
         ...
 
     async def abort_job(

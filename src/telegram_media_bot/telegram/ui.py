@@ -22,10 +22,35 @@ from telegram_media_bot.domain.models import (
     OutputContainer,
     RequiredChannel,
     SelectionRecord,
+    StoryDeliveryMode,
 )
 
 BACK_TEXT = "⬅️ بازگشت"
 HIGHLIGHTS_PER_PAGE = 5
+STORY_DELIVERY_NORMAL_TEXT = "📱 دانلود معمولی"
+STORY_DELIVERY_FILE_TEXT = "📁 دانلود به صورت فایل"
+STORY_DELIVERY_MODE_PROMPT = "حالت ارسال همهٔ استوری‌های فعال را انتخاب کنید:"
+
+
+def story_delivery_mode_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
+    """Ask how an all-active-Stories batch should be delivered."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=STORY_DELIVERY_NORMAL_TEXT,
+                    callback_data=f"s3:{selection.token}:{StoryDeliveryMode.NORMAL.value}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=STORY_DELIVERY_FILE_TEXT,
+                    callback_data=f"s3:{selection.token}:{StoryDeliveryMode.FILE.value}",
+                )
+            ],
+            [InlineKeyboardButton(text="❌ لغو", callback_data=f"n2:{selection.token}:s")],
+        ]
+    )
 
 
 def story_choice_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:

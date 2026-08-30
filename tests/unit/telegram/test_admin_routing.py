@@ -109,6 +109,9 @@ class FakeQueue:
     def __init__(self) -> None:
         self.inspections: list[dict[str, object]] = []
 
+    async def queue_depth(self) -> int:
+        return 0
+
     async def enqueue_inspection(self, **kwargs: object) -> JobId:
         self.inspections.append(kwargs)
         return JobId(str(kwargs["job_id"]))

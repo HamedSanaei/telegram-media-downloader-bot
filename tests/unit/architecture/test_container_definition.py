@@ -1,5 +1,7 @@
+import json
 import os
 import re
+import shutil
 import subprocess
 import tomllib
 from pathlib import Path
@@ -52,13 +54,45 @@ def test_app_containers_are_read_only_and_drop_capabilities() -> None:
     assert common["read_only"] is True
     assert common["cap_drop"] == ["ALL"]
     assert common["security_opt"] == ["no-new-privileges:true"]
-    assert common["restart"] == "on-failure:5"
+    assert common["restart"] == "unless-stopped"
     assert any(mount.startswith("/tmp:") for mount in common["tmpfs"])
     assert "./config.yaml:/app/config.yaml:ro" in common["volumes"]
     assert "./data:/data" in common["volumes"]
     for service_name in ("bot", "worker"):
         assert compose["services"][service_name]["volumes"] == common["volumes"]
     assert compose["services"]["worker"]["cpus"] == "${TMB_WORKER_CPUS:-0}"
+
+
+def test_every_production_service_uses_unless_stopped_restart_policy() -> None:
+    """All always-on services must recover after Docker daemon/host restarts (regression).
+
+    `on-failure` policies are ignored by the daemon after a restart/reboot, which previously
+    left bot/worker/local-api offline while Redis (already `unless-stopped`) came back.
+    """
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+    common = compose["x-app-common"]
+
+    # The shared anchor is the single source of truth for application services.
+    assert common["restart"] == "unless-stopped"
+    for service_name in ("bot", "worker", "local-api"):
+        # Anchor merge is resolved by the loader, so the effective policy must match.
+        assert compose["services"][service_name]["restart"] == "unless-stopped"
+    assert compose["services"]["redis"]["restart"] == "unless-stopped"
+
+
+def test_rendered_compose_config_assigns_unless_stopped_to_all_services() -> None:
+    """The effective rendered Compose config must apply `unless-stopped` to every service."""
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not installed")
+    rendered = subprocess.run(
+        ["docker", "compose", "--profile", "local-api", "config", "--format", "json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    services = json.loads(rendered.stdout)["services"]
+    for service_name in ("bot", "worker", "local-api", "redis"):
+        assert services[service_name]["restart"] == "unless-stopped"
 
 
 def test_config_path_is_explicit_and_local_api_secrets_are_not_in_container_files() -> None:
@@ -170,7 +204,8 @@ def test_ci_builds_and_smoke_tests_runtime_with_shared_buildkit_cache() -> None:
     assert "PYTHON_VERSION=3.14.5" in build["build-args"]
     assert build["cache-from"] == f"type=gha,scope={SHARED_BUILDKIT_CACHE}"
     assert build["cache-to"] == f"type=gha,mode=max,scope={SHARED_BUILDKIT_CACHE}"
-    assert "docker compose --profile local-api config" in runs
+    assert any("docker compose --profile local-api config" in run for run in runs)
+    assert any("unless-stopped" in run for run in runs)
     assert any(
         "docker run --rm telegram-media-downloader-bot:ci telegram-media-bot --help" in run
         for run in runs
@@ -250,9 +285,9 @@ def test_release_tag_exactly_matches_project_version() -> None:
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.3.6"
+    assert version == "1.3.7"
     assert __version__ == version
-    assert tag == "v1.3.6"
+    assert tag == "v1.3.7"
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
     assert 'if tag != f"v{version}":' in workflow
 

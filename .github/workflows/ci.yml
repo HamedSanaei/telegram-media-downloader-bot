@@ -83,7 +83,17 @@ jobs:
           bash -n scripts/tests/test_tmb_upgrade_integration.sh
           bash -n scripts/tests/test_local_api_readiness.sh
       - run: uv lock --check
-      - run: docker compose --profile local-api config
+      - name: Validate rendered Compose restart policy for all services
+        run: |
+          docker compose --profile local-api config --format json \
+            | python3 -c '
+          import json, sys
+          services = json.load(sys.stdin)["services"]
+          names = ("bot", "worker", "local-api", "redis")
+          wrong = {n: services[n].get("restart") for n in names
+                   if services[n].get("restart") != "unless-stopped"}
+          assert not wrong, f"restart policy mismatch: {wrong}"
+          '
       - uses: docker/setup-buildx-action@v3
       - name: Build runtime image with shared cache
         uses: docker/build-push-action@v6
