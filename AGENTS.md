@@ -6,6 +6,19 @@ Build and maintain a reliable Telegram media downloader bot powered by `yt-dlp` 
 all application code insulated from `yt-dlp` internals. The project must remain easy to update,
 test, deploy, roll back, and hand over to another engineer or coding agent.
 
+## Git authorship and contributor policy
+
+- Never add an AI assistant, coding agent, automation tool, or bot as a Git author, committer,
+  co-author, signer, or contributor.
+- Never add `Co-Authored-By`, `Signed-off-by`, generated-by, assisted-by, or similar attribution
+  trailers for AI, tools, or bots.
+- Never change the Git author or committer identity to an AI or tool account.
+- Commits must use only the configured human developer Git identity unless the user explicitly
+  requests another human contributor.
+- Do not append AI or tool branding or attribution to commit messages.
+- Before every commit, inspect the complete commit message and author/committer metadata and remove
+  accidental AI or tool attribution.
+
 ## Mandatory first steps for every task
 
 1. Read this file completely.
