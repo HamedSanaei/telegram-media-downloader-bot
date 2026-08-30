@@ -230,7 +230,59 @@ jobs:
       - name: Install PSScriptAnalyzer
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # Some GitHub-hosted Windows images (e.g. windows-2025) ship without a
+          # usable PSGallery/NuGet bootstrap; repair it instead of skipping lint.
+          if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
+              Write-Host "Bootstrapping NuGet package provider..."
+              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 \
+                  -Scope CurrentUser -Force
+          }
+
+          $repository = Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue
+          if (-not $repository) {
+              Write-Host "PSGallery is not registered; registering default repositories..."
+              Register-PSRepository -Default
+          }
+
+          $repository = Get-PSRepository -Name PSGallery -ErrorAction Stop
+          Write-Host "Using PowerShell repository: $($repository.Name)"
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+
+          $installed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+              try {
+                  Write-Host "Installing PSScriptAnalyzer (attempt $attempt/3)..."
+                  Install-Module PSScriptAnalyzer -Repository PSGallery \
+                      -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+                  $installed = $true
+                  break
+              }
+              catch {
+                  if ($attempt -eq 3) {
+                      throw
+                  }
+                  Write-Warning "PSScriptAnalyzer install attempt failed; retrying..."
+                  Start-Sleep -Seconds (5 * $attempt)
+              }
+          }
+
+          if (-not $installed) {
+              throw "PSScriptAnalyzer installation failed."
+          }
+
+          Import-Module PSScriptAnalyzer -ErrorAction Stop
+          $module = Get-Module PSScriptAnalyzer -ListAvailable |
+              Sort-Object Version -Descending |
+              Select-Object -First 1
+
+          if (-not $module) {
+              throw "PSScriptAnalyzer installation could not be verified."
+          }
+
+          Write-Host "PSScriptAnalyzer version: $($module.Version)"
       - name: Analyze PowerShell management scripts
         if: runner.os == 'Windows'
         shell: pwsh
