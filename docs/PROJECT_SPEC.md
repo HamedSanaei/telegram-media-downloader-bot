@@ -34,7 +34,10 @@ Actual extraction support is determined by the installed `yt-dlp` version.
 5. Worker downloads into an isolated job directory.
 6. Telegram and worker logs report throttled download/upload progress. Upload percentage covers
    bytes read into Local Bot API; the opaque Telegram phase reports only elapsed-time heartbeats.
-7. Result is uploaded using the most suitable Telegram method.
+7. Result is uploaded using the most suitable Telegram method. Every delivered media item remains
+   traceable to the durable canonical job URL: the adapter appends `🔗 لینک اصلی: <URL>` after the
+   existing caption/per-item text, or replies with that complete line when Telegram's 1024-character
+   media-caption limit cannot accommodate it.
 8. Job state is persisted sufficiently for retries and operator inspection.
 9. After every terminal outcome, the worker removes that job's media, archive volumes, sidecars,
    `.part` files, and temporary files from both workspace roots. Confirmed multipart parts are

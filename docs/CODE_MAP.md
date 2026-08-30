@@ -42,13 +42,14 @@
 | `src/telegram_media_bot/infrastructure/telegram/local_api.py` | Local Bot API lifecycle, durable migration, endpoint leases, and safe status |
 | `src/telegram_media_bot/infrastructure/archive/` | Safe 7-Zip multi-volume packaging, deterministic ordered image ZIPs, and SHA-256 manifests |
 | `src/telegram_media_bot/infrastructure/storage/` | Exact job-workspace cleanup, symlink-safe deletion, and startup/maintenance sweeping |
-| `src/telegram_media_bot/telegram/` | Versioned Back/Native/Instagram/Story/Highlight delivery callbacks, real-plan rendering, middleware, tracked exact-byte document delivery, and ordered ten-item media-group planning |
+| `src/telegram_media_bot/telegram/` | Versioned Back/Native/Instagram/Story/Highlight delivery callbacks, real-plan rendering, middleware, tracked exact-byte document delivery, ordered ten-item media-group planning, and centralized bottom-most durable source-link caption/fallback placement |
+| `src/telegram_media_bot/telegram/delivery.py` | Telegram method routing, albums/individual artifacts/batches/multipart delivery, receipt-first uncertainty handling, and 1024-safe caption composition that preserves fixed text and complete canonical source URLs |
 | `src/telegram_media_bot/telegram/durable_polling.py` | Inbound-safe aiogram serialization without outbound Bot defaults, durable-prefix offset advancement, hard serialization-gap ordering barrier, and sequential dispatch/replay |
 | `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants (reports, cookie management, Cookie Health), FSM state, and reply/inline keyboard builders; `admin_handlers.py` verifies cookie writes, refreshes provider health immediately, and makes unchanged status edits idempotent |
 | `src/telegram_media_bot/telegram/admin_handlers.py` | Role-checked menu/download/report/cookie routing, private-chat secret export, bounded in-memory document intake, and per-admin report single-flight coordination |
 | `src/telegram_media_bot/telegram/handlers.py` | Shared URL submission, editable job-status ownership, active-job queue reconciliation, callbacks, and cancellation routing |
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction plus the bounded, cancellable Local Bot API startup readiness wait (`local_api_startup_wait`/`ready`/`timeout`) |
-| `src/telegram_media_bot/workers/` | ARQ worker settings and job functions, including edit-or-send inspection publication, redacted terminal-failure alerts, passive same-request cookie-auth feedback, retries, receipts, and workspace cleanup; no Cookie Health cron is registered |
+| `src/telegram_media_bot/workers/` | ARQ worker settings and job functions, including explicit durable `JobRecord.url` delivery metadata, edit-or-send inspection publication, redacted terminal-failure alerts, passive same-request cookie-auth feedback, retries, receipts, and workspace cleanup; no Cookie Health cron is registered |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, composition roots, and fail-fast effective-cookie path identity |
 | `src/telegram_media_bot/cli.py` | Management CLI plus full, fail-closed offline-static, and explicitly service-selected online doctor modes |
 | `tests/unit/` | Fast deterministic tests |

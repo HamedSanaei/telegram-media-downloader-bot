@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -26,6 +27,7 @@ from telegram_media_bot.domain.models import (
     MediaFormatOption,
     MediaInfo,
     MediaKind,
+    StoryDeliveryMode,
 )
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_cookie_health import (
@@ -181,6 +183,9 @@ class BatchDelivery:
         self.fail_all = fail_all
         self.batch_calls = 0
         self.edits: list[str] = []
+        self.source_urls: list[str | None] = []
+        self.captions: list[str] = []
+        self.story_modes: list[StoryDeliveryMode | None] = []
 
     async def deliver_batch(self, **kwargs: object) -> object:
         from telegram_media_bot.application.ports.delivery import BatchDeliveryOutcome
@@ -188,6 +193,9 @@ class BatchDelivery:
 
         self.batch_calls += 1
         result = cast(DownloadResult, kwargs["result"])
+        self.source_urls.append(cast(str | None, kwargs.get("source_url")))
+        self.captions.append(cast(str, kwargs["caption"]))
+        self.story_modes.append(result.story_delivery_mode)
         total = len(result.delivery_artifacts)
         if self.fail_all:
             return BatchDeliveryOutcome(total=total, succeeded=0, failed=total, receipts=())
@@ -440,6 +448,7 @@ async def test_batch_download_partial_failure_keeps_successes_and_summarizes(
         user_id=20,
         url="https://www.instagram.com/stories/exampleuser/",
         mode=DownloadMode.INSTAGRAM_ALL_STORIES,
+        story_delivery_mode=StoryDeliveryMode.NORMAL,
     )
     repository.set_status_message(record.job_id, 30)
     paths = [tmp_path / "1.jpg", tmp_path / "2.jpg", tmp_path / "3.jpg"]
@@ -466,9 +475,116 @@ async def test_batch_download_partial_failure_keeps_successes_and_summarizes(
     persisted = repository.get_job(record.job_id)
     assert persisted is not None and persisted.status is JobStatus.SUCCEEDED
     assert delivery.batch_calls == 1
+    assert delivery.source_urls == [record.url]
+    assert delivery.story_modes == [StoryDeliveryMode.NORMAL]
+    assert "@telegram_media_bot" in delivery.captions[0]
     items = repository.delivery_items(record.job_id)
     # Only successful items are persisted; the failed item is isolated.
     assert len(items) == 2
+
+
+async def test_cookie_remediated_story_file_job_keeps_durable_source_url(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    configured = _settings(settings, tmp_path)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    record, _ = JobService(repository).create_download(
+        chat_id=10,
+        user_id=20,
+        url="https://www.instagram.com/stories/exampleuser/?igsh=tracking",
+        mode=DownloadMode.INSTAGRAM_ALL_STORIES,
+        story_delivery_mode=StoryDeliveryMode.FILE,
+    )
+    repository.transition(
+        record.job_id,
+        JobStatus.FAILED,
+        error_category=ErrorCategory.AUTHENTICATION,
+        error_summary="AuthenticationRequiredError",
+    )
+    repository.record_recoverable_failure(
+        record.job_id,
+        ErrorCategory.AUTHENTICATION,
+        "1.3.7",
+    )
+    recovered = repository.mark_recovery_requeued(
+        record.job_id,
+        version="1.3.8",
+        now=datetime.now(UTC),
+    )
+    assert recovered is not None
+    path = tmp_path / "story.jpg"
+    path.write_bytes(b"media")
+    delivery = BatchDelivery()
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "download_service": BatchDownloadService(artifacts=(path,)),
+        "bot": FakeBot(),
+        "delivery": delivery,
+        "metrics": MetricsRegistry(),
+        "job_id": str(record.job_id),
+        "job_try": 1,
+    }
+
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url=record.url,
+        mode=DownloadMode.INSTAGRAM_ALL_STORIES.value,
+        story_delivery_mode=StoryDeliveryMode.FILE.value,
+    )
+
+    canonical = "https://www.instagram.com/stories/exampleuser/"
+    assert record.url == canonical
+    assert delivery.source_urls == [canonical]
+    assert delivery.story_modes == [StoryDeliveryMode.FILE]
+    persisted = repository.get_job(record.job_id)
+    assert persisted is not None and persisted.status is JobStatus.SUCCEEDED
+
+
+async def test_highlight_delivery_keeps_durable_highlight_url(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    configured = _settings(settings, tmp_path)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    record, _ = JobService(repository).create_download(
+        chat_id=10,
+        user_id=20,
+        url="https://www.instagram.com/stories/highlights/123/?igsh=tracking",
+        mode=DownloadMode.INSTAGRAM_HIGHLIGHT,
+    )
+    path = tmp_path / "highlight.jpg"
+    path.write_bytes(b"media")
+    delivery = BatchDelivery()
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "download_service": BatchDownloadService(artifacts=(path,)),
+        "bot": FakeBot(),
+        "delivery": delivery,
+        "metrics": MetricsRegistry(),
+        "job_id": str(record.job_id),
+        "job_try": 1,
+    }
+
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url=record.url,
+        mode=DownloadMode.INSTAGRAM_HIGHLIGHT.value,
+    )
+
+    assert delivery.source_urls == ["https://www.instagram.com/stories/highlights/123/"]
+    persisted = repository.get_job(record.job_id)
+    assert persisted is not None and persisted.status is JobStatus.SUCCEEDED
 
 
 async def test_batch_download_all_failed_is_terminal_failure(

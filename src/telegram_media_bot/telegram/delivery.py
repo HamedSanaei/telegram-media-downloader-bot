@@ -20,6 +20,7 @@ from aiogram.types import (
     InputMediaPhoto,
     InputMediaVideo,
     Message,
+    ReplyParameters,
 )
 
 from telegram_media_bot.application.ports.delivery import (
@@ -33,6 +34,7 @@ from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     DeliveryError,
     DeliveryTooLargeError,
+    DeliveryUncertainError,
 )
 from telegram_media_bot.domain.models import (
     DeliveryItemReceipt,
@@ -53,12 +55,20 @@ logger = structlog.get_logger(__name__)
 _UNSAFE_FILENAME = re.compile(r"[^\w.()\- ]+", flags=re.UNICODE)
 _WHITESPACE = re.compile(r"\s+")
 TELEGRAM_MEDIA_GROUP_MAX_ITEMS = 10
+TELEGRAM_CAPTION_LIMIT = 1024
+SOURCE_URL_LABEL = "🔗 لینک اصلی:"
 
 
 @dataclass(frozen=True, slots=True)
 class InstagramDeliveryBatch:
     start_ordinal: int
     artifacts: tuple[DownloadArtifact, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CaptionPlacement:
+    media_caption: str
+    fallback_text: str | None = None
 
 
 def chunk_media_items(
@@ -116,6 +126,8 @@ class TelegramDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        source_url: str | None = None,
+        caption_title: str | None = None,
         progress: DeliveryProgressSink | None = None,
         item_delivered: DeliveryItemSink | None = None,
         is_cancelled: DeliveryCancellationCheck | None = None,
@@ -136,6 +148,11 @@ class TelegramDeliveryGateway(DeliveryGateway):
             suffix=result.file_path.suffix,
             max_length=self._settings.telegram.filename_max_length,
         )
+        placement = append_source_url(
+            caption,
+            source_url,
+            title=sanitize_caption_value(caption_title or result.title, 768),
+        )
         preferred = self._preferred_method(result)
         try:
             message = await self._send_tracked(
@@ -143,12 +160,13 @@ class TelegramDeliveryGateway(DeliveryGateway):
                 chat_id,
                 result,
                 filename,
-                caption,
+                placement.media_caption,
                 progress,
             )
             receipt = _receipt(message, preferred)
             if item_delivered is not None:
                 await item_delivered(receipt.primary)
+            await self._send_source_fallback(chat_id, receipt.message_id, placement.fallback_text)
             return receipt
         except TelegramBadRequest as exc:
             if preferred is DeliveryMethod.DOCUMENT:
@@ -168,12 +186,17 @@ class TelegramDeliveryGateway(DeliveryGateway):
                     chat_id,
                     result,
                     filename,
-                    caption,
+                    placement.media_caption,
                     progress,
                 )
                 receipt = _receipt(message, DeliveryMethod.DOCUMENT)
                 if item_delivered is not None:
                     await item_delivered(receipt.primary)
+                await self._send_source_fallback(
+                    chat_id,
+                    receipt.message_id,
+                    placement.fallback_text,
+                )
                 return receipt
             except TelegramAPIError as fallback_exc:
                 await logger.awarning(
@@ -196,6 +219,23 @@ class TelegramDeliveryGateway(DeliveryGateway):
             raise DeliveryError("Telegram message delivery failed") from exc
         return message.message_id
 
+    async def _send_source_fallback(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str | None,
+    ) -> None:
+        if text is None:
+            return
+        try:
+            await self._bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_parameters=ReplyParameters(message_id=message_id),
+            )
+        except TelegramAPIError as exc:
+            raise DeliveryUncertainError("Telegram source-link delivery is uncertain") from exc
+
     async def edit_text(self, chat_id: int, message_id: int, text: str) -> None:
         try:
             await self._bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
@@ -208,6 +248,7 @@ class TelegramDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        source_url: str | None = None,
         progress: DeliveryProgressSink | None = None,
         item_delivered: DeliveryItemSink | None = None,
         is_cancelled: DeliveryCancellationCheck | None = None,
@@ -220,6 +261,7 @@ class TelegramDeliveryGateway(DeliveryGateway):
             chat_id=chat_id,
             result=result,
             caption=caption,
+            source_url=source_url,
             progress=progress,
             item_delivered=item_delivered,
             is_cancelled=is_cancelled,
@@ -232,11 +274,13 @@ class TelegramDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        source_url: str | None = None,
         item_delivered: DeliveryItemSink | None = None,
     ) -> DeliveryReceipt:
         """Send one Telegram-compatible collection atomically as a media group."""
         media: list[Any] = []
         methods: list[DeliveryMethod] = []
+        placements: list[CaptionPlacement] = []
         for index, artifact in enumerate(result.artifacts):
             filename_source = (
                 artifact.file_path.stem
@@ -250,23 +294,36 @@ class TelegramDeliveryGateway(DeliveryGateway):
                 max_length=self._settings.telegram.filename_max_length,
             )
             upload = FSInputFile(artifact.file_path, filename=filename)
-            item_caption = caption if index == 0 and caption else None
+            item_caption = append_source_url(
+                caption if index == 0 else "",
+                source_url,
+                title=sanitize_caption_value(result.title, 768),
+            )
+            placements.append(item_caption)
             if (
                 result.image_delivery_mode is ImageDeliveryMode.DOCUMENT
                 and artifact.kind is MediaKind.IMAGE
             ):
-                media.append(InputMediaDocument(media=upload, caption=item_caption))
+                media.append(
+                    InputMediaDocument(media=upload, caption=item_caption.media_caption or None)
+                )
                 methods.append(DeliveryMethod.DOCUMENT)
             elif artifact.kind is MediaKind.IMAGE and artifact.mime_type in {
                 "image/jpeg",
                 "image/png",
                 "image/webp",
             }:
-                media.append(InputMediaPhoto(media=upload, caption=item_caption))
+                media.append(
+                    InputMediaPhoto(media=upload, caption=item_caption.media_caption or None)
+                )
                 methods.append(DeliveryMethod.PHOTO)
             elif artifact.kind is MediaKind.VIDEO and artifact.inline_video_streamable:
                 media.append(
-                    InputMediaVideo(media=upload, caption=item_caption, supports_streaming=True)
+                    InputMediaVideo(
+                        media=upload,
+                        caption=item_caption.media_caption or None,
+                        supports_streaming=True,
+                    )
                 )
                 methods.append(DeliveryMethod.VIDEO)
             else:
@@ -289,6 +346,12 @@ class TelegramDeliveryGateway(DeliveryGateway):
             items.append(item)
             if item_delivered is not None:
                 await item_delivered(item)
+        for item, placement in zip(items, placements, strict=True):
+            await self._send_source_fallback(
+                chat_id,
+                item.message_id,
+                placement.fallback_text,
+            )
         return DeliveryReceipt(items=tuple(items))
 
     async def _send_tracked(
@@ -431,6 +494,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        source_url: str | None = None,
         progress: DeliveryProgressSink | None = None,
         item_delivered: DeliveryItemSink | None = None,
         is_cancelled: DeliveryCancellationCheck | None = None,
@@ -440,6 +504,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 chat_id=chat_id,
                 result=result,
                 caption=caption,
+                source_url=source_url,
                 progress=progress,
                 item_delivered=item_delivered,
                 is_cancelled=is_cancelled,
@@ -449,6 +514,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 chat_id=chat_id,
                 result=result,
                 caption=caption,
+                source_url=source_url,
                 progress=progress,
                 item_delivered=item_delivered,
                 is_cancelled=is_cancelled,
@@ -457,6 +523,8 @@ class RoutedDeliveryGateway(DeliveryGateway):
             chat_id=chat_id,
             result=result,
             caption=caption,
+            source_url=source_url,
+            caption_title=result.title,
             progress=progress,
             item_delivered=item_delivered,
             is_cancelled=is_cancelled,
@@ -468,6 +536,8 @@ class RoutedDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        source_url: str | None,
+        caption_title: str,
         progress: DeliveryProgressSink | None,
         item_delivered: DeliveryItemSink | None,
         is_cancelled: DeliveryCancellationCheck | None,
@@ -480,6 +550,8 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 chat_id=chat_id,
                 result=result,
                 caption=caption,
+                source_url=source_url,
+                caption_title=caption_title,
                 progress=progress,
                 item_delivered=item_delivered,
                 is_cancelled=is_cancelled,
@@ -495,6 +567,8 @@ class RoutedDeliveryGateway(DeliveryGateway):
             chat_id=chat_id,
             result=result,
             caption=caption,
+            source_url=source_url,
+            caption_title=caption_title,
             progress=progress,
             item_delivered=item_delivered,
             is_cancelled=is_cancelled,
@@ -506,6 +580,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        source_url: str | None,
         progress: DeliveryProgressSink | None,
         item_delivered: DeliveryItemSink | None,
         is_cancelled: DeliveryCancellationCheck | None,
@@ -558,6 +633,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
                         chat_id=chat_id,
                         result=chunk_result,
                         caption=caption if start == 0 else "",
+                        source_url=source_url,
                         item_delivered=persist_album_item,
                     )
                 except _AlbumRejectedError:
@@ -635,6 +711,8 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 chat_id=chat_id,
                 result=child,
                 caption=f"{caption}\nرسانه {artifact_index} از {len(result.artifacts)}",  # noqa: RUF001
+                source_url=source_url,
+                caption_title=result.title,
                 progress=map_progress,
                 item_delivered=persist_item,
                 is_cancelled=is_cancelled,
@@ -656,6 +734,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        source_url: str | None,
         progress: DeliveryProgressSink | None,
         item_delivered: DeliveryItemSink | None,
         is_cancelled: DeliveryCancellationCheck | None,
@@ -702,6 +781,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
                         chat_id=chat_id,
                         result=chunk_result,
                         caption=caption if batch.start_ordinal == 1 else "",
+                        source_url=source_url,
                         item_delivered=persist_album_item,
                     )
                 except _AlbumRejectedError:
@@ -710,6 +790,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
                         result=result,
                         batch=batch,
                         caption=caption,
+                        source_url=source_url,
                         completed_bytes=completed_bytes,
                         progress=progress,
                         item_delivered=item_delivered,
@@ -737,6 +818,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
                     result=result,
                     batch=batch,
                     caption=caption,
+                    source_url=source_url,
                     completed_bytes=completed_bytes,
                     progress=progress,
                     item_delivered=item_delivered,
@@ -755,6 +837,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
         result: DownloadResult,
         batch: InstagramDeliveryBatch,
         caption: str,
+        source_url: str | None,
         completed_bytes: int,
         progress: DeliveryProgressSink | None,
         item_delivered: DeliveryItemSink | None,
@@ -813,6 +896,8 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 chat_id=chat_id,
                 result=child,
                 caption=caption if ordinal == 1 else "",
+                source_url=source_url,
+                caption_title=result.title,
                 progress=map_progress,
                 item_delivered=persist_item,
                 is_cancelled=is_cancelled,
@@ -838,6 +923,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        source_url: str | None = None,
         progress: DeliveryProgressSink | None = None,
         item_delivered: DeliveryItemSink | None = None,
         is_cancelled: DeliveryCancellationCheck | None = None,
@@ -850,6 +936,7 @@ class RoutedDeliveryGateway(DeliveryGateway):
             chat_id=chat_id,
             result=result,
             caption=caption,
+            source_url=source_url,
             progress=progress,
             item_delivered=item_delivered,
             is_cancelled=is_cancelled,
@@ -862,6 +949,8 @@ class RoutedDeliveryGateway(DeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        source_url: str | None,
+        caption_title: str,
         progress: DeliveryProgressSink | None,
         item_delivered: DeliveryItemSink | None,
         is_cancelled: DeliveryCancellationCheck | None,
@@ -934,6 +1023,8 @@ class RoutedDeliveryGateway(DeliveryGateway):
                 chat_id=chat_id,
                 result=part,
                 caption=part_caption,
+                source_url=source_url,
+                caption_title=caption_title,
                 progress=map_progress,
                 is_cancelled=is_cancelled,
             )
@@ -1027,6 +1118,7 @@ async def _deliver_batch(
     chat_id: int,
     result: DownloadResult,
     caption: str,
+    source_url: str | None,
     progress: DeliveryProgressSink | None,
     item_delivered: DeliveryItemSink | None,
     is_cancelled: DeliveryCancellationCheck | None,
@@ -1089,11 +1181,15 @@ async def _deliver_batch(
                 chat_id=chat_id,
                 result=child,
                 caption=f"{caption}\nرسانه {index} از {len(artifacts)}",  # noqa: RUF001
+                source_url=source_url,
+                caption_title=result.title,
                 progress=map_progress,
                 item_delivered=persist_item,
                 is_cancelled=is_cancelled,
             )
         except asyncio.CancelledError:
+            raise
+        except DeliveryUncertainError:
             raise
         except DeliveryError as exc:
             failed += 1
@@ -1148,7 +1244,58 @@ def render_caption(
     attribution = f"@{username}"
     if attribution.casefold() not in rendered.casefold():
         rendered = f"{rendered}\n{attribution}"
-    return rendered[:1024]
+    return (
+        _fit_caption_title(rendered, title, TELEGRAM_CAPTION_LIMIT)
+        or rendered[:TELEGRAM_CAPTION_LIMIT]
+    )
+
+
+def append_source_url(
+    caption: str,
+    source_url: str | None,
+    *,
+    title: str | None = None,
+    caption_limit: int = TELEGRAM_CAPTION_LIMIT,
+) -> CaptionPlacement:
+    """Append the durable source URL without truncating it or fixed caption text.
+
+    When the combined caption is too long, only the already-sanitized title is reduced. If the
+    complete source line still cannot fit, the old valid caption stays on the media and the source
+    line is returned for an immediately associated reply message.
+    """
+    existing = caption.rstrip("\n")
+    fitted_existing = _fit_caption_title(existing, title, caption_limit)
+    if fitted_existing is None:
+        fitted_existing = existing[:caption_limit]
+    if source_url is None:
+        return CaptionPlacement(fitted_existing)
+    source_text = f"{SOURCE_URL_LABEL} {source_url}"
+    separator = "\n\n" if existing else ""
+    available = caption_limit - len(separator) - len(source_text)
+    if available >= 0:
+        fitted_with_source = _fit_caption_title(existing, title, available)
+        if fitted_with_source is not None:
+            return CaptionPlacement(f"{fitted_with_source}{separator}{source_text}")
+    return CaptionPlacement(fitted_existing, source_text)
+
+
+def _fit_caption_title(caption: str, title: str | None, limit: int) -> str | None:
+    if len(caption) <= limit:
+        return caption
+    if limit < 0 or not title or title not in caption:
+        return None
+    low = 0
+    high = len(title)
+    fitted: str | None = None
+    while low <= high:
+        middle = (low + high) // 2
+        candidate = caption.replace(title, title[:middle], 1)
+        if len(candidate) <= limit:
+            fitted = candidate
+            low = middle + 1
+        else:
+            high = middle - 1
+    return fitted
 
 
 def sanitize_caption_value(value: str, limit: int) -> str:

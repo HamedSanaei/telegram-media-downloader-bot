@@ -113,10 +113,14 @@ class FakeDelivery:
         self.edits: list[str] = []
         self.failure: Exception | None = None
         self.file_present_during_delivery = False
+        self.last_caption: str | None = None
+        self.last_source_url: str | None = None
 
     async def deliver(self, **kwargs: object) -> DeliveryReceipt:
         self.deliveries += 1
         result = cast(DownloadResult, kwargs["result"])
+        self.last_caption = cast(str, kwargs["caption"])
+        self.last_source_url = cast(str | None, kwargs.get("source_url"))
         self.file_present_during_delivery = result.file_path.is_file()
         if self.failure is not None:
             progress = kwargs.get("progress")
@@ -307,6 +311,8 @@ async def test_worker_download_persists_receipt_and_cleans(
     assert service.calls == 1
     assert delivery.deliveries == 1
     assert delivery.file_present_during_delivery
+    assert delivery.last_source_url == "https://example.com/media"
+    assert delivery.last_caption is not None and "@telegram_media_bot" in delivery.last_caption
     with closing(sqlite3.connect(repository._path)) as connection:
         usage = connection.execute(
             "SELECT successful_download_count, delivered_bytes FROM users WHERE user_id = 20"
@@ -331,6 +337,7 @@ async def test_recovered_youtube_mix_job_is_normalized_at_execution_boundary(
     )
 
     assert service.urls == ["https://www.youtube.com/watch?v=DGbwtVtthu8"]
+    assert _delivery.last_source_url == "https://example.com/media"
 
 
 @pytest.mark.parametrize(

@@ -11,6 +11,12 @@ complete video. File uploads use a dedicated configurable four-hour per-part tim
 tracked chunks, and 30-second opaque-finalization heartbeats instead of aiogram's shorter general
 session default. Docker pins Deno 2.9.3 and installs ffmpeg; `doctor` reports runtime versions.
 
+Every successful media delivery also receives the durable canonical `JobRecord.url` as bottom-most
+source metadata. The centralized caption planner preserves existing caption/ordinal/part text,
+reduces only an oversized title, keeps complete URLs intact, adds source-only album captions after
+the first item, and uses an immediate replied text fallback when the 1024-character caption limit
+cannot hold the complete source line.
+
 The expanded implementation supports a 1900 MB practical ceiling with a shared config-derived
 Bot/Worker client, managed/external Local Bot API lifecycle, explicit idempotent cloud/local
 migration, safe CLI/doctor/readiness reporting, cross-process endpoint leases, and an opt-in real

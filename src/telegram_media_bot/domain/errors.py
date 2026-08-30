@@ -165,7 +165,7 @@ class DeliveryTooLargeError(MediaBotError):
     pass
 
 
-class DeliveryUncertainError(MediaBotError):
+class DeliveryUncertainError(DeliveryError):
     pass
 
 

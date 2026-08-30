@@ -129,6 +129,14 @@ No production image is resized, converted, recompressed, or otherwise rewritten.
 - cleans temporary files;
 - is deployed as one worker container until a leased multi-host store is introduced.
 
+The worker passes the persisted `JobRecord.url` explicitly to the delivery port; the Telegram
+adapter never queries SQLite. Caption composition preserves the existing renderer and adds the
+canonical source line at the bottom after collection ordinals or multipart labels. Only title text
+may be reduced to fit Telegram's 1024-character media-caption limit. If the fixed caption plus the
+complete URL cannot fit, the media keeps its valid caption and the source line is sent as an
+immediate reply after the media receipt is durable. Albums retain the existing full first-item
+caption and put source-only captions on later items where Telegram permits them.
+
 ### Administrator presentation and analytics
 
 `telegram/admin_handlers.py` is a role-aware presentation adapter. `/start`, `/menu`, and the

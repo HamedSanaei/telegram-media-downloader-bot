@@ -25,6 +25,14 @@ again before any later update can become durable or handler-visible. A terminal 
 quarantine is documented as a sanitized audit tombstone that deliberately abandons handler
 processing after the bounded threshold, not as preservation of the original update payload.
 
+Delivered media now carries the durable canonical job URL as bottom-most Persian source metadata
+without replacing any existing caption content. Direct photo/video/audio/document delivery,
+document fallback, Instagram albums and individual items, Stories/Highlights batches, and
+multipart parts all receive the same persisted `JobRecord.url`. The caption planner preserves
+fixed attribution and per-item/part lines, reduces only oversized title text, keeps the URL whole,
+and uses a receipt-associated reply only when the 1024-character media-caption limit cannot fit the
+complete source line. No source URL is added to logs or metrics.
+
 Tasks T001 through T013 are implemented. Patch 1.3.6 repairs the production yt-dlp inspection
 failure on read-only application filesystems without changing
 dependency/runtime topology or the passive Cookie Health architecture: `inspect_options()` now
@@ -193,6 +201,11 @@ downloaded the original JPEG. Exact command results, artifact hashes, platform s
 smokes are recorded in `docs/HANDOFF_REPORT.md`.
 
 ## Recent fixes
+
+- 2026-08-31: Added user-visible durable source links to every successful media-delivery path while
+  preserving all existing caption, attribution, Story/Highlight, collection ordinal, and multipart
+  text. Album items remain individually traceable, tracking parameters stay stripped by the existing
+  canonicalizer, and caption-limit fallback preserves receipt-first `delivery_uncertain` behavior.
 
 - 2026-08-17: Added project-scoped Graphify exclusions and query/freshness guidance, compact agent
   routing/current-state/ADR indexes, six validated subsystem navigation Skills, and dependency-free

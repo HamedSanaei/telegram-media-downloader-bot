@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
-from aiogram.methods import SendDocument, SendMediaGroup, SendVideo
+from aiogram.methods import SendDocument, SendMediaGroup, SendMessage, SendVideo
 from aiogram.types import (
     Audio,
     Chat,
@@ -26,7 +26,11 @@ from aiogram.types import (
 )
 
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.errors import DeliveryError, DeliveryTooLargeError
+from telegram_media_bot.domain.errors import (
+    DeliveryError,
+    DeliveryTooLargeError,
+    DeliveryUncertainError,
+)
 from telegram_media_bot.domain.models import (
     DeliveryMethod,
     DeliveryProgressEvent,
@@ -40,11 +44,14 @@ from telegram_media_bot.domain.models import (
 )
 from telegram_media_bot.infrastructure.archive.multipart_zip import MultipartArchive
 from telegram_media_bot.telegram.delivery import (
+    SOURCE_URL_LABEL,
+    TELEGRAM_CAPTION_LIMIT,
     TELEGRAM_MEDIA_GROUP_MAX_ITEMS,
     RoutedDeliveryGateway,
     TelegramDeliveryGateway,
     TrackedFSInputFile,
     _finalization_heartbeat,
+    append_source_url,
     build_instagram_delivery_batches,
     chunk_media_items,
     render_caption,
@@ -60,6 +67,7 @@ class FakeBot:
     def __init__(self) -> None:
         self.last_upload: dict[str, object] = {}
         self.uploads: list[dict[str, object]] = []
+        self.texts: list[dict[str, object]] = []
 
     async def send_audio(self, **kwargs: object) -> Message:
         self.last_upload = kwargs
@@ -113,7 +121,8 @@ class FakeBot:
             for index, item in enumerate(media)
         ]
 
-    async def send_message(self, **_kwargs: object) -> Message:
+    async def send_message(self, **kwargs: object) -> Message:
+        self.texts.append(kwargs)
         return _message("none")
 
     async def edit_message_text(self, **_kwargs: object) -> Message:
@@ -151,10 +160,16 @@ async def test_video_failure_falls_back_to_document(settings: Settings, tmp_path
     bot = FakeBot()
     bot.fail_video = True
     gateway = TelegramDeliveryGateway(cast(Bot, cast(Any, bot)), _auto_delivery(settings))
+    source_url = "https://www.instagram.com/reel/ABC123/"
     receipt = await gateway.deliver(
-        chat_id=1, result=_result(tmp_path, MediaKind.VIDEO), caption="caption"
+        chat_id=1,
+        result=_result(tmp_path, MediaKind.VIDEO),
+        caption="caption",
+        source_url=source_url,
     )
     assert receipt.method.value == "document"
+    assert bot.last_upload["caption"] == f"caption\n\n{SOURCE_URL_LABEL} {source_url}"
+    assert len(bot.uploads) == 2
 
 
 async def test_non_streamable_native_video_uses_document_without_encode(
@@ -264,16 +279,20 @@ async def test_album_chunks_preserve_order_and_avoid_singleton_group(
         artifacts=tuple(artifacts),
     )
     bot = FakeBot()
+    source_url = "https://www.instagram.com/p/Album123/"
 
     receipt = await RoutedDeliveryGateway(
         cast(Bot, cast(Any, bot)), _auto_delivery(settings)
-    ).deliver(chat_id=1, result=result, caption="caption")
+    ).deliver(chat_id=1, result=result, caption="caption", source_url=source_url)
 
     assert [len(cast(list[object], call["media"])) for call in bot.uploads] == [9, 2]
     assert [item.ordinal for item in receipt.items] == list(range(1, 12))
     first_group = cast(list[Any], bot.uploads[0]["media"])
-    assert first_group[0].caption == "caption"
-    assert all(item.caption is None for item in first_group[1:])
+    source_text = f"{SOURCE_URL_LABEL} {source_url}"
+    assert first_group[0].caption == f"caption\n\n{source_text}"
+    assert all(item.caption == source_text for item in first_group[1:])
+    second_group = cast(list[Any], bot.uploads[1]["media"])
+    assert all(item.caption == source_text for item in second_group)
 
 
 async def test_rejected_album_falls_back_but_ambiguous_album_does_not_retry(
@@ -316,6 +335,156 @@ async def test_rejected_album_falls_back_but_ambiguous_album_does_not_retry(
 def test_caption_contains_runtime_bot_username(settings: Settings, tmp_path: Path) -> None:
     caption = render_caption(settings, _result(tmp_path, MediaKind.VIDEO), "ExampleBot")
     assert "@ExampleBot" in caption
+
+
+def test_source_url_is_appended_after_unchanged_caption_with_one_blank_line(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    result = _result(tmp_path, MediaKind.VIDEO)
+    old_caption = render_caption(settings, result, "ExampleBot")
+    source_url = "https://www.instagram.com/reel/ABC123/"
+
+    placement = append_source_url(
+        old_caption,
+        source_url,
+        title="Title",
+    )
+
+    assert placement.media_caption == f"{old_caption}\n\n{SOURCE_URL_LABEL} {source_url}"
+    assert placement.media_caption.endswith(f"{SOURCE_URL_LABEL} {source_url}")
+    assert placement.fallback_text is None
+    assert "@ExampleBot" in placement.media_caption
+
+
+def test_source_url_boundary_reduces_only_title_and_never_truncates_url(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    title = "T" * 768
+    result = replace(_result(tmp_path, MediaKind.VIDEO), title=title)
+    old_caption = render_caption(settings, result, "ExampleBot")
+    source_url = f"https://example.com/{'u' * 300}"
+
+    placement = append_source_url(old_caption, source_url, title=title)
+
+    assert len(placement.media_caption) <= TELEGRAM_CAPTION_LIMIT
+    assert placement.media_caption.endswith(f"{SOURCE_URL_LABEL} {source_url}")
+    assert source_url in placement.media_caption
+    assert "منبع: youtube" in placement.media_caption
+    assert "@ExampleBot" in placement.media_caption
+    assert placement.fallback_text is None
+
+
+def test_source_url_exact_1024_boundary_and_one_character_over() -> None:
+    source_url = "https://example.com/original"
+    source_text = f"{SOURCE_URL_LABEL} {source_url}"
+    fixed = "\nsource: youtube\n@ExampleBot"
+    title_length = TELEGRAM_CAPTION_LIMIT - len(fixed) - 2 - len(source_text)
+    exact_title = "T" * title_length
+
+    exact = append_source_url(exact_title + fixed, source_url, title=exact_title)
+    over_title = f"{exact_title}T"
+    reduced = append_source_url(over_title + fixed, source_url, title=over_title)
+
+    assert len(exact.media_caption) == TELEGRAM_CAPTION_LIMIT
+    assert exact.media_caption.startswith(exact_title)
+    assert len(reduced.media_caption) == TELEGRAM_CAPTION_LIMIT
+    assert reduced.media_caption.startswith(exact_title)
+    assert reduced.media_caption.endswith(source_text)
+    assert exact.fallback_text is reduced.fallback_text is None
+
+
+async def test_source_url_uses_replied_text_fallback_without_duplicate_media(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    bot = FakeBot()
+    result = _result(tmp_path, MediaKind.VIDEO)
+    existing_caption = "ثابت" * 200
+    source_url = f"https://example.com/{'u' * 200}"
+
+    receipt = await TelegramDeliveryGateway(
+        cast(Bot, cast(Any, bot)), _auto_delivery(settings)
+    ).deliver(
+        chat_id=1,
+        result=result,
+        caption=existing_caption,
+        source_url=source_url,
+    )
+
+    assert len(bot.uploads) == 1
+    assert bot.last_upload["caption"] == existing_caption
+    assert bot.texts[0]["text"] == f"{SOURCE_URL_LABEL} {source_url}"
+    reply = cast(Any, bot.texts[0]["reply_parameters"])
+    assert reply.message_id == receipt.message_id
+
+
+async def test_source_reply_failure_persists_media_before_delivery_becomes_uncertain(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    class FailSourceReplyBot(FakeBot):
+        async def send_message(self, **kwargs: object) -> Message:
+            self.texts.append(kwargs)
+            raise TelegramNetworkError(
+                method=SendMessage(chat_id=1, text="source"),
+                message="connection lost",
+            )
+
+    bot = FailSourceReplyBot()
+    persisted: list[int] = []
+
+    async def item_delivered(item: object) -> None:
+        persisted.append(cast(Any, item).ordinal)
+
+    with pytest.raises(DeliveryUncertainError):
+        await TelegramDeliveryGateway(cast(Bot, cast(Any, bot)), _auto_delivery(settings)).deliver(
+            chat_id=1,
+            result=_result(tmp_path, MediaKind.VIDEO),
+            caption="ثابت" * 200,
+            source_url=f"https://example.com/{'u' * 200}",
+            item_delivered=item_delivered,
+        )
+
+    assert len(bot.uploads) == 1
+    assert persisted == [1]
+
+
+@pytest.mark.parametrize(
+    ("kind", "suffix", "mime_type", "expected_method"),
+    [
+        (MediaKind.AUDIO, ".mp3", "audio/mpeg", DeliveryMethod.AUDIO),
+        (MediaKind.VIDEO, ".mp4", "video/mp4", DeliveryMethod.VIDEO),
+        (MediaKind.IMAGE, ".jpg", "image/jpeg", DeliveryMethod.PHOTO),
+        (MediaKind.UNKNOWN, ".bin", "application/octet-stream", DeliveryMethod.DOCUMENT),
+    ],
+)
+async def test_every_single_media_method_keeps_source_url(
+    settings: Settings,
+    tmp_path: Path,
+    kind: MediaKind,
+    suffix: str,
+    mime_type: str,
+    expected_method: DeliveryMethod,
+) -> None:
+    path = tmp_path / f"media{suffix}"
+    path.write_bytes(b"media")
+    result = replace(
+        _result(tmp_path, kind),
+        file_path=path,
+        mime_type=mime_type,
+        inline_video_streamable=kind is MediaKind.VIDEO,
+    )
+    bot = FakeBot()
+    source_url = "https://example.com/original"
+
+    receipt = await TelegramDeliveryGateway(
+        cast(Bot, cast(Any, bot)), _auto_delivery(settings)
+    ).deliver(chat_id=1, result=result, caption="old", source_url=source_url)
+
+    assert receipt.method is expected_method
+    assert bot.last_upload["caption"] == f"old\n\n{SOURCE_URL_LABEL} {source_url}"
 
 
 async def test_ambiguous_network_failure_never_falls_back_or_retries(
@@ -487,7 +656,8 @@ async def test_routed_delivery_sends_multipart_immediately_above_direct_limit(
         def build(self, _source: Path) -> MultipartArchive:
             return MultipartArchive((volume_one, volume_two), manifest)
 
-    gateway = RoutedDeliveryGateway(cast(Bot, cast(Any, FakeBot())), configured)
+    bot = FakeBot()
+    gateway = RoutedDeliveryGateway(cast(Bot, cast(Any, bot)), configured)
     gateway._multipart = cast(Any, FakeBuilder())
 
     persisted_ordinals: list[int] = []
@@ -500,6 +670,7 @@ async def test_routed_delivery_sends_multipart_immediately_above_direct_limit(
         chat_id=1,
         result=declared_large,
         caption="caption",
+        source_url="https://example.com/original",
         progress=progress.append,
         item_delivered=item_delivered,
     )
@@ -510,6 +681,14 @@ async def test_routed_delivery_sends_multipart_immediately_above_direct_limit(
     assert progress[0].stage is DeliveryStage.PACKAGING
     assert progress[-1].item_ordinal == 3
     assert progress[-1].item_count == 3
+    assert all(
+        str(upload["caption"]).endswith(f"{SOURCE_URL_LABEL} https://example.com/original")
+        for upload in bot.uploads
+    )
+    assert "بخش 1 از 2\n\n" in str(bot.uploads[0]["caption"])
+    assert "manifest شامل اندازه و SHA-256 همه بخش‌ها\n\n" in str(  # noqa: RUF001
+        bot.uploads[-1]["caption"]
+    )
     assert not volume_one.exists()
     assert not volume_two.exists()
     assert not manifest.exists()
@@ -679,6 +858,60 @@ async def test_instagram_photo_batches_preserve_every_source_item(
 
 
 @pytest.mark.parametrize(
+    ("kind", "source_url"),
+    [
+        (MediaKind.IMAGE, "https://www.instagram.com/p/Image123/"),
+        (MediaKind.VIDEO, "https://www.instagram.com/reel/Reel123/"),
+    ],
+)
+async def test_instagram_single_post_and_reel_keep_canonical_source_url(
+    settings: Settings,
+    tmp_path: Path,
+    kind: MediaKind,
+    source_url: str,
+) -> None:
+    result = _instagram_result(tmp_path, [kind], ImageDeliveryMode.PHOTO)
+    bot = FakeBot()
+
+    receipt = await RoutedDeliveryGateway(
+        cast(Bot, cast(Any, bot)), _auto_delivery(settings)
+    ).deliver(
+        chat_id=1,
+        result=result,
+        caption="old caption",
+        source_url=source_url,
+    )
+
+    assert len(receipt.items) == 1
+    assert bot.last_upload["caption"] == (f"old caption\n\n{SOURCE_URL_LABEL} {source_url}")
+
+
+async def test_instagram_album_first_item_keeps_old_caption_and_all_items_are_traceable(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    result = _instagram_result(
+        tmp_path,
+        [MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.IMAGE],
+        ImageDeliveryMode.PHOTO,
+    )
+    bot = FakeBot()
+    source_url = "https://www.instagram.com/p/Mixed123/"
+
+    await RoutedDeliveryGateway(cast(Bot, cast(Any, bot)), settings).deliver(
+        chat_id=1,
+        result=result,
+        caption="old caption",
+        source_url=source_url,
+    )
+
+    media = cast(list[Any], bot.uploads[0]["media"])
+    source_text = f"{SOURCE_URL_LABEL} {source_url}"
+    assert media[0].caption == f"old caption\n\n{source_text}"
+    assert [item.caption for item in media[1:]] == [source_text, source_text]
+
+
+@pytest.mark.parametrize(
     ("suffix", "mime_type"),
     [(".jpg", "image/jpeg"), (".png", "image/png"), (".webp", "image/webp")],
 )
@@ -709,6 +942,7 @@ async def test_instagram_document_delivery_preserves_exact_bytes_and_format(
         chat_id=1,
         result=result,
         caption="caption",
+        source_url="https://www.instagram.com/p/Original123/",
     )
 
     upload = cast(FSInputFile, bot.last_upload["document"])
@@ -718,6 +952,9 @@ async def test_instagram_document_delivery_preserves_exact_bytes_and_format(
     delivered_bytes = await asyncio.to_thread(upload_path.read_bytes)
     assert hashlib.sha256(delivered_bytes).hexdigest() == before
     assert upload.filename is not None and upload.filename.endswith(suffix)
+    assert bot.last_upload["caption"] == (
+        f"caption\n\n{SOURCE_URL_LABEL} https://www.instagram.com/p/Original123/"
+    )
 
 
 async def test_instagram_document_albums_use_documents_and_exact_ten_boundaries(

@@ -34,6 +34,7 @@ from telegram_media_bot.domain.models import (
     MediaKind,
 )
 from telegram_media_bot.telegram.delivery import (
+    SOURCE_URL_LABEL,
     RoutedDeliveryGateway,
     render_batch_summary,
 )
@@ -81,6 +82,7 @@ class FakeBatchBot:
     def __init__(self, fail_on: set[int]) -> None:
         self.fail_on = fail_on
         self.upload_count = 0
+        self.uploads: list[dict[str, object]] = []
         self.texts: list[str] = []
 
     async def _consume(self, upload: object) -> None:
@@ -112,6 +114,7 @@ class FakeBatchBot:
 
     async def _send(self, method: str, kwargs: dict[str, object]) -> Message:
         self.upload_count += 1
+        self.uploads.append(kwargs)
         if self.upload_count in self.fail_on:
             raise TelegramAPIError(
                 method=SendPhoto(chat_id=1, photo="existing-file-id"),
@@ -171,6 +174,7 @@ async def test_batch_delivers_all_items_in_order(settings: Settings, tmp_path: P
         chat_id=1,
         result=result,
         caption="cap",
+        source_url="https://www.instagram.com/stories/exampleuser/",
         summary_title="\U0001f4da \u062f\u0627\u0646\u0644\u0648\u062f \u0627\u0633\u062a\u0648\u0631\u06cc\u200c\u0647\u0627 \u062a\u0645\u0627\u0645 \u0634\u062f",
     )
     assert outcome.total == 3
@@ -183,6 +187,12 @@ async def test_batch_delivers_all_items_in_order(settings: Settings, tmp_path: P
         DeliveryMethod.PHOTO,
     ]
     assert bot.upload_count == 3
+    for index, upload in enumerate(bot.uploads, start=1):
+        caption = str(upload["caption"])
+        assert f"رسانه {index} از 3" in caption
+        assert caption.endswith(
+            f"{SOURCE_URL_LABEL} https://www.instagram.com/stories/exampleuser/"
+        )
     assert any(
         "\u06a9\u0644: 3" in text and "\u0645\u0648\u0641\u0642: 3" in text for text in bot.texts
     )
@@ -233,6 +243,8 @@ class _CancellingGateway(RoutedDeliveryGateway):
         chat_id: int,
         result: DownloadResult,
         caption: str,
+        source_url: str | None = None,
+        caption_title: str = "",
         progress: DeliveryProgressSink | None = None,
         item_delivered: DeliveryItemSink | None = None,
         is_cancelled: DeliveryCancellationCheck | None = None,
@@ -241,6 +253,8 @@ class _CancellingGateway(RoutedDeliveryGateway):
             chat_id=chat_id,
             result=result,
             caption=caption,
+            source_url=source_url,
+            caption_title=caption_title or result.title,
             progress=progress,
             item_delivered=item_delivered,
             is_cancelled=is_cancelled,
