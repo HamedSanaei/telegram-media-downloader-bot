@@ -5,12 +5,15 @@ before handlers run, so a crash mid-handling can permanently lose an update that
 considers acknowledged. This loop instead:
 
 1. fetches a batch from ``get_updates``,
-2. *durably records every update in the bind-oriented inbox*,
-3. only then advances the Telegram offset (via the next ``get_updates`` call),
-4. feeds each new update to the dispatcher and marks it completed (or bounded-retry) in the inbox.
+2. serializes and durably records updates in Telegram order until the first unresolved gap,
+3. advances the Telegram offset only through that durable prefix,
+4. feeds each recorded update to the dispatcher in the same order and marks it completed (or
+   bounded-retry) in the inbox.
 
-A crash leaves unpersisted updates unacknowledged (Telegram re-delivers them) and persisted updates
-in the inbox for startup reconciliation, so unanswered requests are never lost.
+A crash leaves unpersisted updates unacknowledged (Telegram re-delivers them) and replayable
+persisted updates in the inbox for startup reconciliation. After the bounded serialization-failure
+threshold, a non-replayable terminal tombstone records the update ID and failure while deliberately
+abandoning handler processing so one impossible update cannot block all subsequent traffic forever.
 """
 
 from __future__ import annotations
@@ -22,7 +25,6 @@ from dataclasses import dataclass
 
 import structlog
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
 from aiogram.types import Update
 from aiogram.utils.serialization import deserialize_telegram_object_to_python
 
@@ -74,20 +76,17 @@ def _update_type(update: Update) -> str:
     return "message"
 
 
-def serialize_update(
-    update: Update, *, default: DefaultBotProperties | None = None
-) -> SerializedUpdate:
+def serialize_update(update: Update) -> SerializedUpdate:
     """Persist one Telegram ``Update`` as safe, replayable JSON.
 
     aiogram's ``Update.model_dump_json()`` cannot serialize the ``Default`` sentinels aiogram can
     embed in nested/default-valued fields, so raw Pydantic serialization can raise
     ``PydanticSerializationError``. Instead, aiogram's own Telegram-object serializer is used (the
-    same round-trip path aiogram uses internally), which resolves framework ``Default`` values
-    against the configured bot ``default`` properties into plain JSON-compatible data.
+    same round-trip path aiogram uses internally). No outbound bot defaults are supplied: aiogram's
+    fake bot resolves/excludes framework ``Default`` sentinels using empty default properties, so
+    the durable snapshot contains only inbound Telegram semantics.
     """
-    data = deserialize_telegram_object_to_python(
-        update, default=default, include_api_method_name=False
-    )
+    data = deserialize_telegram_object_to_python(update, include_api_method_name=False)
     return SerializedUpdate(
         update_id=update.update_id,
         update_type=_update_type(update),
@@ -170,21 +169,19 @@ async def durable_poll(
         if not updates:
             continue
 
-        # Phase 1: serialize and durably persist every delivered update before acknowledging any.
-        batch_ids = [u.update_id for u in updates if u.update_id is not None]
-        advance = max(0 if offset is None else offset, ((max(batch_ids) + 1) if batch_ids else 0))
-        blockers: list[int] = []
+        # Phase 1: serialize and persist in increasing Telegram order. A transient serialization
+        # failure is a hard barrier: no later update may become durable or handler-visible until
+        # the gap succeeds or is durably terminal-quarantined.
+        advance = 0 if offset is None else offset
         to_process: list[tuple[Update, InboundUpdate]] = []
-        for update in updates:
+        for update in sorted(updates, key=lambda item: item.update_id):
             if update.update_id is None:
                 continue
             try:
-                serialized = serialize_update(update, default=bot.default)
+                serialized = serialize_update(update)
             except Exception as exc:
-                # A failing update is NOT acknowledged here: it stays pending for Telegram to
-                # redeliver, so it can never be silently lost. Track it so a permanently broken
-                # update cannot restart-loop the bot forever (see quarantine below).
-                blockers.append(update.update_id)
+                # Until the bound is reached, the update remains unacknowledged and Telegram must
+                # redeliver it together with every later update from this batch.
                 failures = serialize_failures.get(update.update_id, 0) + 1
                 serialize_failures[update.update_id] = failures
                 await logger.awarning(
@@ -197,15 +194,14 @@ async def durable_poll(
                     quarantined=False,
                 )
                 if failures >= _SERIALIZE_FAILURE_MAX_CONSECUTIVE:
-                    # Durable terminal quarantine: the update_id is recorded forever (never
-                    # replayed, never silently dropped) so the Telegram offset may advance and the
-                    # bot keeps serving fresh traffic.
+                    # The ID and failure are durably recorded, but no replayable payload exists:
+                    # handler processing is deliberately abandoned so this impossible update does
+                    # not block all subsequent traffic forever.
                     quarantined = inbox.quarantine(
                         update.update_id,
                         _update_type(update),
                         type(exc).__name__,
                     )
-                    blockers.remove(update.update_id)
                     serialize_failures.pop(update.update_id, None)
                     await logger.awarning(
                         "telegram_update_quarantined",
@@ -214,17 +210,20 @@ async def durable_poll(
                         error_category=type(exc).__name__,
                         newly_recorded=quarantined,
                     )
-                continue
+                    advance = max(advance, update.update_id + 1)
+                    continue
+                advance = update.update_id
+                break
+            serialize_failures.pop(update.update_id, None)
             record = inbox.record(
                 serialized.update_id, serialized.update_type, serialized.payload_json
             )
             if record is not None:
                 to_process.append((update, record))
+            advance = max(advance, update.update_id + 1)
 
-        # Phase 2: advance only over updates that are durably accounted for. If an update could not
-        # be serialized this cycle (and has not yet exhausted its quarantine bound), do not pass it.
-        if blockers:
-            advance = min(advance, min(blockers))
+        # Phase 2: acknowledge exactly the durable prefix discovered above. When Phase 1 stopped at
+        # update N, the next getUpdates request uses offset=N so Telegram redelivers N and later.
         offset = advance
 
         # Phase 3: process sequentially so updates from the same chat stay ordered.
@@ -246,8 +245,6 @@ async def durable_poll(
                 inbox.mark_completed(prepared)
 
 
-def _as_record_args(
-    update: Update, *, default: DefaultBotProperties | None = None
-) -> tuple[int, str, str]:
-    serialized = serialize_update(update, default=default)
+def _as_record_args(update: Update) -> tuple[int, str, str]:
+    serialized = serialize_update(update)
     return serialized.update_id, serialized.update_type, serialized.payload_json

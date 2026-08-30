@@ -2,9 +2,10 @@
 
 A Telegram long-poll delivers each ``update_id`` at-least-once while the process is alive, but an
 offset advanced past an update before its handler finishes is effectively acknowledged to Telegram.
-To never lose an unanswered user request, every inbound update is durably recorded *before* the
-polling offset advances. The inbox state machine drives replay/idempotency across crash, Docker,
-and host restarts.
+Every replayable inbound update is durably recorded *before* the polling offset advances. The inbox
+state machine drives replay/idempotency across crash, Docker, and host restarts; a bounded terminal
+serialization tombstone records only the update ID and failure and deliberately abandons handler
+processing when no replayable payload can be produced.
 """
 
 from __future__ import annotations

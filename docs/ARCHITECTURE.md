@@ -108,6 +108,11 @@ No production image is resized, converted, recompressed, or otherwise rewritten.
 - long polling initially;
 - validates public DNS results and static/durable user policy;
 - enforces membership in every configured channel through a cached Telegram gateway;
+- serializes inbound updates without outbound Bot defaults and journals them to SQLite in Telegram
+  order before advancing the long-poll offset;
+- treats an unresolved serialization gap as a hard batch barrier, so later updates cannot be
+  persisted, replayed, or handled ahead of it; only a replayable row or durable terminal tombstone
+  permits the offset to advance;
 - upserts the Bot API user profile and request counters through a persistence port;
 - creates a durable job record before its immutable queue payload;
 - reads owner-bound, expiring selections for callbacks;

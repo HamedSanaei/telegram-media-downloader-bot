@@ -33,7 +33,8 @@ class InboundUpdateRepository(Protocol):
         """Atomically record an unserializable update as a terminal (non-replayable) row.
 
         Idempotent: inserting a duplicate ``update_id`` returns ``False`` without creating a second
-        row, so a quarantined update is never recorded twice.
+        row. This is an audit tombstone, not preservation of the original update payload; handler
+        processing is deliberately abandoned after the bounded serialization-failure threshold.
         """
 
     def get(self, update_id: int) -> InboundUpdate | None: ...

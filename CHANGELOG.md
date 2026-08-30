@@ -133,14 +133,16 @@
   can appear in nested/default-valued fields (e.g. link-preview options), so every delivery of a
   ``Default``-bearing update crashed the bot into a permanent Docker restart loop.
   ``serialize_update()`` now uses aiogram's own Telegram-object serializer
-  (``deserialize_telegram_object_to_python``) with the configured bot ``default`` properties, so
-  updates persist as safe, replayable JSON and round-trip to an equivalent handler-visible update.
-- Harden poll-loop failure semantics: an update that cannot be serialized is never acknowledged or
-  advanced past, and transient failures retry in place; a permanently unserializable update is
-  durably quarantined as a non-replayable terminal row (with a sanitized marker payload) so one bad
-  update can no longer restart-loop the bot while fresh user traffic keeps flowing. Live-handler
-  failures and serialization failures now emit sanitized structured events (no payloads or user
-  content).
+  (``deserialize_telegram_object_to_python``) without the real Bot's outbound defaults, so updates
+  persist as safe, replayable JSON without injecting parse-mode, link-preview, content-protection,
+  or caption-placement policy into inbound snapshots.
+- Harden poll-loop failure and ordering semantics: an update that cannot be serialized is a hard
+  batch barrier, so no later update is persisted, processed, replayed, or acknowledged ahead of it.
+  Transient failures retry from the blocked update ID in place. After the bounded threshold, a
+  sanitized terminal tombstone durably records the ID and failure while deliberately abandoning
+  handler processing, allowing later traffic to resume without misrepresenting the tombstone as the
+  original update. Live-handler and serialization failures emit sanitized structured events (no
+  payloads or user content).
 
 ### Operations
 

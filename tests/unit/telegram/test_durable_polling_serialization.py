@@ -120,26 +120,33 @@ def test_raw_model_dump_json_fails_on_default_sentinel() -> None:
         update.model_dump_json(exclude_none=True)
 
 
-def test_serialize_update_handles_default_sentinel() -> None:
+def test_serialize_update_handles_default_without_injecting_outbound_bot_defaults() -> None:
+    bot = _bot(link_preview_is_disabled=True)
     update = _link_preview_update_with_default(555)
-    serialized = serialize_update(update, default=_bot().default)
+    serialized = serialize_update(update)
 
     # JSON-compatible, no Python / framework object representation leaked into the payload.
-    assert json.loads(serialized.payload_json)
+    payload = json.loads(serialized.payload_json)
+    assert payload
     assert "Default" not in serialized.payload_json
+    assert bot.default.link_preview_is_disabled is True
+    assert "is_disabled" not in payload["message"]["link_preview_options"]
 
-    # Round-trip: the handler-visible equivalent resolves the sentinel to the configured default.
-    round_trip = Update.model_validate(json.loads(serialized.payload_json))
+    # Round-trip: handler-visible inbound semantics retain aiogram's unresolved sentinel rather
+    # than materializing the real Bot's outbound default into the Telegram snapshot.
+    round_trip = Update.model_validate(payload)
     assert round_trip.update_id == 555
     assert round_trip.message is not None
     assert round_trip.message.text == "https://example.com/p"
     assert round_trip.message.link_preview_options is not None
-    assert round_trip.message.link_preview_options.is_disabled is True
+    assert round_trip.message.link_preview_options.is_disabled == Default(
+        "link_preview_is_disabled"
+    )
 
 
 def test_unicode_farsi_survives_serialization() -> None:
     update = _message_update(7, text="سلام دنیا دانلود")
-    serialized = serialize_update(update, default=_bot().default)
+    serialized = serialize_update(update)
     round_trip = Update.model_validate(json.loads(serialized.payload_json))
     assert round_trip.message is not None
     assert round_trip.message.text == "سلام دنیا دانلود"
@@ -147,7 +154,7 @@ def test_unicode_farsi_survives_serialization() -> None:
 
 def test_callback_query_round_trips() -> None:
     update = _callback_update(9)
-    serialized = serialize_update(update, default=_bot().default)
+    serialized = serialize_update(update)
     assert serialized.update_type == "callback_query"
     round_trip = Update.model_validate(json.loads(serialized.payload_json))
     assert round_trip.callback_query is not None
@@ -158,18 +165,17 @@ def test_callback_query_round_trips() -> None:
     assert round_trip.callback_query.message.text == "original"
 
 
-def test_replay_update_pipeline_default_resolves() -> None:
+def test_replay_update_pipeline_preserves_inbound_default_semantics() -> None:
     """End-to-end replay path: serialized payload re-parses into an equivalent handler-visible update."""
-    bot = _bot()
     update = _link_preview_update_with_default(555)
-    serialized = serialize_update(update, default=bot.default)
+    serialized = serialize_update(update)
     replayed = durable_polling._replay_update(
         _plain_update(serialized.update_id, serialized.payload_json)
     )
     assert replayed.update_id == 555
     assert replayed.message is not None
     assert replayed.message.link_preview_options is not None
-    assert replayed.message.link_preview_options.is_disabled is True
+    assert replayed.message.link_preview_options.is_disabled == Default("link_preview_is_disabled")
 
 
 # ---------------------------------------------------------------------------
@@ -267,48 +273,138 @@ def test_completed_update_is_never_reprocessed(tmp_path: Path) -> None:
 def test_serialization_failure_does_not_advance_offset_then_recovers(tmp_path: Path) -> None:
     bot = _bot()
     inbox = _inbox(tmp_path)
+    inspection_repo = SqliteInboundUpdateRepository(tmp_path / "state" / "jobs.sqlite3")
     controller = _Controller()
-    fake = _FakeTelegram([_message_update(1), _message_update(2)], controller)
     dispatcher = _StubDispatcher()
     real_serialize = durable_polling.serialize_update
     failures = {"remaining": 1}
+    after_first_cycle: dict[str, object] = {}
 
-    def flaky_serialize(update: Update, *, default: DefaultBotProperties | None = None) -> Any:
+    class SnapshotTelegram(_FakeTelegram):
+        async def get_updates(self, offset: int | None = None, **kwargs: object) -> list[Update]:
+            if self.offset_calls and not after_first_cycle:
+                rows = {update_id: inspection_repo.get(update_id) for update_id in (1, 2, 3)}
+                after_first_cycle.update(
+                    offset=offset,
+                    processed=list(dispatcher.processed),
+                    states={
+                        update_id: None if row is None else row.state.value
+                        for update_id, row in rows.items()
+                    },
+                )
+            return await super().get_updates(offset=offset, **kwargs)
+
+    fake = SnapshotTelegram(
+        [_message_update(1), _message_update(2), _message_update(3)], controller
+    )
+
+    def flaky_serialize(update: Update) -> Any:
         if update.update_id == 2 and failures["remaining"] > 0:
             failures["remaining"] -= 1
             raise PydanticSerializationError("unable to serialize")
-        return real_serialize(update, default=default)
+        return real_serialize(update)
 
     with mock.patch.object(durable_polling, "serialize_update", side_effect=flaky_serialize):
         _run_poll(bot, dispatcher, inbox, fake)
 
-    # Update 1 was processed; update 2 eventually serialized, persisted and completed.
-    assert dispatcher.processed == [1, 2]
+    # The first failure is a hard barrier: 1 may complete, but neither 2 nor 3 is durable or
+    # handler-visible before Telegram is polled again from the unresolved update ID.
+    assert after_first_cycle == {
+        "offset": 2,
+        "processed": [1],
+        "states": {1: "completed", 2: None, 3: None},
+    }
+
+    # Retry preserves exact dispatcher order and advances only after 2 and 3 become durable.
+    assert dispatcher.processed == [1, 2, 3]
     assert inbox.pending_count() == 0
-    # On the failing cycle the offset stayed at 2 (never acknowledged update 2).
-    assert 2 in fake.offset_calls
-    # A later cycle advanced past both once update 2 was durably persisted.
-    assert fake.offset_calls[-1] == 3
+    assert fake.offset_calls == [None, 2, 4]
+
+
+def test_serialization_gap_cannot_leapfrog_across_restart(tmp_path: Path) -> None:
+    state_path = tmp_path / "state" / "jobs.sqlite3"
+    first_inbox = _inbox(tmp_path)
+    first_controller = _Controller()
+    first_dispatcher = _StubDispatcher()
+    real_serialize = durable_polling.serialize_update
+    failures = {"remaining": 1}
+
+    class OneBatchTelegram(_FakeTelegram):
+        async def get_updates(self, offset: int | None = None, **kwargs: object) -> list[Update]:
+            result = await super().get_updates(offset=offset, **kwargs)
+            self.controller.done = True
+            return result
+
+    first_fake = OneBatchTelegram(
+        [_message_update(1), _message_update(2), _message_update(3)], first_controller
+    )
+
+    def fail_update_two_once(update: Update) -> Any:
+        if update.update_id == 2 and failures["remaining"]:
+            failures["remaining"] -= 1
+            raise PydanticSerializationError("unable to serialize")
+        return real_serialize(update)
+
+    with mock.patch.object(durable_polling, "serialize_update", side_effect=fail_update_two_once):
+        _run_poll(_bot(), first_dispatcher, first_inbox, first_fake)
+
+    before_restart = SqliteInboundUpdateRepository(state_path)
+    completed_before_restart = before_restart.get(1)
+    assert first_dispatcher.processed == [1]
+    assert completed_before_restart is not None
+    assert completed_before_restart.state is UpdateProcessingState.COMPLETED
+    assert before_restart.get(2) is None
+    assert before_restart.get(3) is None
+
+    restart_repo = SqliteInboundUpdateRepository(state_path)
+    restart_repo.initialize()
+    restart_inbox = DurableUpdateInbox(restart_repo)
+    restart_dispatcher = _StubDispatcher()
+    restart_controller = _Controller()
+    restart_fake = _FakeTelegram(
+        [_message_update(1), _message_update(2), _message_update(3)], restart_controller
+    )
+    restart_bot = _bot()
+    restart_bot.get_updates = restart_fake.get_updates  # type: ignore[assignment]
+
+    async def restart() -> int:
+        replayed = await durable_polling.replay_pending_updates(
+            restart_bot,
+            restart_dispatcher,  # type: ignore[arg-type]
+            restart_inbox,
+        )
+        await durable_poll(
+            restart_bot,
+            restart_dispatcher,  # type: ignore[arg-type]
+            restart_inbox,
+            polling_timeout=10,
+            stopped=lambda: restart_controller.done,
+        )
+        return replayed
+
+    assert asyncio.run(restart()) == 0
+    assert restart_dispatcher.processed == [2, 3]
+    assert restart_fake.offset_calls == [None, 4]
 
 
 def test_serialization_failure_is_bounded_and_quarantined(tmp_path: Path) -> None:
     bot = _bot()
     inbox = _inbox(tmp_path)
     controller = _Controller()
-    # update 1 works; update 2 never serializes.
-    fake = _FakeTelegram([_message_update(1), _message_update(2)], controller)
+    # update 1 works; update 2 never serializes; update 3 waits behind it until quarantine.
+    fake = _FakeTelegram([_message_update(1), _message_update(2), _message_update(3)], controller)
     dispatcher = _StubDispatcher()
 
-    def poison_serialize(update: Update, *, default: DefaultBotProperties | None = None) -> Any:
+    def poison_serialize(update: Update) -> Any:
         if update.update_id == 2:
             raise PydanticSerializationError("permanently unserializable")
-        return serialize_update(update, default=default)
+        return serialize_update(update)
 
     with mock.patch.object(durable_polling, "serialize_update", side_effect=poison_serialize):
         _run_poll(bot, dispatcher, inbox, fake)
 
-    # Fresh traffic is never blocked: update 1 was processed normally.
-    assert dispatcher.processed == [1]
+    # Update 3 advances only after update 2 has a durable terminal tombstone.
+    assert dispatcher.processed == [1, 3]
     # The poison update was durably quarantined as terminal (never replayed, never a crash loop).
     repo = SqliteInboundUpdateRepository(tmp_path / "state" / "jobs.sqlite3")
     quarantined = repo.get(2)
@@ -317,7 +413,7 @@ def test_serialization_failure_is_bounded_and_quarantined(tmp_path: Path) -> Non
     # Its payload is an audit marker, never user content, and never replayed/parsed.
     assert json.loads(quarantined.payload_json)["_unserializable"] is True
     # Offset eventually advanced past the quarantined update so the loop terminates.
-    assert fake.offset_calls[-1] == 3
+    assert fake.offset_calls == [None, 2, 2, 4]
     assert inbox.pending_count() == 0
 
 

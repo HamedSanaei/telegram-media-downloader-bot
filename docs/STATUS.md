@@ -1,8 +1,15 @@
 # Project status
 
-Last updated: 2026-08-22
+Last updated: 2026-08-31
 
 ## Release state
+
+Patch 1.3.8 preserves the aiogram 3.30.0 ``Default`` serialization crash fix while keeping outbound
+Bot defaults out of inbound snapshots. Durable polling now serializes and persists in Telegram
+order, stops the batch at the first unresolved serialization gap, and requests that exact update ID
+again before any later update can become durable or handler-visible. A terminal serialization
+quarantine is documented as a sanitized audit tombstone that deliberately abandons handler
+processing after the bounded threshold, not as preservation of the original update payload.
 
 Tasks T001 through T013 are implemented. Patch 1.3.6 repairs the production yt-dlp inspection
 failure on read-only application filesystems without changing

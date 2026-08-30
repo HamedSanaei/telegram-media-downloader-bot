@@ -67,8 +67,9 @@ class DurableUpdateInbox:
         This is the bounded fail-safe for a permanently malformed update: keeping it fresh would
         make Telegram redeliver it on every poll forever (a restart loop). Recording it here in
         TERMINAL_FAILURE state preserves the update_id for audit while marking it non-replayable,
-        so the polling offset may advance and the bot keeps serving fresh traffic. Never loses or
-        silently drops the update -- it is durably tracked with a structured log/status.
+        so the polling offset may advance and the bot keeps serving fresh traffic. The update ID
+        and failure are durably recorded, but handler processing is deliberately abandoned because
+        no replayable original payload exists.
 
         Returns ``True`` when a new quarantined row was inserted, ``False`` if the update was
         already durably recorded (duplicate delivery).

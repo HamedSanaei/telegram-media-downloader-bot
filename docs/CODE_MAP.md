@@ -13,6 +13,8 @@
 | `src/telegram_media_bot/application/services/cookie_health_service.py` | Passive Cookie Health orchestration: provider-scoped or complete local static refresh, persisted transition/reminder deduplication, and same-request runtime auth-failure updates; it has no provider client |
 | `src/telegram_media_bot/application/services/native_options.py` | Builds the public native-only option catalog, enforces codec/transcode invariants, chooses truthful representatives, deduplicates actual plans, and creates opaque option IDs |
 | `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
+| `src/telegram_media_bot/application/services/durable_update_inbox.py` | Durable inbound-update state transitions, bounded handler retry, and explicit non-replayable serialization quarantine semantics |
+| `src/telegram_media_bot/application/ports/inbound_update_repository.py` | Framework-free replayable-update and terminal-tombstone persistence contract |
 | `src/telegram_media_bot/application/services/instagram_delivery.py` | Selects the complete Instagram image/mixed bundle behind the Photo/File confirmation |
 | `src/telegram_media_bot/application/services/url_canonicalization.py` | Parses YouTube URL intent, removes Mix context from single videos, gives equivalent X/Twitter status-share URLs one query-free identity, and canonicalizes Instagram share/story/profile URLs (tracking stripped, plain profiles rewritten to the `/USERNAME/avatar/` avatar target) |
 | `src/telegram_media_bot/application/services/usage_analytics.py` | Builds Tehran-local usage reports and excludes configured administrators from public KPI aggregation |
@@ -28,6 +30,7 @@
 | `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for AV1/H.264 MP4 and VP9 WebM selection, stream-copy arguments, and Best Original policy |
 | `src/telegram_media_bot/infrastructure/queue/` | ARQ enqueue plus official abort and transient-key finalization |
 | `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL jobs, durable-first cancellation, users, daily usage, delivery, block, and recovery store |
+| `src/telegram_media_bot/infrastructure/persistence/sqlite_inbound_updates.py` | WAL-backed inbound Telegram payload journal, ordered replay queries, terminal serialization tombstones, and retention |
 | `src/telegram_media_bot/infrastructure/persistence/sqlite_usage_analytics.py` | Read-only mapping of durable SQLite jobs/events into project-owned usage activity |
 | `src/telegram_media_bot/infrastructure/analytics/` | Pillow usage dashboards, bundled-font doctor, and deterministic Docker smoke fixtures |
 | `src/telegram_media_bot/assets/fonts/` | Package-bundled Noto Sans runtime font and SIL OFL 1.1 license |
@@ -40,6 +43,7 @@
 | `src/telegram_media_bot/infrastructure/archive/` | Safe 7-Zip multi-volume packaging, deterministic ordered image ZIPs, and SHA-256 manifests |
 | `src/telegram_media_bot/infrastructure/storage/` | Exact job-workspace cleanup, symlink-safe deletion, and startup/maintenance sweeping |
 | `src/telegram_media_bot/telegram/` | Versioned Back/Native/Instagram/Story/Highlight delivery callbacks, real-plan rendering, middleware, tracked exact-byte document delivery, and ordered ten-item media-group planning |
+| `src/telegram_media_bot/telegram/durable_polling.py` | Inbound-safe aiogram serialization without outbound Bot defaults, durable-prefix offset advancement, hard serialization-gap ordering barrier, and sequential dispatch/replay |
 | `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants (reports, cookie management, Cookie Health), FSM state, and reply/inline keyboard builders; `admin_handlers.py` verifies cookie writes, refreshes provider health immediately, and makes unchanged status edits idempotent |
 | `src/telegram_media_bot/telegram/admin_handlers.py` | Role-checked menu/download/report/cookie routing, private-chat secret export, bounded in-memory document intake, and per-admin report single-flight coordination |
 | `src/telegram_media_bot/telegram/handlers.py` | Shared URL submission, editable job-status ownership, active-job queue reconciliation, callbacks, and cancellation routing |
