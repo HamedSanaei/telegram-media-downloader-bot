@@ -96,3 +96,27 @@
 - `workers/jobs.py`: transitions, retry, delivery progress/logging, per-item receipts, redacted
   terminal-failure administrator alerts, and cleanup;
 - `telegram/handlers.py`: owner validation, admin controls, and safe enqueue ordering.
+
+## Proposed Milestone 4 ownership (not implemented)
+
+The following paths and responsibilities are an ownership plan for T014-T025 only. They do not
+claim that these modules, schemas, services, or processes exist in the current application.
+
+| Proposed area | Planned ownership |
+|---|---|
+| `domain/subscriptions.py` | Framework-free plans, capabilities, subscriptions, immutable entitlement grants, status, and authorization snapshots |
+| `domain/payments.py` | Provider-neutral orders, attempts, statuses, provider identifiers, transaction references, and immutable amount/plan snapshots |
+| `domain/instagram_credentials.py` | Credential state/kind/policy, access scope, safe references, generations, leases, envelopes, and typed credential failures |
+| `application/ports/subscriptions.py` | Subscription and entitlement-grant persistence contracts |
+| `application/ports/payments.py` | Payment repository and project-owned payment-gateway requests/results |
+| `application/ports/instagram_credentials.py` | Owner-bound encrypted-credential repository, resolver, lease, and ephemeral materialization contracts |
+| `application/services/entitlements.py` | VIP authorization, UTC calendar-month stacking, snapshot issuance, and reversal recomputation |
+| `application/services/billing.py` | Order lifecycle, callback verification orchestration, idempotent confirmation, and refund/reversal handling without provider-name branching |
+| `application/services/credential_resolution.py` | Credential policy matrix, public-only fallback eligibility, private user-only enforcement, and one-switch accounting |
+| `infrastructure/persistence/` additions | Additive SQLite repositories for subscriptions, payments, encrypted credentials, sanitized events, single-use handoff nonces, and leases |
+| `infrastructure/credentials/` | AES-256-GCM envelope/key-ring adapter and job-scoped restrictive Netscape materialization |
+| `infrastructure/payment/<provider>/` | First provider adapter selected by composition; intentionally blocked in T024 until a provider is chosen |
+| proposed companion web package/process | Separate least-privilege `aiohttp.web` account-link and payment-callback boundary without the Telegram bot token |
+| `infrastructure/ytdlp/`, `infrastructure/gallerydl/`, and media router changes | Consume explicit ephemeral credential context while remaining unaware of VIP/subscription policy |
+| `telegram/` additions | `/vip`, account-link, entitlement-gating, expiry/renewal, reconnect, disconnect, and audited administrator UX |
+| `workers/` and queue/persistence changes | Carry safe entitlement/credential snapshots, retain bounded fallback state, lease credentials, and clean plaintext on every terminal/recovery path |

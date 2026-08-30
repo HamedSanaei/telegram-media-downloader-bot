@@ -442,3 +442,113 @@ blocked: an affected v1.3.7 deployment must retain its forward path to v1.3.8 or
 does not silently substitute a release, and healthy older rollback targets remain available. A
 remote revocation service is deferred because the single embedded withdrawal does not justify a
 new availability and trust dependency in disaster-recovery tooling.
+
+## ADR-032: Durable VIP grants and payment confirmation are ledger based
+
+**Status:** proposed
+
+The product calls the feature VIP, but domain/application code uses typed subscription,
+entitlement, capability, order, and grant models. Telegram's `UserProfile.is_premium` is unrelated
+and cannot authorize bot VIP behavior.
+
+Subscription plans accept any positive number of calendar months and snapshot integer minor-unit
+price, currency, enabled state, and capabilities. Month arithmetic is UTC with end-of-month
+clamping. Non-reversed grants are evaluated in payment-confirmation order:
+
+```text
+start = max(grant.confirmed_at, preceding_expiry)
+expiry = add_calendar_months(start, grant.duration_months)
+```
+
+Renewal therefore preserves paid time. A refund/reversal marks the payment's immutable grant
+reversed and recomputes the chain from the remaining grants; if no valid paid time remains, access
+ends immediately. Economic rows are retained indefinitely and never enter media cleanup.
+
+A protected request authorized and durably accepted while its capability is active stores a safe
+`EntitlementSnapshot` and may finish after subscription expiry. Automatically created child jobs
+inherit that snapshot. A later user callback or new URL is a new protected request and must
+reauthorize. Credential revocation remains live and can still stop an accepted credential-dependent
+job.
+
+A provider adapter cryptographically verifies its callback before returning a project-owned result.
+One SQLite `BEGIN IMMEDIATE` transaction validates order/amount/currency/status, claims the unique
+`(provider, provider_transaction_reference)`, confirms the order, and inserts exactly one grant.
+Duplicate, concurrent, replayed, redirect-only, or uncertain confirmation cannot grant a second
+extension. Provider selection remains a composition concern rather than a business-code branch.
+
+## ADR-033: Per-user Instagram sessions use an encrypted owner-bound vault
+
+**Status:** proposed
+
+Instagram passwords and 2FA/checkpoint codes are transient web-flow input and are never durable.
+The resulting session is stored in a dedicated owner-bound vault using AES-256-GCM, a random 96-bit
+nonce, versioned envelope, active key ID/version, and associated data binding provider, credential
+ID, Telegram owner, and monotonically increasing generation. Ignored least-privilege YAML holds one
+active encryption key and retained decrypt-only keys for rotation; keys never enter SQLite, logs,
+images, source, or metrics.
+
+The application sees only `CONNECTED`, `EXPIRED`, `CHALLENGE_REQUIRED`, `REVOKED`, or
+`DISCONNECTED`, safe timestamps, stable failure category, and generation. Disconnect/revoke erases
+ciphertext immediately. Sanitized credential events expire after 90 days. One atomic expiring lease
+per owner credential/generation prevents uncontrolled concurrent use.
+
+Decryption occurs only after owner/generation/state/lease checks. A context-managed materializer
+writes a Netscape file inside the exact job workspace with restrictive permissions, passes it as an
+explicit ephemeral engine credential, and removes it on success, failure, cancellation, timeout,
+and cleanup. Jobs/Redis may store safe references and policy only—never cookies, ciphertext,
+passwords, codes, headers, usernames, or persistent plaintext paths.
+
+## ADR-034: Public operator credentials never authorize private Instagram media
+
+**Status:** proposed
+
+The existing canonical cookie file remains the operator credential, but authenticated-user routing
+requires its Instagram account to be dedicated and verified as following zero accounts. An
+explicit operator action records `OPERATOR_PUBLIC` attestation bound to the generation/keyed
+verifier of the canonical file's Instagram records. Changing those records invalidates attestation.
+If zero-follow status or identity cannot be verified, operator-backed Instagram routing fails
+closed. No scheduled provider probe is introduced.
+
+Application policy—not Telegram handlers or adapters—selects one of:
+
+- `OPERATOR_PUBLIC`: current Free/public and VIP-without-session behavior;
+- `USER_FIRST_PUBLIC_FALLBACK`: healthy connected VIP user first, then exactly one operator switch
+  after a typed credential/session failure;
+- `USER_ONLY`: restricted/private media through that user's session only.
+
+Normalized inspection carries `PUBLIC`, `USER_RESTRICTED`, or `UNKNOWN`. An operator-context result
+is deliverable only when it explicitly classifies as public. Once content is known restricted, the
+operator context is structurally prohibited for inspection, mixed-media child resolution, download,
+retry, and recovery. Unknown scope fails closed without confirming existence.
+
+Public switching is limited to expired/invalid/login-required/credential-rejected user-session
+failures and is persisted before the switch. Filesystem, FFmpeg, schema, post-processing, size,
+delivery, cancellation, local-runtime, and generic failures never switch credentials. Private posts,
+Reels, Stories, Highlights, mixed media, and Close Friends content require active capability,
+connected owner credential, and visibility that account already possesses. The bot never bypasses
+Instagram privacy controls.
+
+This paid-bot VIP design does not restore ADR-013's removed Telegram Premium user session,
+Telethon/MTProto uploader, staging channel, Premium queue, or `copyMessage` delivery.
+
+## ADR-035: One least-privilege web companion separates account links and payment callbacks
+
+**Status:** proposed
+
+Use a separate, optional `aiohttp.web` companion process for browser-based Instagram connection and
+machine payment callbacks. Reuse the existing dependency, but give the process only its database
+path, web security material, handoff verification public key, vault-key access, and future provider
+credentials. It must not receive or read the Telegram bot token.
+
+The bot signs Ed25519 handoff claims containing purpose, Telegram owner, nonce, issued time, and a
+five-minute expiry. The link places the token in the URL fragment; the browser POST-exchanges it,
+and SQLite consumes a nonce hash exactly once. Browser sessions are Secure/HttpOnly/SameSite, every
+mutation has CSRF protection, and responses enforce restrictive CSP/no-referrer policy. Interactive
+password/2FA state is memory-only and expires within ten minutes.
+
+Instagram and payment routes use separate request models, middleware, rate limits, and application
+ports. Payment adapters verify signatures, freshness, and replay before billing sees a normalized
+result; a browser redirect may display status but never activates an entitlement. HTTPS, trusted-
+proxy rules, body/time limits, non-permissive CORS, secret-redacted access logs, and bounded labels
+are mandatory. The companion remains disabled until its threat model, deployment, and security
+tests are complete.

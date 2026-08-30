@@ -100,3 +100,82 @@ playlist. Genuine `/playlist?list=...` URLs retain the configured bounded-playli
 - modifying the upstream yt-dlp source tree;
 - guaranteed support for every upstream extractor;
 - disguising alternate-source downloads as direct Spotify downloads.
+
+## Planned VIP / authenticated Instagram access
+
+**Planning status:** future Milestone 4 only. None of the behavior in this section is implemented or
+available in production. Current public downloads continue to use the existing canonical operator
+cookie path.
+
+The Telegram product term is **VIP**. Internal code will use project-owned `SubscriptionPlan`,
+`Subscription`, `Entitlement`, `EntitlementGrant`, `EntitlementSnapshot`, `Capability`,
+`PaymentOrder`, and `InstagramCredential` models. The existing Telegram `is_premium` profile field
+is not bot VIP authorization. This work does not restore the removed Telegram
+Premium/Telethon/MTProto uploader, staging channel, Premium queue, or copy-message delivery design.
+
+### Product and authorization rules
+
+- Every Free or VIP user may connect their own Instagram account through a short-lived signed link
+  and HTTPS page. Connection alone does not grant VIP.
+- Free public downloading remains supported and does not require account connection.
+- Private/restricted Instagram posts, Reels, Stories, Highlights, mixed media, and Close Friends
+  content require an active `instagram_private_media` entitlement and a healthy connected account.
+- Authenticated extraction may see only content that the voluntarily connected Instagram account
+  can already see. The bot does not bypass follower approval, privacy controls, DRM, or account
+  security.
+- A protected request durably accepted while entitlement is active may finish after expiry. New
+  requests and later user callbacks after expiry must reauthorize.
+
+The operator Instagram credential must be a dedicated account verified as following zero accounts.
+Its attestation is invalidated when the canonical file's Instagram records change. It may authorize
+only results explicitly classified `PUBLIC`; unknown/restricted results fail closed.
+
+### Authoritative credential matrix
+
+| User | VIP | Instagram connected | Content | Credential policy |
+|---|---|---|---|---|
+| User | No | No | Public | Operator/public |
+| User | No | Yes | Public | Operator/public |
+| User | No | Yes | Private | Deny + offer VIP |
+| User | Yes | No | Public | Operator/public |
+| User | Yes | No | Private | Require Instagram connection |
+| User | Yes | Yes | Public | User first, operator fallback once |
+| User | Yes | Yes | Private | User only, never operator fallback |
+
+For public media, the one operator switch is eligible only after a typed user-session expiry,
+invalid/login-required, or credential-rejected failure. Filesystem, FFmpeg, adapter schema,
+post-processing, size, Telegram delivery, cancellation, local-runtime, and generic failures never
+switch credentials. Credential phase/fallback use is durable so retries and restarts cannot loop.
+
+**Private-content invariant:** once content is known or accepted as user-restricted, every
+inspection, gallery/yt-dlp child resolution, download, retry, and recovery attempt is `USER_ONLY`.
+The operator credential is never a private authorization fallback. Unknown privacy fails closed and
+must not reveal whether content exists.
+
+### Planned subscription and payment behavior
+
+- Plans accept any positive calendar-month duration, integer minor-unit price, currency, enabled
+  state, and typed capabilities. No commercial price or payment provider is selected yet.
+- Renewals preserve time by starting after the later of payment confirmation or current expiry.
+- Verified payment confirmation and one entitlement grant are atomic/idempotent in SQLite. Browser
+  redirects never activate VIP, and duplicate provider callbacks never add time twice.
+- Refund/reversal excludes that payment's grant and deterministically recomputes remaining grants;
+  access ends when no valid paid time remains.
+- Financial/audit records are retained separately from media zero-retention and never store card
+  numbers, CVV, payment credentials, raw callbacks, or provider secrets.
+
+### Planned credential and connection behavior
+
+- Users never send Instagram passwords or 2FA codes in Telegram. The companion HTTPS flow keeps
+  them only in bounded memory, discards them, and persists only an encrypted session.
+- Sessions use owner-bound AES-256-GCM envelopes with random nonces, version/key IDs, associated
+  data, rotation support, and master keys outside SQLite in ignored least-privilege YAML.
+- States are `CONNECTED`, `EXPIRED`, `CHALLENGE_REQUIRED`, `REVOKED`, and `DISCONNECTED`.
+- Jobs/Redis/logs/metrics/messages/errors contain no raw cookie. They may carry only safe owner,
+  policy, generation, entitlement snapshot, access scope, and bounded fallback state.
+- Decrypted Netscape files live only inside the exact job workspace with restrictive permissions
+  and are removed after success, failure, cancellation, timeout, and cleanup.
+- One user's credential failure/recovery never changes another user or global operator health.
+
+Implementation is decomposed into T014 through T025. T024 remains blocked until the operator
+selects and supplies a real payment provider.

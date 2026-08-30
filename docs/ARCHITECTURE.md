@@ -420,3 +420,116 @@ Graphify package, service, network call, or generated graph is required at produ
 CI. `scripts/agent_context.py` provides a deterministic standard-library fallback, while
 `scripts/check_agent_context.py` protects the progressive-discovery contract without imposing an
 arbitrary documentation size ceiling.
+
+## Planned Milestone 4 architecture: VIP and authenticated Instagram
+
+**Planning status:** proposed future architecture only. No module, schema, process, credential
+context, entitlement, or payment behavior described below exists yet.
+
+### Planned system view
+
+```text
+Telegram /vip and account-link UI
+        |
+        +--> EntitlementService --> SubscriptionRepository ----+
+        |                                                       |
+        +--> BillingService --> PaymentGateway port             | SQLite/WAL
+        |                       ^                                | durable truth
+        |                       |                                |
+        |               infrastructure/payment/<provider> ------+
+        |
+        +--signed owner handoff--> least-privilege aiohttp companion
+                                      |                 |
+                                      |                 +--> verified payment callback
+                                      v
+                         EncryptedInstagramCredentialRepository
+                                      |
+Telegram/worker policy --> CredentialResolver/lease/materializer
+                                      |
+                           job-scoped Netscape cookie
+                                      |
+                        RoutedMediaEngine -> gallery-dl / yt-dlp
+```
+
+The companion is a separate optional process and does not receive the Telegram bot token. Its
+Instagram browser routes and payment webhook routes use separate middleware, request models, rate
+limits, and application ports. Ed25519 handoff tokens are five-minute, owner/purpose bound,
+fragment-delivered, POST-exchanged, and nonce-consumed once. Browser flow state, passwords, and 2FA
+codes remain in memory for at most ten minutes. Payment callbacks require provider signature and
+replay verification; browser redirects are presentation only.
+
+### Planned entitlement and economic state
+
+SQLite stores plan catalog, subscription projection, immutable entitlement grants, payment orders,
+attempts, and unique provider transaction references. Payment confirmation uses one immediate
+transaction for verification, order transition, unique transaction claim, and grant insertion.
+Redis never becomes economic truth.
+
+Plans use arbitrary positive calendar-month durations and typed capabilities. UTC month arithmetic
+clamps invalid destination days. Renewal starts after `max(confirmation, current expiry)`. Reversal
+marks a grant reversed and recomputes the remaining confirmation-ordered chain. Financial records
+are retained indefinitely and excluded from media cleanup.
+
+Protected work captures an immutable entitlement snapshot at durable acceptance. Automatic child
+jobs inherit it; a later user callback is a new request. Subscription expiry does not randomly fail
+accepted queued work, but credential revoke/disconnect remains immediately authoritative.
+
+### Planned credential boundary and policy
+
+The business vocabulary is:
+
+```text
+CredentialKind: NONE | OPERATOR_PUBLIC | USER_INSTAGRAM
+CredentialPolicy: OPERATOR_PUBLIC | USER_FIRST_PUBLIC_FALLBACK | USER_ONLY
+ContentAccessScope: PUBLIC | USER_RESTRICTED | UNKNOWN
+```
+
+The current canonical cookie file remains the operator credential. Before Milestone 4 routing is
+enabled, its Instagram account must be explicitly verified as following zero accounts. Attestation
+is bound to the Instagram-cookie generation/keyed verifier and becomes stale on replacement. There
+is no scheduled provider probe.
+
+Each user credential is a distinct owner/generation AES-256-GCM envelope. The key ring lives outside
+SQLite in ignored least-privilege YAML. SQLite stores ciphertext, state, safe timestamps, sanitized
+events, and one expiring lease; it never stores a password or 2FA code. Disconnect/revoke erases
+ciphertext. Events retain 90 days and expired handoff hashes/leases purge within 24 hours.
+
+The application selects one safe credential reference. The resolver verifies job owner, credential
+owner, generation, state, and lease before materializing a restrictive cookie file inside that
+job's workspace. The worker passes one explicit ephemeral context through inspection, router,
+gallery images, yt-dlp video children, and download. Adapters know no subscription/VIP rule.
+
+Free public jobs and VIP public jobs without a healthy session use `OPERATOR_PUBLIC`. A connected
+VIP public job uses the user's session first and may persist one switch to the operator only after a
+typed credential failure. No local/schema/post-processing/size/delivery/cancellation error switches
+credentials. Operator results are deliverable only when explicitly public.
+
+Private/restricted media is `USER_ONLY` for inspection through delivery. The connected account must
+already have visibility. Unknown scope fails closed without existence disclosure. The operator
+credential cannot be resolved after `USER_RESTRICTED`, including during retry/recovery.
+
+### Planned persistence, recovery, and observability
+
+Jobs may add nullable safe entitlement snapshot, credential policy/kind/owner/generation, access
+scope, current credential phase, and fallback-used fields. No cookie/ciphertext/password/code enters
+jobs, selections, ARQ payloads, logs, metrics, Telegram, or failure summaries.
+
+Per-user session failures update only that owner/generation. Reconnect may make eligible same-owner
+jobs available for one bounded recovery; explicit revoke, cancellation, and delivery uncertainty
+remain terminal authority. Operator failure continues through provider-level passive Cookie Health.
+SQLite remains durable truth through restart/Redis loss.
+
+Metrics use bounded state/capability/outcome/provider labels only. Telegram user IDs, Instagram
+usernames, URLs, cookie values, credential/job/order/transaction identifiers, and upstream error
+text are forbidden labels. Admin actions are role-authorized, sanitized, and audited.
+
+### Planned rollout boundary
+
+All features default off. Rollout applies additive schema first, then Free-user connection, then
+VIP user-first public routing after operator attestation, then private user-only access, and finally
+payments after a real provider passes T024. Backup/restore includes SQLite/WAL/SHM, canonical
+cookies, companion configuration, signing keys, and the vault key ring. Rollback preserves new
+audit/credential tables and restores configuration readable by the prior strict model.
+
+This architecture is unrelated to and must not resurrect ADR-013's removed Telegram Premium,
+Telethon/MTProto session, staging-channel, Premium queue, or copy-message delivery path.

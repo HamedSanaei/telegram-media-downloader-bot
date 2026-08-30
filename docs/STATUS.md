@@ -74,6 +74,14 @@ detailed documentation remain authoritative. Six validated subsystem Skill trees
 fallback and deterministic CI guard cover environments without Graphify. Runtime behavior is
 unchanged.
 
+Milestone 4 planning decomposes future VIP subscriptions, provider-neutral billing, encrypted
+per-user Instagram credentials, authenticated public/private routing, secure account linking, and
+rollout work into T014-T025. ADR-032 through ADR-035 are proposed, not accepted. T024 is blocked
+until a real payment provider is selected, so production purchasing remains blocked. This is a
+documentation-only plan: it changes no Python behavior, database schema, migration, dependency,
+Compose service, configuration model, package version, tag, release, or deployment, and it does
+not restore the removed Telegram Premium/Telethon/MTProto architecture from ADR-013.
+
 Patch 1.2.2 fixed updater preflight validation for runtime cookie paths without mutating persistent
 data, patch 1.2.1 fixed strict mixed-carousel video-child discovery, and release 1.2.0 introduced
 Instagram Photo/File delivery plus redacted administrator failure alerts. The v1 flow is URL

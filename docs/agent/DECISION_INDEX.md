@@ -24,6 +24,10 @@ Identify the relevant decision here, then read its complete text in `docs/DECISI
 | installer/update/rollback | ADR-015, ADR-018, ADR-023, ADR-031 |
 | release safety/withdrawal | ADR-005, ADR-018, ADR-023, ADR-031 |
 | agent navigation/Graphify | ADR-029 |
+| planned VIP/subscription/payment idempotency | proposed ADR-032 |
+| planned per-user Instagram credential vault | proposed ADR-033 |
+| planned public/private Instagram credential policy | proposed ADR-034 |
+| planned account-link/payment web boundary | proposed ADR-035 |
 
 Supersession matters: ADR-021 supersedes the codec restriction in ADR-020. Status and task history
 may describe later production regressions without replacing the accepted decision.
