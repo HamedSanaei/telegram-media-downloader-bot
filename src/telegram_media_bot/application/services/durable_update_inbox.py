@@ -61,6 +61,28 @@ class DurableUpdateInbox:
         # A duplicate that is still pending may be reprocessed idempotently.
         return record
 
+    def quarantine(self, update_id: int, update_type: str, error_category: str) -> bool:
+        """Durably record an update that could not be serialized as a terminal, non-replayable row.
+
+        This is the bounded fail-safe for a permanently malformed update: keeping it fresh would
+        make Telegram redeliver it on every poll forever (a restart loop). Recording it here in
+        TERMINAL_FAILURE state preserves the update_id for audit while marking it non-replayable,
+        so the polling offset may advance and the bot keeps serving fresh traffic. Never loses or
+        silently drops the update -- it is durably tracked with a structured log/status.
+
+        Returns ``True`` when a new quarantined row was inserted, ``False`` if the update was
+        already durably recorded (duplicate delivery).
+        """
+        newly = self._repository.persist_terminal(update_id, update_type, error_category)
+        logger.warning(
+            "telegram_update_serialization_failed",
+            update_id=update_id,
+            update_type=update_type,
+            error_category=error_category,
+            quarantined=True,
+        )
+        return newly
+
     def start_processing(self, record: InboundUpdate) -> InboundUpdate:
         updated = self._repository.transition(record.update_id, UpdateProcessingState.PROCESSING)
         return updated if updated is not None else record

@@ -124,6 +124,22 @@
 
 ## Unreleased
 
+### Fixed
+
+- Repair a release-blocking durable-polling crash: inbound Telegram updates were persisted with
+  raw ``Update.model_dump_json()``, which cannot serialize the aiogram ``Default`` sentinels that
+  can appear in nested/default-valued fields (e.g. link-preview options), so every delivery of a
+  ``Default``-bearing update crashed the bot into a permanent Docker restart loop.
+  ``serialize_update()`` now uses aiogram's own Telegram-object serializer
+  (``deserialize_telegram_object_to_python``) with the configured bot ``default`` properties, so
+  updates persist as safe, replayable JSON and round-trip to an equivalent handler-visible update.
+- Harden poll-loop failure semantics: an update that cannot be serialized is never acknowledged or
+  advanced past, and transient failures retry in place; a permanently unserializable update is
+  durably quarantined as a non-replayable terminal row (with a sanitized marker payload) so one bad
+  update can no longer restart-loop the bot while fresh user traffic keeps flowing. Live-handler
+  failures and serialization failures now emit sanitized structured events (no payloads or user
+  content).
+
 ## 1.3.7 - 2026-08-30
 
 ### Added

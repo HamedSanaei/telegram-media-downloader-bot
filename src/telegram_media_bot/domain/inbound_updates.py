@@ -36,7 +36,8 @@ class InboundUpdate:
     update_id: int
     received_at: datetime
     update_type: str
-    #: Replayable representation of the Telegram update (``Update.model_dump_json``).
+    #: Replayable JSON representation of the Telegram update (aiogram's
+    #: ``deserialize_telegram_object_to_python`` round-trip, never raw ``Update.model_dump_json``).
     payload_json: str
     state: UpdateProcessingState = UpdateProcessingState.RECEIVED
     processing_attempts: int = 0

@@ -42,6 +42,12 @@ verification are unchanged — the restart policy is not a replacement for them.
 Telegram updates are durably journaled to SQLite before their offset is acknowledged, so a message
 received while the bot is offline or when the process dies mid-handling is replayed after a restart
 until it is answered. Completed updates are never replayed and duplicate deliveries are ignored.
+Updates are persisted as safe JSON using aiogram's own Telegram-object serializer (never raw
+``Update.model_dump_json()``, which cannot handle aiogram ``Default`` sentinels); the serialized
+payload round-trips to an equivalent handler-visible update. An update that cannot be serialized is
+never acknowledged; after a bounded number of consecutive failures it is durably quarantined as a
+non-replayable terminal row (sanitized marker payload) so a single impossible update cannot
+restart-loop the bot, and fresh user traffic keeps flowing.
 
 Supported-provider download failures classified as recoverable (expired/invalid cookies, or an
 app/runtime bug later fixed in a new release) can resume automatically: replacing a provider's

@@ -29,6 +29,13 @@ class InboundUpdateRepository(Protocol):
     ) -> InboundUpdate | None:
         """Move one update to ``state``, optionally bumping its processing-attempt counter."""
 
+    def persist_terminal(self, update_id: int, update_type: str, error_category: str) -> bool:
+        """Atomically record an unserializable update as a terminal (non-replayable) row.
+
+        Idempotent: inserting a duplicate ``update_id`` returns ``False`` without creating a second
+        row, so a quarantined update is never recorded twice.
+        """
+
     def get(self, update_id: int) -> InboundUpdate | None: ...
 
     def pending_updates(self, limit: int = 500) -> tuple[InboundUpdate, ...]:

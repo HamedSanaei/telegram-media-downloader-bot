@@ -104,6 +104,33 @@ class SqliteInboundUpdateRepository(InboundUpdateRepository):
         assert row is not None
         return _from_row(row), newly_inserted
 
+    def persist_terminal(self, update_id: int, update_type: str, error_category: str) -> bool:
+        """Atomically insert an unserializable update directly in TERMINAL_FAILURE state.
+
+        Inserting directly as terminal (never passing through RECEIVED) means a crash cannot leave
+        a tombstone row pending that replay would try to parse. Uses a safe marker payload with no
+        user/message content. Idempotent via ``INSERT OR IGNORE``.
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO inbound_updates (
+                    update_id, received_at, update_type, payload_json,
+                    processing_state, processing_attempts, last_error_category, completed_at
+                ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+                """,
+                (
+                    update_id,
+                    _now_text(),
+                    update_type,
+                    _quarantine_payload(update_id),
+                    UpdateProcessingState.TERMINAL_FAILURE.value,
+                    error_category,
+                    _now_text(),
+                ),
+            )
+        return cursor.rowcount == 1
+
     def transition(
         self,
         update_id: int,
@@ -264,3 +291,9 @@ def _load_datetime(value: str) -> datetime:
 
 def _now_text() -> str:
     return _dump_datetime(datetime.now(UTC))
+
+
+def _quarantine_payload(update_id: int) -> str:
+    import json
+
+    return json.dumps({"update_id": update_id, "_unserializable": True}, ensure_ascii=False)
