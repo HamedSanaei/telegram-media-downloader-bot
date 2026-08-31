@@ -17,6 +17,7 @@ from arq.typing import WorkerSettingsBase
 
 from telegram_media_bot.application.ports.delivery import DeliveryGateway
 from telegram_media_bot.application.ports.download_engine import DownloadEngine
+from telegram_media_bot.application.services.audit_service import AuditService
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
@@ -100,6 +101,7 @@ async def startup(ctx: dict[str, Any]) -> None:
         audit_store = SqliteAuditRepository(settings.database_path())
         await asyncio.to_thread(audit_store.initialize)
         await asyncio.to_thread(audit_store.reconcile_config, settings.telegram.logger.channels)
+        audit = AuditService(audit_store, enabled=settings.telegram.logger.enabled)
         inbound_store = SqliteInboundUpdateRepository(settings.database_path())
         await asyncio.to_thread(inbound_store.initialize)
         effect_store = SqliteEffectLedger(settings.database_path())
@@ -170,6 +172,7 @@ async def startup(ctx: dict[str, Any]) -> None:
             bot_username=identity.username or "telegram_media_bot",
             bot_identity_available=True,
             cookie_health_service=cookie_health_service,
+            audit=audit,
             # The current public path remains operator-backed; this explicit project-owned
             # context is the seam used by later authenticated routing tasks.
             credential_context=ResolvedCredential.operator_public(),

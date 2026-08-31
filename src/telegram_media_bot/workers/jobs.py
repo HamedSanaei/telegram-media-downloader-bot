@@ -15,7 +15,7 @@ import structlog
 import structlog.contextvars
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup
 from arq import Retry
 
 from telegram_media_bot.application.ports.delivery import (
@@ -24,6 +24,7 @@ from telegram_media_bot.application.ports.delivery import (
 from telegram_media_bot.application.ports.job_queue import JobQueue
 from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.application.ports.user_repository import UserRepository
+from telegram_media_bot.application.services.audit_service import AuditService
 from telegram_media_bot.application.services.cookie_health_service import (
     CookieHealthAlert,
     CookieHealthService,
@@ -44,6 +45,11 @@ from telegram_media_bot.application.services.progress import (
 )
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.domain.audit import (
+    AuditCategory,
+    AuditEventType,
+    AuditSeverity,
+)
 from telegram_media_bot.domain.cookie_health import (
     BLOCKING_COOKIE_STATES,
     CookieHealthState,
@@ -502,7 +508,7 @@ async def process_inspection_job(
             stage=FailureStage.INSPECTION,
             started=started,
         )
-        await _notify_admins_of_terminal_failure(ctx, context=context, status=JobStatus.FAILED)
+        _emit_terminal_failure_event(ctx, context=context, status=JobStatus.FAILED)
         await logger.aexception("inspection_unexpected_failure", job_id=job_id)
         return str(job_id)
     finally:
@@ -665,7 +671,7 @@ async def process_highlight_tray_job(
             stage=FailureStage.EXTRACTION,
             started=started,
         )
-        await _notify_admins_of_terminal_failure(ctx, context=context, status=JobStatus.FAILED)
+        _emit_terminal_failure_event(ctx, context=context, status=JobStatus.FAILED)
         await logger.aexception("highlight_tray_unexpected_failure", job_id=job_id)
         return str(job_id)
     finally:
@@ -1013,9 +1019,7 @@ async def process_download_job(
             started=started,
             category=ErrorCategory.DELIVERY_UNCERTAIN,
         )
-        await _notify_admins_of_terminal_failure(
-            ctx, context=context, status=JobStatus.DELIVERY_UNCERTAIN
-        )
+        _emit_terminal_failure_event(ctx, context=context, status=JobStatus.DELIVERY_UNCERTAIN)
         progress_fields: dict[str, object] = {}
         if last_delivery_progress is not None:
             progress_fields = {
@@ -1105,7 +1109,7 @@ async def process_download_job(
             stage=FailureStage.DOWNLOAD,
             started=started,
         )
-        await _notify_admins_of_terminal_failure(ctx, context=context, status=JobStatus.FAILED)
+        _emit_terminal_failure_event(ctx, context=context, status=JobStatus.FAILED)
         await logger.aexception("download_unexpected_failure", job_id=job_id)
         return str(job_id)
     finally:
@@ -1296,7 +1300,7 @@ async def _handle_controlled_failure(
         stage=_failure_stage_for_exception(exc),
         started=None,
     )
-    await _notify_admins_of_terminal_failure(ctx, context=context, status=JobStatus.FAILED)
+    _emit_terminal_failure_event(ctx, context=context, status=JobStatus.FAILED)
     await _record_runtime_auth_failure(ctx, exc)
     await logger.awarning(
         "job_controlled_failure",
@@ -1459,45 +1463,60 @@ async def _notify(ctx: dict[str, Any], chat_id: int, message_id: int | None, tex
         await logger.awarning("telegram_notification_failed", error_type=type(exc).__name__)
 
 
-async def _notify_admins_of_terminal_failure(
+def _emit_terminal_failure_event(
     ctx: dict[str, Any],
     *,
     context: FailureContext,
     status: JobStatus,
 ) -> None:
-    settings = cast(Settings, ctx["settings"])
-    admin_ids = tuple(dict.fromkeys(settings.telegram.admin_ids))
-    if not admin_ids:
-        return
-    bot = cast(Bot, ctx["bot"])
-    reply_markup = _cookie_health_reply_markup() if _context_is_cookie_failure(context) else None
-    text = render_failure_notification(context)
-    results = await asyncio.gather(
-        *(
-            bot.send_message(chat_id=admin_id, text=text, reply_markup=reply_markup)
-            for admin_id in admin_ids
-        ),
-        return_exceptions=True,
-    )
-    failures = tuple(result for result in results if isinstance(result, BaseException))
-    log_fields = {
-        "job_id": context.job_id,
-        "job_kind": context.job_kind.value if context.job_kind else None,
-        "status": status.value,
-        "error_category": context.error_category.value if context.error_category else None,
-        "attempt": context.attempt,
-        "recipient_count": len(admin_ids),
-        "sent_count": len(admin_ids) - len(failures),
-        "failed_count": len(failures),
-    }
-    if failures:
-        await logger.awarning(
-            "admin_failure_notification_incomplete",
-            **log_fields,
-            error_types=sorted({type(failure).__name__ for failure in failures}),
+    """Route a terminal operational failure to the Operator Logger outbox (T029).
+
+    The worker never enumerates `telegram.admin_ids` for notification delivery. With the logger
+    disabled or without usable destinations the call only records a structured operational log;
+    it never falls back to administrator direct messages.
+    """
+    audit = ctx.get("audit")
+    if not isinstance(audit, AuditService):
+        logger.warning(
+            "terminal_failure_audit_unavailable",
+            job_id=context.job_id,
+            status=status.value,
+            error_category=context.error_category.value if context.error_category else None,
         )
         return
-    await logger.ainfo("admin_failure_notification_completed", **log_fields)
+    correlation_id = context.request_id or (str(context.job_id) if context.job_id else "job")
+    try:
+        enqueued = audit.emit(
+            event_type=AuditEventType.TERMINAL_OPERATIONAL_ERROR,
+            category=AuditCategory.ERROR,
+            severity=(
+                AuditSeverity.WARNING
+                if status is JobStatus.DELIVERY_UNCERTAIN
+                else AuditSeverity.CRITICAL
+            ),
+            correlation_id=correlation_id,
+            message=render_failure_notification(context),
+            job_id=str(context.job_id) if context.job_id else None,
+            content_type=context.job_kind.value if context.job_kind else None,
+            provider=context.platform,
+        )
+    except Exception:  # the logger must never break the user job path.
+        logger.exception(
+            "terminal_failure_audit_emit_failed",
+            job_id=context.job_id,
+            status=status.value,
+            error_category=context.error_category.value if context.error_category else None,
+        )
+        return
+    logger.info(
+        "terminal_failure_audit_emitted",
+        job_id=context.job_id,
+        job_kind=context.job_kind.value if context.job_kind else None,
+        status=status.value,
+        error_category=context.error_category.value if context.error_category else None,
+        attempt=context.attempt,
+        enqueued_effects=enqueued,
+    )
 
 
 def _build_failure_context(
@@ -1588,25 +1607,6 @@ def _media_kind_from_record(record: JobRecord | None) -> MediaKind | None:
     return None
 
 
-def _context_is_cookie_failure(context: FailureContext) -> bool:
-    return context.error_category is ErrorCategory.AUTHENTICATION and (
-        context.source == "instagram" or context.failure_stage is FailureStage.AUTHENTICATION
-    )
-
-
-def _cookie_health_reply_markup() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🍪 سلامت کوکی‌ها",  # noqa: RUF001
-                    callback_data="adm:ch:open",
-                )
-            ]
-        ]
-    )
-
-
 def _instagram_username_from_url(url: str) -> str | None:
     parsed = urlsplit(url)
     parts = [part for part in parsed.path.split("/") if part]
@@ -1636,7 +1636,7 @@ def _gate_collection_cookies(ctx: dict[str, Any], mode: DownloadMode) -> None:
 
 
 async def _record_runtime_auth_failure(ctx: dict[str, Any], exc: BaseException) -> None:
-    """A real runtime authentication failure updates Cookie Health and alerts admins (Part B)."""
+    """A real runtime authentication failure updates Cookie Health and routes a typed alert (T029)."""
     if not isinstance(exc, (GalleryDlCookiesExpiredError, AuthenticationRequiredError)):
         return
     source = (
@@ -1664,36 +1664,56 @@ async def _record_runtime_auth_failure(ctx: dict[str, Any], exc: BaseException) 
         safe_reason=sanitize_exception_message(str(exc)) or "authentication failed",
     )
     if alert is not None:
-        await _notify_admins_of_cookie_alert(ctx, alert)
+        _emit_cookie_health_event(ctx, alert)
 
 
-async def _notify_admins_of_cookie_alert(
-    ctx: dict[str, Any],
-    alert: CookieHealthAlert,
-) -> None:
-    settings = cast(Settings, ctx["settings"])
-    admin_ids = tuple(dict.fromkeys(settings.telegram.admin_ids))
-    if not admin_ids:
+def _emit_cookie_health_event(ctx: dict[str, Any], alert: CookieHealthAlert) -> None:
+    """Route a persisted Cookie Health transition/reminder to the logger outbox (T029).
+
+    Transition deduplication is owned by the Cookie Health store (`last_notified_state` and
+    `last_reminder_at` are persisted before this call), so repeated identical states never storm
+    the outbox and restarts cannot duplicate an alert. The worker never falls back to admin DMs.
+    """
+    audit = ctx.get("audit")
+    if not isinstance(audit, AuditService):
+        logger.warning(
+            "cookie_health_audit_unavailable",
+            provider=alert.provider.value,
+            new_state=alert.new_state.value,
+        )
         return
-    bot = cast(Bot, ctx["bot"])
-    text = _render_cookie_alert_text(alert)
-    await asyncio.gather(
-        *(
-            bot.send_message(
-                chat_id=admin_id, text=text, reply_markup=_cookie_health_reply_markup()
-            )
-            for admin_id in admin_ids
-        ),
-        return_exceptions=True,
+    # The persisted reminder timestamp distinguishes transition instances (re-expiration after
+    # recovery must alert again) while staying deterministic for a single instance.
+    tick = alert.health.last_reminder_at
+    correlation_id = (
+        f"cookie:{alert.provider.value}:{alert.new_state.value}:{tick.isoformat()}"
+        if tick is not None
+        else f"cookie:{alert.provider.value}:{alert.new_state.value}"
     )
-    await logger.ainfo(
-        "cookie_health_alert_sent",
+    try:
+        enqueued = audit.emit(
+            event_type=AuditEventType.COOKIE_HEALTH_CHANGED,
+            category=AuditCategory.COOKIE_HEALTH,
+            severity=AuditSeverity.INFO if alert.recovery else AuditSeverity.WARNING,
+            correlation_id=correlation_id,
+            message=_render_cookie_alert_text(alert),
+            provider=alert.provider.value,
+        )
+    except Exception:  # the logger must never break the user job path.
+        logger.exception(
+            "cookie_health_audit_emit_failed",
+            provider=alert.provider.value,
+            new_state=alert.new_state.value,
+        )
+        return
+    logger.info(
+        "cookie_health_alert_emitted",
         provider=alert.provider.value,
         previous_state=alert.previous_state.value if alert.previous_state else None,
         new_state=alert.new_state.value,
         recovery=alert.recovery,
         reminder=alert.reminder,
-        recipient_count=len(admin_ids),
+        enqueued_effects=enqueued,
     )
 
 

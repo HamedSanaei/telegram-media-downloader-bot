@@ -145,7 +145,7 @@ T017-T025 and do not exist yet.
 | `telegram/` additions | `/vip`, entitlement-gating, expiry/renewal, audited administrator UX (T023); `/instagram`, `instagram_ux.py`, Persian connection prompts/status/disconnect (implemented) |
 | `workers/` and queue/persistence changes | Carry the explicit operator credential seam while preserving legacy jobs; future safe user snapshots/fallback state remain T020-T022 |
 
-## Milestone 5 ownership (T026/T028 implemented; T029-T032 planned)
+## Milestone 5 ownership (T026/T029 implemented; T030-T032 planned)
 
 The following runtime ownership implements the logger milestone so far.
 
@@ -158,8 +158,8 @@ The following runtime ownership implements the logger milestone so far.
 | `infrastructure/persistence/sqlite_audit.py` | Additive SQLite/WAL logger destinations, outbox, health, probe records, leases, and uncertain-delivery records (implemented T027/T028) |
 | `infrastructure/telegram/audit_destination_verifier.py` | Typed channel probe: existence, type, bot membership, posting test, sanitized outcome mapping (implemented T028); `audit_delivery.py` copy/send gateway remains planned T029-T030 |
 | `telegram/admin_menu.py` / `telegram/admin_handlers.py` | Logger-channel management flow, numeric channel validation, test, enable/disable/remove, and health UI (implemented T028) |
-| `workers/settings.py`, `workers/jobs.py` | Asynchronous draining, bounded retry/recovery, Cookie Health and terminal-error routing, with no admin-DM fallback (planned T029/T032; repository init and config reconciliation are wired today) |
-| `docs/` | Completed T026-T028, accepted ADR-036-038, privacy/retention policy, rollout, and operational runbook (T029-T032 rollout docs planned) |
+| `workers/settings.py`, `workers/jobs.py` | `AuditService` wiring; terminal-error and Cookie Health typed-event emission with no admin-DM fallback (implemented T029); outbox draining remains planned T032 |
+| `docs/` | Completed T026-T029, accepted ADR-036-038, privacy/retention policy, rollout, and operational runbook (T030-T032 rollout docs planned) |
 
 ## Milestone 6 ownership (implemented)
 

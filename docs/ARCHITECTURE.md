@@ -558,7 +558,7 @@ Telethon/MTProto session, staging-channel, Premium queue, or copy-message delive
 
 ## Milestone 5 architecture: Operator Logger and private audit channels
 
-**Implementation status:** T026-T028 implemented and feature-gated off by default; T029-T032
+**Implementation status:** T026-T029 implemented and feature-gated off by default; T030-T032
 planned. Repository initialization and config-destination reconciliation run at bot and worker
 startup; Telegram delivery draining is not yet wired.
 
@@ -579,10 +579,11 @@ accepted Telegram update
                                              +--> PENDING / COMPLETED / UNCERTAIN (modeled)
 ```
 
-Terminal worker failures and persisted Cookie Health transitions will emit typed events after their
-existing durable state changes (planned T029). The planned dispatcher owns fan-out, bounded retry,
-leases, and destination health. It never changes job status, cancellation precedence, cleanup, or
-delivery uncertainty.
+Terminal worker failures and persisted Cookie Health transitions emit typed events after their
+existing durable state changes (implemented T029); no unsolicited operational path enumerates
+`telegram.admin_ids` anymore. The planned dispatcher owns fan-out, bounded retry, leases, and
+destination health. It never changes job status, cancellation precedence, cleanup, or delivery
+uncertainty.
 
 ### Ownership and boundaries (T026/T027)
 
@@ -602,9 +603,9 @@ delivery uncertainty.
   remains planned T029-T030.
 - `telegram/admin_menu.py` and `admin_handlers.py`: role-authorized logger-channel management;
   callbacks reauthorized and validated at execution time (implemented T028).
-- `workers/settings.py`: asynchronous outbox draining and bounded reconciliation; it never
-  enumerates `telegram.admin_ids` as a fallback (planned T029/T032; repository init and reconcile
-  are wired today).
+- `workers/settings.py` and `workers/jobs.py`: `AuditService` wiring plus typed
+  terminal-error/Cookie Health event emission; no `telegram.admin_ids` fallback (implemented
+  T029). Asynchronous outbox draining and bounded reconciliation remain planned T032.
 
 Configured destinations and runtime-created destinations reconcile as a deduplicated union by
 numeric `chat_id`. Config-managed rows cannot be removed through the runtime API or the T028 admin

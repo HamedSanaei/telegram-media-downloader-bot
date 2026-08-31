@@ -211,9 +211,7 @@ class FakeCallback:
         self.answers.append((text, show_alert))
 
 
-def _router(
-    settings: Settings, service: LoggerDestinationAdminService | None
-) -> Any:
+def _router(settings: Settings, service: LoggerDestinationAdminService | None) -> Any:
     return build_admin_router(
         settings=settings,
         submit_url=lambda *_args: True,  # type: ignore[arg-type]

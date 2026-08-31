@@ -1,6 +1,6 @@
 # T029 - Operational error and Cookie Health notification migration
 
-**Status:** planned
+**Status:** complete
 
 ## Goal
 
@@ -97,7 +97,26 @@ destinations. Retain `/failed`, Cookie Health UI, and structured logs as operato
 - All migrated events have a typed category and durable correlation identity.
 - Cookie transition/reminder behavior remains unchanged except for its destination.
 
-## Definition of done
+## Implementation summary
 
-The complete notification inventory, migration map, redaction contract, no-fallback behavior,
-deduplication rules, and regression tests are approved for implementation.
+- Replaced `_notify_admins_of_terminal_failure` (admin-DM broadcast) with
+  `_emit_terminal_failure_event`: a typed `ERROR`/`TERMINAL_OPERATIONAL_ERROR` audit event
+  (CRITICAL, or WARNING for `DELIVERY_UNCERTAIN`) enqueued to the durable logger outbox with the
+  job id, kind, and sanitized Persian `render_failure_notification` text.
+- Replaced `_notify_admins_of_cookie_alert` with `_emit_cookie_health_event`: a
+  `COOKIE_HEALTH`/`COOKIE_HEALTH_CHANGED` event (INFO on recovery, else WARNING). Correlation
+  includes the persisted reminder timestamp so transitions stay deduplicated across restart
+  (upstream `last_notified_state`/`last_reminder_at` markers are the authority) while a later
+  re-expiration after recovery still alerts again.
+- Both emitters log a structured `..._audit_unavailable` warning when no audit service is wired
+  and NEVER enumerate `telegram.admin_ids`; no fallback admin broadcast exists. Emit failures are
+  caught and logged so a logger storage fault can never change the user job outcome, cleanup, or
+  Cookie Health state.
+- Wired `AuditService` into the worker composition (`workers/settings.py`).
+- Removed the now-dead `_cookie_health_reply_markup`/`_context_is_cookie_failure` helpers and the
+  `Bot`-based admin fan-out.
+- Tests: rewrote the five legacy admin-DM tests to assert typed outbox events (redaction, retry
+  exhaustion, delivery-uncertain isolation, unique-event semantics), added direct
+  terminal-failure and Cookie Health emit tests, an identical-alert enqueue-once test, a
+  storage-failure-never-breaks-job test, and a full runtime-auth-failure → COOKIE_HEALTH event
+  chain test. Full non-contract suite 1135 passed, 11 skipped.

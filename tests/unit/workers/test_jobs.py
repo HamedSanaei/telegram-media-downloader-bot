@@ -18,12 +18,25 @@ from aiogram.types import InlineKeyboardMarkup
 from arq import Retry
 
 from telegram_media_bot.application.ports.delivery import DeliveryGateway
+from telegram_media_bot.application.services.audit_service import AuditService
+from telegram_media_bot.application.services.cookie_health_service import (
+    CookieHealthAlert,
+    CookieHealthService,
+)
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.domain.audit import AuditCategory, AuditEventType
+from telegram_media_bot.domain.cookie_health import (
+    CookieHealthState,
+    ProviderCookieHealth,
+    StaticCookieCheck,
+)
+from telegram_media_bot.domain.cookies import CookieService
 from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
     DeliveryError,
     DownloadFailedError,
+    GalleryDlCookiesExpiredError,
     JobCancelledError,
     LocalRuntimeError,
     MediaTooLargeError,
@@ -62,10 +75,23 @@ from telegram_media_bot.domain.subscriptions import (
     PlanId,
 )
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
+from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.storage.workspace import WorkspaceCleanupReport
 from telegram_media_bot.workers import jobs as jobs_module
 from telegram_media_bot.workers.jobs import process_download_job, process_inspection_job
+
+LOGGER_CHANNEL = -1001234567890
+
+
+def _load_audit_events(audit_store: SqliteAuditRepository) -> list[dict[str, object]]:
+    import json
+    import sqlite3
+    from contextlib import closing
+
+    with closing(sqlite3.connect(audit_store._path)) as connection:
+        rows = connection.execute("SELECT event_json FROM audit_events").fetchall()
+    return [json.loads(str(row[0])) for row in rows]
 
 
 class FakeDownloadService:
@@ -715,6 +741,9 @@ async def test_terminal_controlled_inspection_failure_alerts_each_unique_admin(
     )
     repository.set_status_message(inspection.job_id, 30)
     bot = FakeInspectionBot(fail_edit=False)
+    audit_store = SqliteAuditRepository(tmp_path / "audit.db")
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
     context: dict[str, Any] = {
         "settings": configured,
         "repository": repository,
@@ -722,24 +751,27 @@ async def test_terminal_controlled_inspection_failure_alerts_each_unique_admin(
         "bot": bot,
         "delivery": FakeDelivery(),
         "metrics": MetricsRegistry(),
+        "audit": AuditService(audit_store, enabled=True),
         "job_id": str(inspection.job_id),
         "job_try": 1,
     }
 
     await process_inspection_job(context, chat_id=10, user_id=20, url=url)
 
-    assert [message["chat_id"] for message in bot.messages] == [99, 100]
-    for message in bot.messages:
-        text = str(message["text"])
-        assert str(inspection.job_id) in text
-        assert "inspection" in text
-        assert "twitter" in text
-        assert ErrorCategory.FORMAT_UNAVAILABLE.value in text
-        assert "تلاش: 1/2" in text
-        assert url not in text
-        assert "user_id" not in text
-        assert "chat_id" not in text
-        assert "Twitter without native formats" not in text
+    # Terminal failures route to the logger; no administrator direct messages.
+    assert bot.messages == []
+    events = _load_audit_events(audit_store)
+    assert len(events) == 1
+    text = str(events[0]["message"])
+    assert str(inspection.job_id) in text
+    assert "inspection" in text
+    assert "twitter" in text
+    assert ErrorCategory.FORMAT_UNAVAILABLE.value in text
+    assert "تلاش: 1/2" in text
+    assert url not in text
+    assert "user_id" not in text
+    assert "chat_id" not in text
+    assert "Twitter without native formats" not in text
 
 
 async def test_terminal_unexpected_inspection_failure_alert_is_redacted(
@@ -765,6 +797,9 @@ async def test_terminal_unexpected_inspection_failure_alert_is_redacted(
     )
     repository.set_status_message(inspection.job_id, 30)
     bot = FakeInspectionBot(fail_edit=False)
+    audit_store = SqliteAuditRepository(tmp_path / "audit.db")
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
     context: dict[str, Any] = {
         "settings": configured,
         "repository": repository,
@@ -772,6 +807,7 @@ async def test_terminal_unexpected_inspection_failure_alert_is_redacted(
         "bot": bot,
         "delivery": FakeDelivery(),
         "metrics": MetricsRegistry(),
+        "audit": AuditService(audit_store, enabled=True),
         "job_id": str(inspection.job_id),
         "job_try": configured.queue.max_tries,
     }
@@ -780,10 +816,14 @@ async def test_terminal_unexpected_inspection_failure_alert_is_redacted(
 
     persisted = repository.get_job(inspection.job_id)
     assert persisted is not None and persisted.status is JobStatus.FAILED
-    alert = str(bot.messages[0]["text"])
+    # No automatic administrator direct messages.
+    assert bot.messages == []
+    events = _load_audit_events(audit_store)
+    assert len(events) == 1
+    alert = str(events[0]["message"])
     assert ErrorCategory.INTERNAL.value in alert
     assert url not in alert
-    # The sanitized safe reason is shown to administrators (never the raw URL/query).
+    # The sanitized safe reason is shown to operators (never the raw URL/query).
     assert "unexpected inspection detail" in alert
     assert "token=" not in alert
 
@@ -882,6 +922,10 @@ async def test_retryable_failure_alerts_only_after_retries_are_exhausted(
     context["settings"] = configured
     bot = FakeInspectionBot(fail_edit=False)
     context["bot"] = bot
+    audit_store = SqliteAuditRepository(Path(configured.database_path()).parent / "audit.db")
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
+    context["audit"] = AuditService(audit_store, enabled=True)
     service.failure = RateLimitedError("remote throttled with token=abc1234567890")
 
     with pytest.raises(Retry):
@@ -893,6 +937,7 @@ async def test_retryable_failure_alerts_only_after_retries_are_exhausted(
             mode=DownloadMode.BEST.value,
         )
     assert bot.send_attempts == []
+    assert _load_audit_events(audit_store) == []  # no alert while retries remain
 
     context["job_try"] = configured.queue.max_tries
     await process_download_job(
@@ -906,11 +951,12 @@ async def test_retryable_failure_alerts_only_after_retries_are_exhausted(
     record = repository.get_job(JobId(str(context["job_id"])))
     assert record is not None and record.status is JobStatus.FAILED
     assert delivery.deliveries == 0
-    assert len(bot.messages) == 1
-    alert = str(bot.messages[0]["text"])
+    assert bot.messages == []
+    events = _load_audit_events(audit_store)
+    assert len(events) == 1
+    alert = str(events[0]["message"])
     assert ErrorCategory.RATE_LIMITED.value in alert
     assert "token=abc1234567890" not in alert
-    assert "token=<redacted>" not in alert or "<redacted>" in alert
 
 
 async def test_ambiguous_delivery_is_quarantined_with_specific_user_message(
@@ -948,6 +994,10 @@ async def test_terminal_unexpected_download_failure_alert_is_redacted(
     context["job_try"] = configured.queue.max_tries
     bot = FakeInspectionBot(fail_edit=False)
     context["bot"] = bot
+    audit_store = SqliteAuditRepository(Path(configured.database_path()).parent / "audit.db")
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
+    context["audit"] = AuditService(audit_store, enabled=True)
     service.failure = RuntimeError("unexpected download private detail")
 
     await process_download_job(
@@ -961,10 +1011,13 @@ async def test_terminal_unexpected_download_failure_alert_is_redacted(
     record = repository.get_job(JobId(str(context["job_id"])))
     assert record is not None and record.status is JobStatus.FAILED
     assert delivery.deliveries == 0
-    alert = str(bot.messages[0]["text"])
+    assert bot.messages == []
+    events = _load_audit_events(audit_store)
+    assert len(events) == 1
+    alert = str(events[0]["message"])
     assert ErrorCategory.INTERNAL.value in alert
     assert "token=secret" not in alert
-    # Sanitized reason is shown to administrators; the query secret stays redacted.
+    # Sanitized reason is shown to operators; the query secret stays redacted.
     assert "unexpected download private detail" in alert
 
 
@@ -979,6 +1032,10 @@ async def test_delivery_uncertain_alerts_admins_without_changing_cleanup(
     context["settings"] = configured
     bot = FakeInspectionBot(fail_edit=False)
     context["bot"] = bot
+    audit_store = SqliteAuditRepository(Path(configured.database_path()).parent / "audit.db")
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
+    context["audit"] = AuditService(audit_store, enabled=True)
     delivery.failure = DeliveryError("ambiguous response with private detail")
 
     await process_download_job(
@@ -991,39 +1048,31 @@ async def test_delivery_uncertain_alerts_admins_without_changing_cleanup(
 
     record = repository.get_job(JobId(str(context["job_id"])))
     assert record is not None and record.status is JobStatus.DELIVERY_UNCERTAIN
-    assert [message["chat_id"] for message in bot.messages] == [99, 100]
-    assert all(
-        ErrorCategory.DELIVERY_UNCERTAIN.value in str(message["text"])
-        and "ambiguous response with private detail" in str(message["text"])
-        for message in bot.messages
-    )
+    # No administrator direct messages; the uncertainty is a typed logger event.
+    assert bot.messages == []
+    events = _load_audit_events(audit_store)
+    assert len(events) == 1
+    assert events[0]["category"] == AuditCategory.ERROR.value
+    assert ErrorCategory.DELIVERY_UNCERTAIN.value in str(events[0]["message"])
+    assert "ambiguous response with private detail" in str(events[0]["message"])
     assert not (configured.storage.downloads_path() / str(record.job_id)).exists()
     assert not (configured.storage.temp_path() / str(record.job_id)).exists()
 
 
-async def test_admin_notification_failure_is_isolated_and_logged_without_recipient_ids(
-    settings: Settings,
-    monkeypatch: pytest.MonkeyPatch,
+async def test_terminal_failure_emits_audit_event_without_admin_dm(
+    settings: Settings, tmp_path: Path
 ) -> None:
     raw = settings.model_dump()
     raw["telegram"]["admin_ids"] = [99, 100]
     configured = Settings.model_validate(raw)
-    bot = FakeInspectionBot(fail_edit=False, fail_send_chat_ids=(99,))
+    bot = FakeInspectionBot(fail_edit=False)
+    audit_store = SqliteAuditRepository(tmp_path / "audit.db")
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
+    audit = AuditService(audit_store, enabled=True)
 
-    class CapturingLogger:
-        def __init__(self) -> None:
-            self.warnings: list[tuple[str, dict[str, object]]] = []
-
-        async def awarning(self, event: str, **kwargs: object) -> None:
-            self.warnings.append((event, kwargs))
-
-        async def ainfo(self, _event: str, **_kwargs: object) -> None:
-            return None
-
-    captured = CapturingLogger()
-    monkeypatch.setattr(jobs_module, "logger", captured)
-    await jobs_module._notify_admins_of_terminal_failure(
-        {"settings": configured, "bot": bot},
+    jobs_module._emit_terminal_failure_event(
+        {"settings": configured, "bot": bot, "audit": audit},
         context=FailureContext(
             job_id=JobId("opaque-job"),
             job_kind=JobKind.DOWNLOAD,
@@ -1034,23 +1083,174 @@ async def test_admin_notification_failure_is_isolated_and_logged_without_recipie
         status=JobStatus.FAILED,
     )
 
-    assert [attempt["chat_id"] for attempt in bot.send_attempts] == [99, 100]
-    assert [message["chat_id"] for message in bot.messages] == [100]
-    event, fields = captured.warnings[0]
-    assert event == "admin_failure_notification_incomplete"
-    assert fields["recipient_count"] == 2
-    assert fields["sent_count"] == 1
-    assert fields["failed_count"] == 1
-    serialized = repr(fields)
-    assert "sensitive admin transport detail" not in serialized
-    assert "99" not in serialized
-    assert "100" not in serialized
+    # No automatic administrator direct messages.
+    assert bot.send_attempts == []
+    assert bot.messages == []
+    snapshot = audit_store.health_snapshot()
+    assert snapshot.pending_effects == 1
+    events = _load_audit_events(audit_store)
+    assert len(events) == 1
+    assert events[0]["category"] == AuditCategory.ERROR.value
+    assert events[0]["job_id"] == "opaque-job"
+    assert "opaque-job" in str(events[0]["message"])
+    assert "sensitive" not in str(events[0]["message"])
 
 
-async def test_admin_notification_is_noop_when_no_admins_are_configured(
-    settings: Settings,
+def _cookie_alert(
+    provider: CookieService = CookieService.INSTAGRAM,
+    *,
+    new_state: CookieHealthState = CookieHealthState.EXPIRED,
+    recovery: bool = False,
+) -> CookieHealthAlert:
+    now = datetime.now(UTC)
+    return CookieHealthAlert(
+        provider=provider,
+        previous_state=CookieHealthState.HEALTHY if not recovery else CookieHealthState.EXPIRED,
+        new_state=new_state,
+        health=ProviderCookieHealth(
+            provider=provider,
+            status=new_state,
+            static=StaticCookieCheck(provider, new_state, file_ok=False),
+            last_notified_state=new_state,
+            last_reminder_at=now,
+        ),
+        recovery=recovery,
+    )
+
+
+def test_cookie_health_alert_emits_cookie_health_event(tmp_path: Path) -> None:
+    audit_store = SqliteAuditRepository(tmp_path / "audit.db")
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
+    audit = AuditService(audit_store, enabled=True)
+    alert = _cookie_alert()
+
+    jobs_module._emit_cookie_health_event({"audit": audit}, alert)
+
+    snapshot = audit_store.health_snapshot()
+    assert snapshot.pending_effects == 1
+    events = _load_audit_events(audit_store)
+    assert len(events) == 1
+    assert events[0]["category"] == AuditCategory.COOKIE_HEALTH.value
+    assert events[0]["event_type"] == AuditEventType.COOKIE_HEALTH_CHANGED.value
+    assert events[0]["provider"] == "instagram"
+    assert "Instagram" in str(events[0]["message"])
+
+
+def test_runtime_auth_failure_routes_cookie_health_event(
+    settings: Settings, tmp_path: Path
 ) -> None:
-    await jobs_module._notify_admins_of_terminal_failure(
+    """A real auth failure updates Cookie Health and emits exactly one COOKIE_HEALTH event."""
+    from telegram_media_bot.infrastructure.cookies.health import MissingCookieChecker
+    from telegram_media_bot.infrastructure.persistence.sqlite_cookie_health import (
+        SqliteCookieHealthRepository,
+    )
+
+    audit_store = SqliteAuditRepository(tmp_path / "audit.db")
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
+    health_store = SqliteCookieHealthRepository(tmp_path / "health.db")
+    health_store.initialize()
+    health = CookieHealthService(
+        health_store,
+        MissingCookieChecker(),
+    )
+
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    ctx = {
+        "settings": Settings.model_validate(raw),
+        "cookie_health_service": health,
+        "audit": AuditService(audit_store, enabled=True),
+        "delivery": FakeDelivery(),
+        "metrics": MetricsRegistry(),
+    }
+
+    async def run() -> None:
+        await jobs_module._record_runtime_auth_failure(
+            ctx, GalleryDlCookiesExpiredError("Instagram session expired")
+        )
+
+    asyncio.run(run())
+
+    events = _load_audit_events(audit_store)
+    assert len(events) == 1
+    assert events[0]["category"] == AuditCategory.COOKIE_HEALTH.value
+    assert events[0]["provider"] == "instagram"
+    # The same transition never storms the outbox: re-running the same alert is a no-op.
+    asyncio.run(run())
+    assert len(_load_audit_events(audit_store)) == 1
+
+
+def test_cookie_health_identical_alert_enqueues_once(tmp_path: Path) -> None:
+    audit_store = SqliteAuditRepository(tmp_path / "audit.db")
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
+    audit = AuditService(audit_store, enabled=True)
+    alert = _cookie_alert()
+
+    jobs_module._emit_cookie_health_event({"audit": audit}, alert)
+    jobs_module._emit_cookie_health_event({"audit": audit}, alert)
+
+    snapshot = audit_store.health_snapshot()
+    assert snapshot.pending_effects == 1
+    assert len(_load_audit_events(audit_store)) == 1
+
+
+def test_cookie_health_emit_failure_never_breaks_job_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class BrokenStore:
+        def health_snapshot(self) -> object:
+            raise RuntimeError("storage unavailable")
+
+        def list_destinations(self) -> tuple[object, ...]:
+            return ()
+
+        def enqueue(self, _event: object) -> int:
+            raise RuntimeError("storage unavailable")
+
+    audit = AuditService(cast(Any, BrokenStore()), enabled=True)
+    alert = _cookie_alert()
+
+    class CapturingLogger:
+        def __init__(self) -> None:
+            self.exceptions: list[tuple[str, dict[str, object]]] = []
+
+        def exception(self, event: str, **kwargs: object) -> None:
+            self.exceptions.append((event, kwargs))
+
+        def info(self, _event: str, **_kwargs: object) -> None:
+            return None
+
+        def warning(self, _event: str, **_kwargs: object) -> None:
+            return None
+
+    captured = CapturingLogger()
+    monkeypatch.setattr(jobs_module, "logger", captured)
+
+    # Must not raise: the user job path is never broken by logger storage failures.
+    jobs_module._emit_cookie_health_event({"audit": audit}, alert)
+    assert captured.exceptions[0][0] == "cookie_health_audit_emit_failed"
+
+
+async def test_terminal_failure_without_audit_service_logs_only(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CapturingLogger:
+        def __init__(self) -> None:
+            self.warnings: list[tuple[str, dict[str, object]]] = []
+
+        def warning(self, event: str, **kwargs: object) -> None:
+            self.warnings.append((event, kwargs))
+
+        def info(self, _event: str, **_kwargs: object) -> None:
+            return None
+
+    captured = CapturingLogger()
+    monkeypatch.setattr(jobs_module, "logger", captured)
+    jobs_module._emit_terminal_failure_event(
         {"settings": settings},
         context=FailureContext(
             job_id=JobId("opaque-job"),
@@ -1061,6 +1261,9 @@ async def test_admin_notification_is_noop_when_no_admins_are_configured(
         ),
         status=JobStatus.FAILED,
     )
+
+    event, _fields = captured.warnings[0]
+    assert event == "terminal_failure_audit_unavailable"
 
 
 async def test_success_and_cancellation_do_not_alert_admins(

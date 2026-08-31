@@ -238,8 +238,9 @@ tokens, credentials, filesystem paths, raw exceptions, Instagram session materia
 tokens, card/payment secrets, or gateway credentials. Future VIP/Instagram/payment flows must be
 reviewed against this exclusion list before adding events.
 
-Implementation is recorded in T026-T028 (typed sanitized event domain, durable destinations and
-outbox, and the administrator channel-management UX) with the remaining T029-T032 delivery,
-mirroring, privacy, and rollout work planned, under accepted ADR-036 through ADR-038. This feature
-does not change current public download behavior,
+Implementation is recorded in T026-T029 (typed sanitized event domain, durable destinations and
+outbox, administrator channel management, and operational-alert migration with no admin-DM
+fallback) with the remaining T030-T032 delivery, mirroring, privacy, and rollout work planned,
+under accepted ADR-036 through ADR-038. This feature does not change current public download
+behavior,
 current media zero-retention cleanup, or the removed Telegram Premium/Telethon/MTProto architecture.
