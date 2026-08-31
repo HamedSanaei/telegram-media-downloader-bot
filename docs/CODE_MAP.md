@@ -120,3 +120,19 @@ claim that these modules, schemas, services, or processes exist in the current a
 | `infrastructure/ytdlp/`, `infrastructure/gallerydl/`, and media router changes | Consume explicit ephemeral credential context while remaining unaware of VIP/subscription policy |
 | `telegram/` additions | `/vip`, account-link, entitlement-gating, expiry/renewal, reconnect, disconnect, and audited administrator UX |
 | `workers/` and queue/persistence changes | Carry safe entitlement/credential snapshots, retain bounded fallback state, lease credentials, and clean plaintext on every terminal/recovery path |
+
+## Proposed Milestone 5 ownership (not implemented)
+
+The following is an ownership plan for T026-T032 only. These modules, tables, ports, and dispatchers
+do not exist in the current application.
+
+| Proposed area | Planned ownership |
+|---|---|
+| `domain/audit.py` | Typed `AuditEvent`, categories, severity, correlation metadata, source-message references, and redaction-safe payloads |
+| `application/ports/audit.py` | Audit sink, logger destination management, durable outbox, lease, and Telegram delivery-effect contracts |
+| `application/services/audit.py` | Event eligibility, sanitization, fan-out, no-admin-fallback behavior, and bounded aggregate metrics |
+| `infrastructure/persistence/` additions | Additive SQLite/WAL logger destinations, outbox, health, leases, and uncertain-delivery records |
+| `infrastructure/telegram/` additions | Native `copyMessage`/`copyMessages`, safe metadata delivery, and per-destination error translation |
+| `telegram/admin_menu.py` / `telegram/admin_handlers.py` additions | `🧾 کانال‌های لاگر` management flow, numeric channel validation, test, enable/disable/remove, and health UI |
+| `workers/` or logger dispatcher | Asynchronous outbox draining, bounded retry/reconciliation, and restart-safe isolation from user jobs |
+| `docs/` task/ADR/spec additions | T026-T032, proposed ADR-036-038, privacy notice, retention, rollout, and operational runbooks |

@@ -82,6 +82,14 @@ documentation-only plan: it changes no Python behavior, database schema, migrati
 Compose service, configuration model, package version, tag, release, or deployment, and it does
 not restore the removed Telegram Premium/Telethon/MTProto architecture from ADR-013.
 
+Milestone 5 planning decomposes a future Operator Logger and private Telegram audit-channel
+subsystem into T026-T032. The plan covers typed events, config/runtime destination reconciliation,
+durable asynchronous outbox delivery, admin channel UX, migration of operational error/Cookie Health
+alerts, accepted-submission mirroring, privacy notice, indefinite retention, secret exclusion, and
+end-to-end rollout. ADR-036 through ADR-038 are proposed, not accepted. This is documentation-only:
+no Python behavior, schema, migration, dependency, Compose service, configuration model, package
+version, tag, release, deployment, or history changed.
+
 Patch 1.2.2 fixed updater preflight validation for runtime cookie paths without mutating persistent
 data, patch 1.2.1 fixed strict mixed-carousel video-child discovery, and release 1.2.0 introduced
 Instagram Photo/File delivery plus redacted administrator failure alerts. The v1 flow is URL

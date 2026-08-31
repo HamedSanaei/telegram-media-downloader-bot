@@ -533,3 +533,78 @@ audit/credential tables and restores configuration readable by the prior strict 
 
 This architecture is unrelated to and must not resurrect ADR-013's removed Telegram Premium,
 Telethon/MTProto session, staging-channel, Premium queue, or copy-message delivery path.
+
+## Planned Milestone 5 architecture: Operator Logger and private audit channels
+
+**Planning status:** future documentation only. No logger process, event model, destination table,
+outbox, handler, or configuration field exists yet.
+
+### Planned flow
+
+```text
+accepted Telegram update
+        |
+        +--> existing durable inbox / submit_url / JobService
+        |          |
+        |          +--> normal inspection/download queue (unchanged)
+        |
+        +--> typed AuditEvent --> SQLite/WAL logger outbox
+                                      |
+                                      +--> per-destination dispatcher
+                                             |
+                                             +--> Telegram copy/send gateway
+                                             +--> PENDING / COMPLETED / UNCERTAIN
+```
+
+Terminal worker failures and persisted Cookie Health transitions emit typed events after their
+existing durable state changes. The dispatcher owns fan-out, bounded retry, leases, and destination
+health. It never changes job status, cancellation precedence, cleanup, or delivery uncertainty.
+
+### Planned ownership and boundaries
+
+- `domain/audit.py`: framework-free categories, severities, event identity, safe metadata, and
+  source-message references.
+- `application/ports/audit.py`: `AuditSink`, logger/destination management, and dispatcher ports.
+- `application/services/audit.py`: eligibility, sanitization, correlation, fan-out, and aggregate
+  metrics; no Telegram or provider-name branching.
+- `infrastructure/persistence/` additions: additive SQLite/WAL destination, outbox, lease, and
+  delivery-effect repositories. SQLite/WAL is durable truth; Redis only wakes work.
+- `infrastructure/telegram/` additions: native `copyMessage`/`copyMessages` and safe metadata
+  delivery; one destination failure is isolated from all others.
+- `telegram/admin_menu.py` and `admin_handlers.py`: role-authorized logger-channel management;
+  callbacks are reauthorized and validated at execution time.
+- `workers/` or a dedicated dispatcher: asynchronous outbox draining and bounded reconciliation;
+  it never enumerates `telegram.admin_ids` as a fallback.
+
+Configured destinations and runtime-created destinations reconcile as a deduplicated union by
+numeric `chat_id`. Config-managed rows cannot be removed through the UI. Destination health is
+`ACTIVE`, `UNREACHABLE`, `FORBIDDEN`, or `DISABLED`; removal or permission loss affects only that
+destination.
+
+### Planned audit content and privacy boundary
+
+`ERROR`, `COOKIE_HEALTH`, `USER_SUBMISSION`, and `SYSTEM` events carry UTC timestamp, correlation/
+request/update ID, job ID when known, content/provider classification, sanitized message, source
+message references, and the explicitly selected numeric Telegram user ID. URLs and original media
+are private audit-channel content, not structured logs or metrics. Cookies, passwords, 2FA,
+authorization headers, bot tokens, filesystem paths, raw exceptions, Instagram sessions, payment
+secrets, and signed login tokens are prohibited everywhere outside their owning future flow.
+
+Accepted download submissions are copied only after durable acceptance. Native Telegram copy
+operations preserve original media, captions, and album ordering; media groups receive one logical
+submission identity. Control interactions are excluded. The original message is not edited or
+deleted. A privacy notice gates activation, and audit copies/safe metadata are retained indefinitely
+by the first implementation; no automatic Telegram deletion is introduced.
+
+### Planned reliability and rollout
+
+The outbox records work before normal processing continues. Telegram ambiguity is represented as
+`UNCERTAIN` (or equivalent quarantine), not an automatic duplicate. Dispatcher retries are bounded,
+per-destination, and restart-safe. With no usable destination, the system emits only structured
+application logs plus bounded health/metric signals.
+
+Rollout is additive and feature-gated: initialize dormant state, validate private channels and
+permissions, enable operational alerts, show the privacy notice, then enable accepted-submission
+mirroring. Backups include SQLite/WAL/SHM and logger state. Rollback restores prior configuration
+without deleting audit history and leaves all existing inbox/effect/job/cookie-health behavior
+authoritative.

@@ -179,3 +179,65 @@ must not reveal whether content exists.
 
 Implementation is decomposed into T014 through T025. T024 remains blocked until the operator
 selects and supplies a real payment provider.
+
+## Planned Operator Logger and private audit channels
+
+**Planning status:** future Milestone 5 only. No logger, audit-channel, outbox, destination, or
+privacy behavior described here is implemented. The subsystem is distinct from stdout and normal
+structured application logs: it is a durable, private Telegram operational destination.
+
+The planned event categories are `ERROR`, `COOKIE_HEALTH`, `USER_SUBMISSION`, and `SYSTEM`. Typed
+events carry UTC time, correlation/request/update ID, job ID when available, content/provider
+classification, a sanitized message, source-message references, and an explicitly approved numeric
+Telegram user ID. Bounded metrics contain only category, severity, outcome, health state, and outbox
+depth; they never contain user/channel IDs, URLs, message text, filenames, or credentials.
+
+### Planned routing and destinations
+
+- Enabled config-managed and runtime-managed private channels form a deduplicated union by numeric
+  `chat_id`; the design does not assume one hardcoded channel.
+- Activation requires logger enablement, the privacy-notice gate, and at least one valid destination.
+- Every enabled destination receives selected events independently. A missing, forbidden, removed,
+  or unreachable destination produces structured logs and bounded health metrics only; it never
+  falls back to all `telegram.admin_ids`.
+- Terminal operational failures currently eligible for administrator alerts route to `ERROR`.
+  Ordinary invalid/unsupported URLs, cancellation, normal denial, rate limits, and other user-facing
+  responses remain silent unless existing policy explicitly classifies them as operational.
+- Cookie Health transitions route only to `COOKIE_HEALTH`. Administrators retain manual Cookie Health
+  inspection, but no automatic Cookie Health DM is sent to every administrator.
+- The existing admin panel will eventually manage add/list/test/enable/disable/remove/health using
+  `🧾 کانال‌های لاگر`; all actions remain role-authorized by `telegram.admin_ids`.
+
+### Planned accepted-submission mirror
+
+After a download submission is durably accepted, the original Telegram message is copied to each
+enabled logger destination. URL text, photo, video, document, audio, animation, supported media,
+captions, and media groups are included; `/start`, `/menu`, help, callbacks, payment navigation,
+and back actions are not. Telegram-native `copyMessage`/`copyMessages` is preferred so media,
+captions, and album ordering remain faithful without unnecessary forward attribution. Albums have
+one logical submission identity. The original user-entered URL is preserved in the private copy and
+canonical/provider classification is recorded separately for correlation.
+
+Copies are scheduled through a durable asynchronous outbox after acceptance. `PENDING`,
+`COMPLETED`, and `UNCERTAIN` (or equivalent) states acknowledge Telegram ambiguity without claiming
+exactly-once delivery. Logger failure cannot fail, delay, cancel, or change the user’s download.
+
+### Planned privacy, retention, and future-feature boundary
+
+Before activation users must see:
+
+> برای اجرای سرویس و پشتیبانی/امنیت، لینک‌ها و رسانه‌هایی که برای دانلود می‌فرستید ممکن است در کانال خصوصی عملیاتی لاگر کپی و به‌صورت نامحدود نگهداری شوند؛ با ادامهٔ استفاده موافقت می‌کنید.
+
+Audit copies and safe metadata are retained indefinitely in the first implementation; no automatic
+Telegram deletion is planned. Any later manual purge must be bounded, idempotent, independently
+retried, and never coupled to user-facing message deletion. Channels remain private with minimal
+human membership and bot post-only permission.
+
+The logger must never receive cookies, passwords, 2FA/checkpoint codes, authorization headers, bot
+tokens, credentials, filesystem paths, raw exceptions, Instagram session material, signed login
+tokens, card/payment secrets, or gateway credentials. Future VIP/Instagram/payment flows must be
+reviewed against this exclusion list before adding events.
+
+Implementation is decomposed into T026 through T032 and proposed ADR-036 through ADR-038. This
+section does not change current public download behavior, current media zero-retention cleanup, or
+the removed Telegram Premium/Telethon/MTProto architecture.

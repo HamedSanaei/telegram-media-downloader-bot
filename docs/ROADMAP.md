@@ -65,3 +65,31 @@ The milestone is additive and feature-gated. Account connection may be made avai
 users before purchasing exists. Production purchasing stays disabled until T024 is unblocked and
 verified. This VIP means a paid bot entitlement; it does not restore the removed Telegram Premium,
 Telethon/MTProto staging-channel, Premium upload queue, or copy-delivery architecture.
+
+## Milestone 5 - Operational Logger and private audit channels — future
+
+- T026 Operator Logger domain and event-routing foundation — planned
+- T027 Durable logger destinations, configuration, and outbox — planned; depends on T026
+- T028 Administrator logger-channel management UX — planned; depends on T026/T027
+- T029 Operational error and Cookie Health notification migration — planned; depends on T026-T028
+- T030 Durable accepted-submission audit mirror — planned; depends on T026/T027
+- T031 Privacy, retention, access, and secret-exclusion controls — planned; depends on T026-T030
+- T032 End-to-end logger rollout, migration, and operations — planned; depends on T026-T031
+
+Dependency graph:
+
+```text
+T026 Logger domain/events
+   └──> T027 destinations/config/outbox
+          ├──> T028 admin logger UX
+          │      └──> T029 error/Cookie Health migration
+          └──> T030 accepted-submission mirror
+                 └──> T031 privacy/retention/security
+                        └──> T032 E2E rollout/operations
+```
+
+The milestone is documentation-only planning. It introduces no runtime behavior, schema,
+migration, dependency, Compose service, configuration-model field, version, release, tag, or
+deployment. Logger activation is gated by explicit enablement, valid config/runtime destinations,
+and the Persian privacy notice. Audit content is planned for indefinite retention; no automatic
+Telegram deletion is planned. Proposed ADR-036 through ADR-038 are not accepted decisions.

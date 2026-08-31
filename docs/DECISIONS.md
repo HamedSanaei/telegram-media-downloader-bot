@@ -552,3 +552,57 @@ result; a browser redirect may display status but never activates an entitlement
 proxy rules, body/time limits, non-permissive CORS, secret-redacted access logs, and bounded labels
 are mandatory. The companion remains disabled until its threat model, deployment, and security
 tests are complete.
+
+## ADR-036: Typed audit events use a durable, isolated logger outbox
+
+**Status:** proposed
+
+The Operator Logger is distinct from stdout and structured application logs. Application services
+emit project-owned `AuditEvent` values with one of `ERROR`, `COOKIE_HEALTH`, `USER_SUBMISSION`, or
+`SYSTEM` categories, a severity, UTC timestamp, correlation/request/update ID, optional job ID,
+content/provider classification, sanitized message, source-message references, and an explicitly
+approved numeric Telegram user ID. Business services do not branch on destination names or
+administrator IDs.
+
+After a request is durably accepted, logger work is written to SQLite/WAL before normal processing
+continues. A per-destination dispatcher records `PENDING`, `COMPLETED`, and `UNCERTAIN` (or an
+equivalent quarantine state), uses bounded retries and leases, and isolates channel failures. A
+Telegram timeout or ambiguous response is never treated as proof that a duplicate send is safe.
+No logger destination falls back to all `telegram.admin_ids`; without a usable destination the
+system emits only structured logs and bounded health/metric signals. Logger failure cannot change a
+job outcome, cancellation, cleanup, or delivery-uncertainty state.
+
+## ADR-037: Logger destinations reconcile configuration and runtime ownership
+
+**Status:** proposed
+
+The future strict `telegram.logger.enabled/channels` configuration supplies numeric `-100...`
+channel IDs, while authorized administrators may add durable runtime destinations. The effective
+set is a deduplicated union keyed by `chat_id`. Config-managed rows remain configuration-owned and
+cannot be falsely removed through the Telegram UI; they disappear only after configuration reload or
+restart. Runtime rows remain durable until an authorized removal.
+
+Each destination has independent `ACTIVE`, `UNREACHABLE`, `FORBIDDEN`, and `DISABLED` health. Bot
+membership and posting permission are validated before activation. A removed or forbidden channel
+updates only that row and does not stop delivery to healthy channels or the user-facing workflow.
+The admin panel is the only runtime management surface and reauthorizes every action using the
+current `telegram.admin_ids`.
+
+## ADR-038: Original submissions are private audit copies with explicit indefinite retention
+
+**Status:** proposed
+
+`USER_SUBMISSION_RECEIVED` is emitted only after a real download submission is durably accepted.
+URL text, photo, video, document, audio, animation, captions, supported attachments, and albums are
+copied with Telegram-native `copyMessage`/`copyMessages` where possible. Album order, all items,
+captions, and one logical submission identity are preserved. The original message is not edited or
+deleted, and control interactions are excluded. The original user-entered URL remains in the
+private copy; canonical/provider classification is separate correlation metadata.
+
+Before activation, users see: «برای اجرای سرویس و پشتیبانی/امنیت، لینک‌ها و رسانه‌هایی که برای دانلود می‌فرستید ممکن است در کانال خصوصی عملیاتی لاگر کپی و به‌صورت نامحدود نگهداری شوند؛ با ادامهٔ استفاده موافقت می‌کنید.» Audit copies and safe metadata are retained indefinitely in the first implementation; no automatic
+Telegram deletion is introduced. Any later manual purge must be bounded and idempotent.
+
+Private channels have minimal human membership and bot post-only access. Cookies, passwords, 2FA,
+authorization headers, bot tokens, credentials, filesystem paths, raw exceptions, Instagram
+sessions, signed login tokens, payment secrets, and gateway credentials are prohibited from audit
+events, outbox rows, logs, metrics, and Telegram messages.
