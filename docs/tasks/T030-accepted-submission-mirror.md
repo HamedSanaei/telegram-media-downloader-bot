@@ -1,6 +1,6 @@
 # T030 - Durable accepted-submission audit mirror
 
-**Status:** planned
+**Status:** complete (2026-08-31)
 
 ## Goal
 
@@ -110,3 +110,18 @@ Document Telegram Bot API copy limits and operator handling for quarantined unce
 
 The source-message capture contract, media-group aggregation, native-copy strategy, metadata
 envelope, outbox/effect state machine, exclusions, tests, and operational runbook are complete.
+
+## Implementation evidence
+
+- `AcceptedSubmissionAuditService` is invoked only after `JobService.create_inspection()` returns a
+  durable accepted job. Invalid URLs and control handlers never reach the emission boundary, and
+  audit exceptions are isolated from the normal queue path.
+- Durable inbox snapshots resolve bounded album message IDs in Telegram order. A restart-safe
+  group mapping merges late members before a short outbox settle deadline without changing the
+  logical event identity.
+- `TelegramAuditDelivery` uses native `copyMessage` for one source and `copyMessages` for ordered
+  groups, then sends only the safe metadata envelope. Forbidden destinations terminate; ambiguous
+  network/API outcomes become `UNCERTAIN` and are never automatically resent.
+- Focused tests cover text, photo, video, document, audio, animation, captions, albums, duplicate
+  updates/restarts, multiple destinations, independent flags, failure isolation, and control
+  exclusions. Runtime outbox draining and operational health are completed by T032.

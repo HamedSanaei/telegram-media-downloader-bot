@@ -7,6 +7,7 @@ payloads so a crash never loses an unanswered user request.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -32,6 +33,8 @@ _ACTIVE_STATES = (
     UpdateProcessingState.COMPLETED.value,
     UpdateProcessingState.TERMINAL_FAILURE.value,
 )
+_MEDIA_GROUP_SCAN_LIMIT = 100
+_TELEGRAM_MEDIA_GROUP_MAX_ITEMS = 10
 
 
 class SqliteInboundUpdateRepository(InboundUpdateRepository):
@@ -264,6 +267,40 @@ class SqliteInboundUpdateRepository(InboundUpdateRepository):
             ).fetchone()
         return int(row[0]) if row is not None else 0
 
+    def media_group_message_ids(self, chat_id: int, media_group_id: str) -> tuple[int, ...]:
+        """Resolve one bounded album from already-durable inbound snapshots."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT payload_json FROM inbound_updates
+                ORDER BY update_id DESC LIMIT ?""",
+                (_MEDIA_GROUP_SCAN_LIMIT,),
+            ).fetchall()
+        message_ids: set[int] = set()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except json.JSONDecodeError, TypeError, ValueError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            message = next(
+                (
+                    payload.get(key)
+                    for key in ("message", "edited_message", "business_message")
+                    if isinstance(payload.get(key), dict)
+                ),
+                None,
+            )
+            if not isinstance(message, dict) or message.get("media_group_id") != media_group_id:
+                continue
+            chat = message.get("chat")
+            if not isinstance(chat, dict) or chat.get("id") != chat_id:
+                continue
+            message_id = message.get("message_id")
+            if isinstance(message_id, int) and message_id > 0:
+                message_ids.add(message_id)
+        return tuple(sorted(message_ids))[:_TELEGRAM_MEDIA_GROUP_MAX_ITEMS]
+
 
 def _from_row(row: sqlite3.Row) -> InboundUpdate:
     completed = row["completed_at"]
@@ -294,6 +331,4 @@ def _now_text() -> str:
 
 
 def _quarantine_payload(update_id: int) -> str:
-    import json
-
     return json.dumps({"update_id": update_id, "_unserializable": True}, ensure_ascii=False)

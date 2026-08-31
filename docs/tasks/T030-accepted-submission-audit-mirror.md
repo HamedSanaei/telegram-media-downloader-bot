@@ -1,6 +1,6 @@
 # T030 - Durable accepted-submission audit mirror
 
-**Status:** planned
+**Status:** complete (2026-08-31)
 
 ## Goal
 
@@ -33,3 +33,7 @@ Preserve inbox/effect-ledger semantics and existing zero-retention media cleanup
 kind, captions/order/albums, duplicate and uncertain sends, restart, Redis loss, destination
 isolation, and exclusion matrix. Done requires replay-safe mirroring with no user-path coupling or
 secret leakage.
+
+Implemented by the accepted-submission application service, bounded durable-inbox album resolver,
+SQLite submission-group mapping, native Telegram audit transport, and focused handler/persistence/
+transport tests. Runtime draining and health integration are completed in T032.

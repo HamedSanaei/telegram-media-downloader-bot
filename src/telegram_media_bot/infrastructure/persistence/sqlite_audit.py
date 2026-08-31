@@ -7,6 +7,7 @@ import secrets
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ from telegram_media_bot.domain.audit import (
 from telegram_media_bot.domain.errors import PersistenceError
 
 _MAX_ATTEMPTS = 6
+_MEDIA_GROUP_SETTLE_SECONDS = 2
 
 
 class SqliteAuditRepository:
@@ -92,6 +94,13 @@ class SqliteAuditRepository:
                     ON logger_outbox(state, next_attempt_at, lease_until);
                 CREATE INDEX IF NOT EXISTS logger_destination_health_idx
                     ON logger_destinations(health, enabled);
+                CREATE TABLE IF NOT EXISTS audit_submission_groups (
+                    source_chat_id INTEGER NOT NULL,
+                    media_group_id TEXT NOT NULL,
+                    event_id TEXT NOT NULL UNIQUE,
+                    PRIMARY KEY (source_chat_id, media_group_id),
+                    FOREIGN KEY (event_id) REFERENCES audit_events(event_id)
+                );
                 """
             )
 
@@ -218,12 +227,29 @@ class SqliteAuditRepository:
             existing = connection.execute(
                 "SELECT event_json FROM audit_events WHERE event_id=?", (event.event_id,)
             ).fetchone()
-            if existing is not None and str(existing["event_json"]) != payload:
-                raise PersistenceError("audit event identity collision")
-            connection.execute(
+            if existing is not None:
+                persisted = deserialize_event(str(existing["event_json"]))
+                if persisted != event and not _compatible_submission_replay(persisted, event):
+                    raise PersistenceError("audit event identity collision")
+                connection.execute("COMMIT")
+                return 0
+            event_created = connection.execute(
                 "INSERT OR IGNORE INTO audit_events(event_id,event_json,created_at) VALUES (?,?,?)",
                 (event.event_id, payload, now),
-            )
+            ).rowcount
+            if not event_created:
+                connection.execute("COMMIT")
+                return 0
+            next_attempt_at = now
+            if event.source is not None and event.source.media_group_id is not None:
+                connection.execute(
+                    """INSERT INTO audit_submission_groups
+                    (source_chat_id,media_group_id,event_id) VALUES (?,?,?)""",
+                    (event.source.chat_id, event.source.media_group_id, event.event_id),
+                )
+                next_attempt_at = (
+                    datetime.now(UTC) + timedelta(seconds=_MEDIA_GROUP_SETTLE_SECONDS)
+                ).isoformat()
             destinations = connection.execute(
                 """SELECT chat_id FROM logger_destinations WHERE enabled=1
                 AND health IN ('active','unreachable')
@@ -235,10 +261,65 @@ class SqliteAuditRepository:
                     """INSERT OR IGNORE INTO logger_outbox
                     (event_id,destination_chat_id,state,next_attempt_at,created_at,updated_at)
                     VALUES (?,?,'pending',?,?,?)""",
-                    (event.event_id, int(destination["chat_id"]), now, now, now),
+                    (event.event_id, int(destination["chat_id"]), next_attempt_at, now, now),
                 ).rowcount
             connection.execute("COMMIT")
         return created
+
+    def extend_submission_source(self, source: TelegramSourceReference) -> int:
+        """Merge one album member before delivery; a sent/leased album remains immutable."""
+        if source.media_group_id is None:
+            return 0
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            mapping = connection.execute(
+                """SELECT event_id FROM audit_submission_groups
+                WHERE source_chat_id=? AND media_group_id=?""",
+                (source.chat_id, source.media_group_id),
+            ).fetchone()
+            if mapping is None:
+                connection.execute("COMMIT")
+                return 0
+            event_id = str(mapping["event_id"])
+            immutable = connection.execute(
+                """SELECT COUNT(*) FROM logger_outbox WHERE event_id=?
+                AND state NOT IN ('pending','retryable')""",
+                (event_id,),
+            ).fetchone()
+            if immutable is not None and int(immutable[0]) > 0:
+                connection.execute("COMMIT")
+                return 0
+            row = connection.execute(
+                "SELECT event_json FROM audit_events WHERE event_id=?", (event_id,)
+            ).fetchone()
+            if row is None:
+                connection.execute("COMMIT")
+                return 0
+            event = deserialize_event(str(row["event_json"]))
+            if event.source is None:
+                connection.execute("COMMIT")
+                return 0
+            message_ids = tuple(sorted({*event.source.message_ids, *source.message_ids}))
+            if message_ids == event.source.message_ids:
+                connection.execute("COMMIT")
+                return len(message_ids)
+            merged = replace(event, source=replace(event.source, message_ids=message_ids))
+            now = datetime.now(UTC)
+            connection.execute(
+                "UPDATE audit_events SET event_json=? WHERE event_id=?",
+                (serialize_event(merged), event_id),
+            )
+            connection.execute(
+                """UPDATE logger_outbox SET next_attempt_at=?,updated_at=?
+                WHERE event_id=? AND state IN ('pending','retryable')""",
+                (
+                    (now + timedelta(seconds=_MEDIA_GROUP_SETTLE_SECONDS)).isoformat(),
+                    now.isoformat(),
+                    event_id,
+                ),
+            )
+            connection.execute("COMMIT")
+        return len(message_ids)
 
     def recover_expired_leases(self) -> tuple[int, int]:
         now = _now()
@@ -525,6 +606,23 @@ def _event_from_dict(data: dict[str, Any]) -> AuditEvent:
             if isinstance(source, dict)
             else None
         ),
+    )
+
+
+def _compatible_submission_replay(persisted: AuditEvent, incoming: AuditEvent) -> bool:
+    if (
+        persisted.event_type is not AuditEventType.USER_SUBMISSION_RECEIVED
+        or incoming.event_type is not AuditEventType.USER_SUBMISSION_RECEIVED
+        or persisted.source is None
+        or incoming.source is None
+    ):
+        return False
+    persisted_without_source = replace(persisted, source=incoming.source)
+    return (
+        persisted_without_source == incoming
+        and persisted.source.chat_id == incoming.source.chat_id
+        and persisted.source.media_group_id == incoming.source.media_group_id
+        and set(incoming.source.message_ids) <= set(persisted.source.message_ids)
     )
 
 

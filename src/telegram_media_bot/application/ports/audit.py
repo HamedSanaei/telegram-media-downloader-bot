@@ -10,6 +10,7 @@ from telegram_media_bot.domain.audit import (
     LoggerDestinationHealth,
     LoggerHealthSnapshot,
     LoggerOutboxItem,
+    TelegramSourceReference,
 )
 
 
@@ -24,6 +25,7 @@ class AuditRepository(Protocol):
         self, chat_id: int, health: LoggerDestinationHealth, failure_class: str | None = None
     ) -> LoggerDestination | None: ...
     def enqueue(self, event: AuditEvent) -> int: ...
+    def extend_submission_source(self, source: TelegramSourceReference) -> int: ...
     def recover_expired_leases(self) -> tuple[int, int]: ...
     def claim_pending(self, *, limit: int = 20) -> tuple[LoggerOutboxItem, ...]: ...
     def mark_send_started(self, item: LoggerOutboxItem) -> bool: ...
@@ -44,4 +46,15 @@ class LoggerDestinationVerifier(Protocol):
     async def probe(self, chat_id: int) -> DestinationProbeResult: ...
 
 
-__all__ = ["AuditDeliveryPort", "AuditRepository", "LoggerDestinationVerifier"]
+class TelegramSourceResolver(Protocol):
+    """Resolve bounded, already-durable source identities for a Telegram album."""
+
+    def media_group_message_ids(self, chat_id: int, media_group_id: str) -> tuple[int, ...]: ...
+
+
+__all__ = [
+    "AuditDeliveryPort",
+    "AuditRepository",
+    "LoggerDestinationVerifier",
+    "TelegramSourceResolver",
+]

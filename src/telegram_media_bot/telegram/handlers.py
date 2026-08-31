@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from contextlib import suppress
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
@@ -18,6 +19,7 @@ from aiogram.types import (
     ReplyKeyboardRemove,
 )
 
+from telegram_media_bot.application.ports.audit import TelegramSourceResolver
 from telegram_media_bot.application.ports.cookie_management import CookieManager
 from telegram_media_bot.application.ports.job_queue import JobQueue
 from telegram_media_bot.application.ports.job_repository import JobRepository
@@ -41,9 +43,13 @@ from telegram_media_bot.application.services.native_options import (
     is_native_video_option,
     native_video_codec,
 )
+from telegram_media_bot.application.services.submission_audit import (
+    AcceptedSubmissionAuditService,
+)
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.domain.audit import TelegramSourceReference
 from telegram_media_bot.domain.errors import (
     AccessDeniedError,
     InvalidUrlError,
@@ -111,6 +117,7 @@ from telegram_media_bot.telegram.ui import (
 from telegram_media_bot.telegram.url_extractor import extract_first_url
 
 logger = structlog.get_logger(__name__)
+_SAFE_PROVIDER = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
 
 
 def build_router(
@@ -128,6 +135,8 @@ def build_router(
     effects: EffectLedgerService | None = None,
     connection: InstagramConnectionService | None = None,
     audit_admin: LoggerDestinationAdminService | None = None,
+    submission_audit: AcceptedSubmissionAuditService | None = None,
+    source_resolver: TelegramSourceResolver | None = None,
 ) -> Router:
     router = Router(name="main")
     router.message.outer_middleware(CorrelationMiddleware())
@@ -1104,6 +1113,22 @@ def build_router(
     ) -> bool:
         if message.from_user is None:
             return False
+        if submission_audit is not None and message.media_group_id is not None:
+            try:
+                await asyncio.to_thread(
+                    submission_audit.observe_media_group_member,
+                    TelegramSourceReference(
+                        chat_id=message.chat.id,
+                        message_ids=(message.message_id,),
+                        media_group_id=message.media_group_id,
+                    ),
+                )
+            except Exception:
+                await logger.aexception(
+                    "submission_audit_group_extension_failed",
+                    update_id=durable_update_id,
+                    error_type="AuditExtensionError",
+                )
         await _save_user(users, message)
         try:
             await access_policy.authorize_request(message.from_user.id)
@@ -1143,6 +1168,31 @@ def build_router(
             user_id=message.from_user.id,
             url=intent.canonical_url,
         )
+        if submission_audit is not None:
+            try:
+                source = await asyncio.to_thread(
+                    _submission_source_reference,
+                    message,
+                    source_resolver,
+                )
+                await asyncio.to_thread(
+                    submission_audit.record_accepted,
+                    source=source,
+                    telegram_user_id=message.from_user.id,
+                    update_id=durable_update_id,
+                    job_id=str(record.job_id),
+                    content_type=_submission_content_type(message),
+                    provider=_submission_provider(intent.canonical_url),
+                    occurred_at=message.date.astimezone(UTC),
+                )
+            except Exception:
+                # Audit durability is secondary: a logger fault must never change acceptance.
+                await logger.aexception(
+                    "submission_audit_emit_failed",
+                    job_id=record.job_id,
+                    update_id=durable_update_id,
+                    error_type="AuditEmitError",
+                )
         is_admin = message.from_user.id in settings.telegram.admin_ids
         effect_key = (
             f"update:{durable_update_id}:inspection_status"
@@ -1300,6 +1350,35 @@ def build_router(
 
 def _is_admin(message: Message, settings: Settings) -> bool:
     return message.from_user is not None and message.from_user.id in settings.telegram.admin_ids
+
+
+def _submission_source_reference(
+    message: Message,
+    resolver: TelegramSourceResolver | None,
+) -> TelegramSourceReference:
+    message_ids: tuple[int, ...] = (message.message_id,)
+    if message.media_group_id is not None and resolver is not None:
+        resolved = resolver.media_group_message_ids(message.chat.id, message.media_group_id)
+        message_ids = tuple(sorted({*resolved, message.message_id}))
+    return TelegramSourceReference(
+        chat_id=message.chat.id,
+        message_ids=message_ids,
+        media_group_id=message.media_group_id,
+    )
+
+
+def _submission_content_type(message: Message) -> str:
+    for field in ("photo", "video", "document", "audio", "animation"):
+        if getattr(message, field, None) is not None:
+            return field
+    return "text"
+
+
+def _submission_provider(url: str) -> str | None:
+    hostname = (urlsplit(url).hostname or "").casefold()
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    return hostname if _SAFE_PROVIDER.fullmatch(hostname) else None
 
 
 async def _save_user(

@@ -558,11 +558,12 @@ Telethon/MTProto session, staging-channel, Premium queue, or copy-message delive
 
 ## Milestone 5 architecture: Operator Logger and private audit channels
 
-**Implementation status:** T026-T029 implemented and feature-gated off by default; T030-T032
+**Implementation status:** T026-T030 implemented and feature-gated off by default; T031-T032
 planned. Repository initialization and config-destination reconciliation run at bot and worker
-startup; Telegram delivery draining is not yet wired.
+startup; accepted submissions create durable native-copy intents, while production delivery
+draining is completed by T032.
 
-### Flow (T026/T027 implemented; T028 admin UX implemented; dispatcher planned)
+### Flow (T026-T030 implemented; dispatcher planned for T032)
 
 ```text
 accepted Telegram update
@@ -575,7 +576,7 @@ accepted Telegram update
                                       |
                                       +--> per-destination dispatcher (planned T029-T032)
                                              |
-                                             +--> Telegram copy/send gateway (planned)
+                                             +--> Telegram native copy/send gateway (implemented T030)
                                              +--> PENDING / COMPLETED / UNCERTAIN (modeled)
 ```
 
@@ -622,7 +623,7 @@ redacts cookies, passwords, 2FA, authorization headers, bot tokens, filesystem p
 exceptions, Instagram sessions, payment secrets, and signed login tokens while preserving approved
 numeric user IDs.
 
-Accepted download submissions will be copied only after durable acceptance (planned T030). Native
+Accepted download submissions are recorded only after durable acceptance (implemented T030). Native
 Telegram copy operations preserve original media, captions, and album ordering; media groups receive
 one logical submission identity. Control interactions are excluded. The original message is not
 edited or deleted. A privacy notice will gate activation, and audit copies/safe metadata are
@@ -632,7 +633,8 @@ retained indefinitely by the first implementation; no automatic Telegram deletio
 
 The outbox records work before normal processing continues. Telegram ambiguity is represented as
 `UNCERTAIN` (or equivalent quarantine), never an automatic duplicate; uncertain sends are never
-auto-resent. Planned dispatcher retries are bounded, per-destination, and restart-safe. With no
+auto-resent. The T030 transport classifies copy outcomes; T032 wires its bounded,
+per-destination, restart-safe dispatcher. With no
 usable destination, the system emits only structured application logs plus bounded health/metric
 signals.
 

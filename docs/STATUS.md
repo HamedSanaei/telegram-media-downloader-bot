@@ -116,8 +116,8 @@ cannot be falsely removed through the UI. T029 is complete: terminal operational
 Cookie Health transition/reminder alerts now route as typed `ERROR`/`COOKIE_HEALTH` audit events
 into the durable outbox instead of being broadcast to every `telegram.admin_ids`; with no logger
 or destinations the worker only records structured logs, and logger storage faults can never
-change a user job outcome. T030-T032 (accepted-submission mirroring, privacy/retention controls,
-and E2E rollout) remain planned. Mirroring will default off and require the exact Persian privacy
+change a user job outcome. T030 accepted-submission mirroring is complete; T031 privacy/retention
+controls and T032 E2E rollout remain planned. Mirroring defaults off and will require the exact Persian privacy
 notice acknowledgement. Retention is indefinite with no automatic Telegram purge. ADR-036 through
 ADR-038 are accepted.
 
@@ -130,7 +130,7 @@ lanes. `final-ci-gate` is the merge-blocking branch-protection required check (`
 be required for visibility; `quality` + `change-detection` alone is not a sufficient gate).
 Development runs cancel superseded same-ref work; permission/license gates still require human
 review. The tag-only publication workflow is unchanged. Post-implementation GitHub run timing is
-pending the first push.
+pending the logger-campaign push.
 
 Patch 1.2.2 fixed updater preflight validation for runtime cookie paths without mutating persistent
 data, patch 1.2.1 fixed strict mixed-carousel video-child discovery, and release 1.2.0 introduced

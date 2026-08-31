@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -104,6 +105,33 @@ def test_reinitialize_preserves_existing_rows(tmp_path: Path) -> None:
     second_repo = SqliteInboundUpdateRepository(tmp_path / "state" / "jobs.sqlite3")
     second_repo.initialize()
     assert len(second_repo.pending_updates()) == 1
+
+
+def test_media_group_source_resolution_is_bounded_ordered_and_chat_scoped(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    for update_id, chat_id, group_id, message_id in (
+        (1, 42, "album-1", 12),
+        (2, 99, "album-1", 99),
+        (3, 42, "other", 13),
+        (4, 42, "album-1", 10),
+        (5, 42, "album-1", 11),
+    ):
+        repo.persist(
+            update_id,
+            "message",
+            json.dumps(
+                {
+                    "update_id": update_id,
+                    "message": {
+                        "message_id": message_id,
+                        "media_group_id": group_id,
+                        "chat": {"id": chat_id, "type": "private"},
+                    },
+                }
+            ),
+        )
+
+    assert repo.media_group_message_ids(42, "album-1") == (10, 11, 12)
 
 
 # --- Hardening 1: bounded retention cleanup -----------------------------------

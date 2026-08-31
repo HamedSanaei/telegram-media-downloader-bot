@@ -10,10 +10,14 @@ from telegram_media_bot.application.services.access_policy import AccessPolicySe
 from telegram_media_bot.application.services.audit_destination_admin import (
     LoggerDestinationAdminService,
 )
+from telegram_media_bot.application.services.audit_service import AuditService
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.durable_update_inbox import DurableUpdateInbox
 from telegram_media_bot.application.services.effect_ledger import EffectLedgerService
 from telegram_media_bot.application.services.job_service import JobService
+from telegram_media_bot.application.services.submission_audit import (
+    AcceptedSubmissionAuditService,
+)
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.bootstrap.instagram import build_instagram_connection_service
@@ -86,6 +90,14 @@ async def run_bot(settings: Settings) -> None:
         audit_admin = LoggerDestinationAdminService(
             audit_store, TelegramAuditDestinationVerifier(bot)
         )
+        audit = AuditService(audit_store, enabled=settings.telegram.logger.enabled)
+        submission_audit = AcceptedSubmissionAuditService(
+            audit,
+            enabled=(
+                settings.telegram.logger.enabled
+                and settings.telegram.logger.submission_mirror_enabled
+            ),
+        )
         rate_limiter = RedisRateLimiter.create(settings.redis.url)
         if settings.telegram.required_channels.enabled:
             membership_checker = TelegramMembershipChecker.create(
@@ -152,6 +164,8 @@ async def run_bot(settings: Settings) -> None:
                 effects=effects,
                 connection=build_instagram_connection_service(settings),
                 audit_admin=audit_admin,
+                submission_audit=submission_audit,
+                source_resolver=inbox_store,
             )
         )
         inbox = DurableUpdateInbox(inbox_store)
