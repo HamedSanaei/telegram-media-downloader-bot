@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from telegram_media_bot.application.services.audit_outbox import AuditOutboxProcessor
-from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.audit import (
     AuditCategory,
     AuditDeliveryOutcome,
@@ -16,11 +18,9 @@ from telegram_media_bot.domain.audit import (
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
 from telegram_media_bot.workers.jobs import audit_dispatch_job
-from telegram_media_bot.workers.settings import (
-    WorkerSettings,
-    _logger_health_component,
-    _worker_alerts_enabled,
-)
+
+if TYPE_CHECKING:
+    from telegram_media_bot.bootstrap.config import Settings
 
 
 class SuccessfulDelivery:
@@ -29,6 +29,8 @@ class SuccessfulDelivery:
 
 
 def test_dispatcher_has_independent_bounded_thirty_second_schedule() -> None:
+    from telegram_media_bot.workers.settings import WorkerSettings
+
     jobs = {job.name: job for job in WorkerSettings.cron_jobs}
 
     dispatcher = jobs["cron:audit_dispatch_job"]
@@ -40,6 +42,8 @@ def test_dispatcher_has_independent_bounded_thirty_second_schedule() -> None:
 def test_operational_alert_gate_is_independent_from_submission_mirror(
     settings: Settings,
 ) -> None:
+    from telegram_media_bot.workers.settings import _worker_alerts_enabled
+
     mirror_only = settings.model_copy(
         update={
             "telegram": settings.telegram.model_copy(
@@ -110,6 +114,8 @@ async def test_bounded_worker_dispatch_updates_only_safe_aggregate_metrics(
 
 
 def test_logger_health_is_safe_secondary_readiness_detail(settings: Settings) -> None:
+    from telegram_media_bot.workers.settings import _logger_health_component
+
     logger_settings = settings.telegram.logger.model_copy(
         update={
             "enabled": True,
