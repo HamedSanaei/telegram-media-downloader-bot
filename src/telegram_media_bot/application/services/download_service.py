@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from telegram_media_bot.application.ports.download_engine import (
     CancellationCheck,
-    DownloadEngine,
     ProgressSink,
 )
 from telegram_media_bot.application.ports.url_validator import UrlValidator
@@ -38,7 +38,7 @@ from telegram_media_bot.domain.models import (
 class DownloadService:
     def __init__(
         self,
-        engine: DownloadEngine,
+        engine: Any,
         enabled_sources: frozenset[str],
         *,
         url_validator: UrlValidator | None = None,
@@ -77,12 +77,12 @@ class DownloadService:
         if credential is not None and cookie_file is not None:
             raise ValueError("credential and cookie_file cannot both be supplied")
         if credential is not None:
-            info = self._engine.inspect(normalized_url, credential=credential)
+            info = cast(MediaInfo, self._engine.inspect(normalized_url, credential=credential))
         elif cookie_file is not None:
-            info = self._engine.inspect(normalized_url, cookie_file=cookie_file)
+            info = cast(MediaInfo, self._engine.inspect(normalized_url, cookie_file=cookie_file))
         else:
             # Preserve compatibility with simple test/fake engines during the staged migration.
-            info = self._engine.inspect(normalized_url)
+            info = cast(MediaInfo, self._engine.inspect(normalized_url))
         self._validate_source(info.source)
         if self._url_validator is not None:
             self._url_validator.validate(info.webpage_url)
@@ -131,24 +131,33 @@ class DownloadService:
         )
         try:
             if credential is not None:
-                result = self._engine.download(
-                    request,
-                    progress=progress,
-                    is_cancelled=is_cancelled,
-                    credential=credential,
+                result = cast(
+                    DownloadResult,
+                    self._engine.download(
+                        request,
+                        progress=progress,
+                        is_cancelled=is_cancelled,
+                        credential=credential,
+                    ),
                 )
             elif cookie_file is not None:
-                result = self._engine.download(
-                    request,
-                    progress=progress,
-                    is_cancelled=is_cancelled,
-                    cookie_file=cookie_file,
+                result = cast(
+                    DownloadResult,
+                    self._engine.download(
+                        request,
+                        progress=progress,
+                        is_cancelled=is_cancelled,
+                        cookie_file=cookie_file,
+                    ),
                 )
             else:
-                result = self._engine.download(
-                    request,
-                    progress=progress,
-                    is_cancelled=is_cancelled,
+                result = cast(
+                    DownloadResult,
+                    self._engine.download(
+                        request,
+                        progress=progress,
+                        is_cancelled=is_cancelled,
+                    ),
                 )
         except MediaBotError as exc:
             # Once the inspection above resolved the provider, a later failure inside the
