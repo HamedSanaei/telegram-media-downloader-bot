@@ -20,7 +20,9 @@ from telegram_media_bot.infrastructure.security.handoff import Ed25519HandoffSig
 from telegram_media_bot.infrastructure.web_companion.flow import CompanionInstagramConnectionFlow
 
 
-def _flow(tmp_path: Path, *, challenge: bool = False, reject: bool = False):
+def _flow(
+    tmp_path: Path, *, challenge: bool = False, reject: bool = False
+) -> tuple[SqliteInstagramCredentialRepository, CredentialVault, CompanionInstagramConnectionFlow]:
     repo = SqliteInstagramCredentialRepository(tmp_path / "creds.sqlite3")
     repo.initialize()
     ring = VaultKeyRing.from_hex_material(
@@ -51,7 +53,8 @@ async def test_password_connects_and_stores(tmp_path: Path) -> None:
     _repo, vault, flow = _flow(tmp_path)
     result = await flow.step(owner_user_id=7, session_id="s1", input_value="pw")
     assert result.stage is InstagramConnectStage.CONNECTED
-    assert vault.get_view(7).state is InstagramCredentialState.CONNECTED
+    view = vault.get_view(7)
+    assert view is not None and view.state is InstagramCredentialState.CONNECTED
 
 
 async def test_challenge_then_2fa(tmp_path: Path) -> None:
@@ -60,7 +63,8 @@ async def test_challenge_then_2fa(tmp_path: Path) -> None:
     assert prompted.stage is InstagramConnectStage.NEED_2FA
     done = await flow.step(owner_user_id=7, session_id="s1", input_value="123456")
     assert done.stage is InstagramConnectStage.CONNECTED
-    assert vault.get_view(7).state is InstagramCredentialState.CONNECTED
+    view = vault.get_view(7)
+    assert view is not None and view.state is InstagramCredentialState.CONNECTED
 
 
 async def test_denied_stage(tmp_path: Path) -> None:

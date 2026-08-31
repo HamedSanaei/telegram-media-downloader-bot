@@ -22,7 +22,9 @@ from telegram_media_bot.infrastructure.security.handoff import (
 )
 
 
-def _build(tmp_path: Path, *, challenge: bool = False, reject: bool = False):
+def _build(
+    tmp_path: Path, *, challenge: bool = False, reject: bool = False
+) -> tuple[SqliteInstagramCredentialRepository, CredentialVault, InstagramConnectionService, str]:
     repo = SqliteInstagramCredentialRepository(tmp_path / "creds.sqlite3")
     repo.initialize()
     ring = VaultKeyRing.from_hex_material(
@@ -62,7 +64,11 @@ def test_submit_login_stores_encrypted_session(tmp_path: Path) -> None:
 
 def test_password_twofa_never_durable(tmp_path: Path) -> None:
     repo, _vault, service, _private = _build(tmp_path, challenge=True)
-    service.submit_login(7, password="topsecret-pw", twofa_code="123456")  # pragma: allowlist secret
+    service.submit_login(
+        7,
+        password="topsecret-pw",  # pragma: allowlist secret
+        twofa_code="123456",  # pragma: allowlist secret
+    )
     raw = repo.get_credential_for_owner(7)
     assert raw is not None and raw.envelope is not None
     # The envelope is ciphertext; the DB rows never contain the plaintext secret.
@@ -83,7 +89,8 @@ def test_twofa_challenge_then_connected(tmp_path: Path) -> None:
     assert first.stage.value == "need_2fa"
     second = service.submit_login(7, password="pw", twofa_code="654321")  # pragma: allowlist secret
     assert second.connected
-    assert vault.get_view(7).state is InstagramCredentialState.CONNECTED
+    current = vault.get_view(7)
+    assert current is not None and current.state is InstagramCredentialState.CONNECTED
 
 
 def test_deny_result(tmp_path: Path) -> None:
@@ -103,4 +110,5 @@ def test_disconnect(tmp_path: Path) -> None:
     service.submit_login(7, password="pw")  # pragma: allowlist secret
     view = service.disconnect(7)
     assert view.state is InstagramCredentialState.DISCONNECTED
-    assert vault.get_view(7).state is InstagramCredentialState.DISCONNECTED
+    current = vault.get_view(7)
+    assert current is not None and current.state is InstagramCredentialState.DISCONNECTED

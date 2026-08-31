@@ -17,7 +17,9 @@ from telegram_media_bot.infrastructure.persistence.sqlite_instagram_credentials 
 )
 
 
-def _build(tmp_path: Path):
+def _build(
+    tmp_path: Path,
+) -> tuple[SqliteInstagramCredentialRepository, CredentialVault, RestrictedCookieMaterializer]:
     repo = SqliteInstagramCredentialRepository(tmp_path / "creds.sqlite3")
     repo.initialize()
     ring = VaultKeyRing.from_hex_material(

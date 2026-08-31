@@ -32,7 +32,7 @@ def _key() -> str:
 
 def _build(
     tmp_path: Path, *, active_key: str | None = None, retained: dict[str, str] | None = None
-):
+) -> tuple[SqliteInstagramCredentialRepository, CredentialVault, RestrictedCookieMaterializer]:
     repo = SqliteInstagramCredentialRepository(tmp_path / "creds.sqlite3")
     repo.initialize()
     ring = VaultKeyRing.from_hex_material(
@@ -50,7 +50,8 @@ def test_first_connect_and_sanitized_view(tmp_path: Path) -> None:
     view = vault.store_session(7, b"alice-session-cookies")
     assert view.state is InstagramCredentialState.CONNECTED
     assert view.generation == 1
-    assert vault.get_view(7).state is InstagramCredentialState.CONNECTED
+    current = vault.get_view(7)
+    assert current is not None and current.state is InstagramCredentialState.CONNECTED
 
 
 def test_reconnect_increments_generation(tmp_path: Path) -> None:
@@ -64,8 +65,10 @@ def test_cross_user_isolation(tmp_path: Path) -> None:
     _repo, vault, _m = _build(tmp_path)
     vault.store_session(1, b"alice")
     vault.store_session(2, b"bob")
-    assert vault.get_view(1).generation == 1
-    assert vault.get_view(2).generation == 1
+    alice = vault.get_view(1)
+    bob = vault.get_view(2)
+    assert alice is not None and alice.generation == 1
+    assert bob is not None and bob.generation == 1
     # Alice's view never reveals Bob's generation identity.
     assert vault.get_view(12345) is None
 
@@ -74,7 +77,8 @@ def test_disconnect_erases_ciphertext_and_blocks_lease(tmp_path: Path) -> None:
     _repo, vault, materializer = _build(tmp_path)
     vault.store_session(7, b"session")
     vault.disconnect(7)
-    assert vault.get_view(7).state is InstagramCredentialState.DISCONNECTED
+    current = vault.get_view(7)
+    assert current is not None and current.state is InstagramCredentialState.DISCONNECTED
     with pytest.raises(CredentialDisconnectedError):  # noqa: SIM117
         with materializer.open(owner_user_id=7, workspace=tmp_path / "job"):
             pass
@@ -188,6 +192,7 @@ def test_rotation_reencrypts_under_active_key(tmp_path: Path) -> None:
     view = vault2.rotate(7)
     assert view.state is InstagramCredentialState.CONNECTED
     persisted = repo.get_credential_for_owner(7)
+    assert persisted is not None and persisted.envelope is not None
     assert persisted.envelope.key_id == "k2"
     # Decrypt works under the rotated key.
     materializer = RestrictedCookieMaterializer(repo, CredentialCryptor(ring2))

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from telegram_media_bot.application.services.handoff import (
@@ -35,10 +36,12 @@ from telegram_media_bot.infrastructure.web_companion.app import (
 )
 
 
-def _build(tmp_path: Path, **overrides: object):
+def _build(
+    tmp_path: Path, **overrides: object
+) -> tuple[web.Application, CompanionHandoffService, HandoffLinkService]:
     _signer, private = Ed25519HandoffSigner.generate()
     verifier = Ed25519HandoffVerifier.from_private_encoded(
-        private, max_clock_skew_seconds=int(overrides.get("skew", 30))
+        private, max_clock_skew_seconds=int(str(overrides.get("skew", 30)))
     )
     link = HandoffLinkService(
         Ed25519HandoffSigner.from_encoded(private), lifetime=timedelta(minutes=5)
@@ -46,22 +49,21 @@ def _build(tmp_path: Path, **overrides: object):
     repo = SqliteHandoffNonceRepository(tmp_path / "handoff.sqlite3")
     repo.initialize()
     service = CompanionHandoffService(verifier=verifier, nonce_repository=repo)
-    kwargs = {
-        "host": "127.0.0.1",
-        "port": 0,
-        "session_max_seconds": 300,
-        "interactive_flow_max_seconds": 600,
-        "interactive_flow_max_sessions": 10,
-        "body_limit_bytes": int(overrides.get("body_limit", 65536)),
-        "read_timeout_seconds": 5.0,
-        "rate_limit_per_minute": int(overrides.get("rate_limit", 60)),
-        "trusted_proxies": (),
-        "handoff_exchange": service.exchange,
-        "flow": DisabledInstagramConnectionFlow(),
-        "provider_registry": EmptyProviderCallbackRegistry(),
-        "payment_processor": UnavailablePaymentCallbackProcessor(),
-    }
-    app = CompanionWebApp(**kwargs).build()
+    app = CompanionWebApp(
+        host="127.0.0.1",
+        port=0,
+        session_max_seconds=300,
+        interactive_flow_max_seconds=600,
+        interactive_flow_max_sessions=10,
+        body_limit_bytes=int(str(overrides.get("body_limit", 65536))),
+        read_timeout_seconds=5.0,
+        rate_limit_per_minute=int(str(overrides.get("rate_limit", 60))),
+        trusted_proxies=(),
+        handoff_exchange=service.exchange,
+        flow=DisabledInstagramConnectionFlow(),
+        provider_registry=EmptyProviderCallbackRegistry(),
+        payment_processor=UnavailablePaymentCallbackProcessor(),
+    ).build()
     return app, service, link
 
 
@@ -187,7 +189,9 @@ async def test_verified_payment_callback_cannot_confirm_entitlement(tmp_path: Pa
     """A registered provider verifier still cannot confirm anything without the billing service."""
 
     class _Processor:
-        async def process(self, *, provider_id: str, provider_payload: bytes):
+        async def process(
+            self, *, provider_id: str, provider_payload: bytes
+        ) -> PaymentCallbackOutcome:
             del provider_id, provider_payload
             return PaymentCallbackOutcome.NOT_AVAILABLE
 
@@ -197,7 +201,7 @@ async def test_verified_payment_callback_cannot_confirm_entitlement(tmp_path: Pa
             return True
 
     class _Registry:
-        def verifier_for(self, provider_id: str):
+        def verifier_for(self, provider_id: str) -> _V:
             del provider_id
             return _V()
 

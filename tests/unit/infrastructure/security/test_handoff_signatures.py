@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from telegram_media_bot.domain.web_companion import (
+    HandoffClaim,
     HandoffPurpose,
     HandoffVerificationOutcome,
 )
@@ -17,14 +18,16 @@ from telegram_media_bot.infrastructure.security.handoff import (
 )
 
 
-def _claim(owner: int = 42, purpose: HandoffPurpose = HandoffPurpose.INSTAGRAM_CONNECT):
+def _claim(
+    owner: int = 42, purpose: HandoffPurpose = HandoffPurpose.INSTAGRAM_CONNECT
+) -> tuple[type[Ed25519HandoffSigner], HandoffPurpose, int, datetime]:
     issued = datetime.now(UTC)
     return Ed25519HandoffSigner, purpose, owner, issued
 
 
-def _sign(signer: Ed25519HandoffSigner, owner: int = 42, *, offset: timedelta = timedelta()):
-    from telegram_media_bot.domain.web_companion import HandoffClaim
-
+def _sign(
+    signer: Ed25519HandoffSigner, owner: int = 42, *, offset: timedelta = timedelta()
+) -> tuple[str, HandoffClaim]:
     issued = datetime.now(UTC)
     claim = HandoffClaim(
         purpose=HandoffPurpose.INSTAGRAM_CONNECT,
