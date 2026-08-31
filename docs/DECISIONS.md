@@ -590,7 +590,7 @@ payment gateway is implemented.
 
 ## ADR-036: Typed audit events use a durable, isolated logger outbox
 
-**Status:** proposed
+**Status:** accepted
 
 The Operator Logger is distinct from stdout and structured application logs. Application services
 emit project-owned `AuditEvent` values with one of `ERROR`, `COOKIE_HEALTH`, `USER_SUBMISSION`, or
@@ -609,9 +609,9 @@ job outcome, cancellation, cleanup, or delivery-uncertainty state.
 
 ## ADR-037: Logger destinations reconcile configuration and runtime ownership
 
-**Status:** proposed
+**Status:** accepted
 
-The future strict `telegram.logger.enabled/channels` configuration supplies numeric `-100...`
+The strict `telegram.logger.enabled/channels` configuration supplies numeric `-100...`
 channel IDs, while authorized administrators may add durable runtime destinations. The effective
 set is a deduplicated union keyed by `chat_id`. Config-managed rows remain configuration-owned and
 cannot be falsely removed through the Telegram UI; they disappear only after configuration reload or
@@ -625,7 +625,7 @@ current `telegram.admin_ids`.
 
 ## ADR-038: Original submissions are private audit copies with explicit indefinite retention
 
-**Status:** proposed
+**Status:** accepted
 
 `USER_SUBMISSION_RECEIVED` is emitted only after a real download submission is durably accepted.
 URL text, photo, video, document, audio, animation, captions, supported attachments, and albums are

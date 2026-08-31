@@ -28,9 +28,9 @@ Identify the relevant decision here, then read its complete text in `docs/DECISI
 | planned per-user Instagram credential vault | proposed ADR-033 |
 | public/private Instagram credential policy | ADR-034 |
 | planned account-link/payment web boundary | proposed ADR-035 |
-| planned typed audit events and durable logger outbox | proposed ADR-036 |
-| planned config/runtime logger destination ownership | proposed ADR-037 |
-| planned Telegram source mirroring, privacy, and retention | proposed ADR-038 |
+| typed audit events and durable logger outbox | ADR-036 (accepted) |
+| config/runtime logger destination ownership | ADR-037 (accepted) |
+| Telegram source mirroring, privacy, and retention | ADR-038 (accepted) |
 | CI validation tiers and fail-conservative gating | ADR-039 (accepted) |
 
 Supersession matters: ADR-021 supersedes the codec restriction in ADR-020. Status and task history

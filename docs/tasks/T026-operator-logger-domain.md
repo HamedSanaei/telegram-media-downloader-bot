@@ -1,10 +1,18 @@
 # T026 - Operator Logger domain and event-routing foundation
 
-**Status:** planned
+**Status:** complete
+
+## Implementation record
+
+Implemented in `domain/audit.py`, `application/ports/audit.py`, `audit_service.py`, and
+`audit_sanitizer.py`. Events use typed categories/severity/UTC identities and approved numeric
+Telegram user IDs. Central sanitization fails closed on credentials, headers, payment/session
+material, paths, and raw tracebacks. Business emitters know no destination IDs. Unit regression
+tests cover typed metadata and the complete secret-exclusion boundary.
 
 ## Goal
 
-Define the project-owned audit vocabulary and routing policy for a future Operator Logger and
+Define the project-owned audit vocabulary and routing policy for the Operator Logger and
 private Telegram audit channels. Establish one typed event contract instead of scattered alert
 strings or direct administrator fan-out.
 
@@ -22,7 +30,7 @@ correlatable boundary that does not make the user workflow depend on Telegram lo
 
 ## Scope
 
-- Add a planned domain model for `AuditEvent`, `AuditCategory` (`ERROR`, `COOKIE_HEALTH`,
+- Add the domain model for `AuditEvent`, `AuditCategory` (`ERROR`, `COOKIE_HEALTH`,
   `USER_SUBMISSION`, `SYSTEM`), severity, event identity, UTC timestamp, correlation/request/update
   ID, optional job ID, numeric Telegram user ID, content type, provider classification, safe
   message, and source-message reference.
@@ -49,14 +57,14 @@ health metrics are the only fallback when no logger destination is usable.
 
 ## Persistence
 
-The eventual event/outbox design must preserve the event ID, category, safe metadata, source
+The event/outbox design preserves the event ID, category, safe metadata, source
 reference, and delivery correlation without storing credentials, raw exceptions, or downloaded
 media bytes. Retention is explicitly indefinite for the first implementation; any future manual
 purge must be bounded and idempotent.
 
 ## Configuration
 
-The future strict `telegram.logger` section supplies enablement and configured destinations. This
+The strict `telegram.logger` section supplies enablement and configured destinations. This
 task owns the typed defaults and validation contract but does not change `Settings` yet.
 
 ## Security and privacy
@@ -98,7 +106,7 @@ how operators correlate a logger message with a job, and how sanitization failur
 
 ## Acceptance gates
 
-- Every planned event has one typed category, severity, correlation identity, and redacted payload.
+- Every event has one typed category, severity, correlation identity, and redacted payload.
 - No business service branches on destination names or Telegram administrator IDs.
 - No logger destination is treated as an implicit administrator fallback.
 
