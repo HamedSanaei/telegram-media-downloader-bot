@@ -88,6 +88,7 @@ e8bc93a929c5975441ac991cc5de53f324108e410a595350881d82bcabde9655  docs/tasks/T02
 99b99a99db1a9a144e1a5ff274ae188ee8af393734ae1573646066bb8bd577d6  docs/tasks/T027-logger-destinations-outbox.md
 6421a1454af984a774d3382f36bad3dee73bd64d389cba9ac69fab596677d6d2  docs/tasks/T028-admin-logger-channel-ux.md
 da9aca8c481da70f4a7192688bb9edc7540f315940c18d1060ef543d96e92746  docs/tasks/T029-error-cookie-migration.md
+430b42ef3ae3990c7d1a96353035819b678b540d6a0cae9aff692705c91e4d38  docs/tasks/T030-accepted-submission-audit-mirror.md
 73bc46edecd32509625139358db6663121ad6ef9c42cec7aa6e9a4e82740f6c6  docs/tasks/T030-accepted-submission-mirror.md
 e7c5501dcd45a07616b01ef05424734109e11b1e6a4dc6936a78bced0a4b6999  docs/tasks/T031-logger-privacy-retention.md
 2d859b213ebbf7f5533104561c14e7b7c320c0053c95ad6175c2b3cad4964a2c  docs/tasks/T032-logger-rollout-operations.md
