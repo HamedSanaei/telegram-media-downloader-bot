@@ -16,9 +16,16 @@ from telegram_media_bot.domain.audit import (
 class AcceptedSubmissionAuditService:
     """Create one durable mirror intent only after application acceptance."""
 
-    def __init__(self, audit: AuditService, *, enabled: bool) -> None:
+    def __init__(
+        self,
+        audit: AuditService,
+        *,
+        enabled: bool,
+        privacy_notice_version: str | None = None,
+    ) -> None:
         self._audit = audit
         self._enabled = enabled
+        self._privacy_notice_version = privacy_notice_version
 
     def record_accepted(
         self,
@@ -31,7 +38,16 @@ class AcceptedSubmissionAuditService:
         provider: str | None,
         occurred_at: datetime,
     ) -> int:
-        if not self._enabled or not self._audit.has_usable_destination():
+        if (
+            not self._enabled
+            or not self._audit.has_usable_destination()
+            or (
+                self._privacy_notice_version is not None
+                and not self._audit.has_privacy_acknowledgement(
+                    telegram_user_id, self._privacy_notice_version
+                )
+            )
+        ):
             return 0
         identity = _submission_identity(source, update_id)
         return self._audit.emit(

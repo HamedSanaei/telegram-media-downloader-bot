@@ -25,7 +25,8 @@ _SECRET_ASSIGNMENT = re.compile(
     r"password|2fa|checkpoint|cookie|cookies|session|vault[_ -]?key|"
     r"payment[_ -]?(?:secret|signature|callback[_ -]?signature)|"
     r"callback[_ -]?signature|provider[_ -]?transaction[_ -]?reference|"
-    r"provider[_ -]?secret|proxy[_ -]?(?:password|credentials?)|"
+    r"provider[_ -]?secret|gateway[_ -]?secret|signed[_ -]?login[_ -]?token|"
+    r"card[_ -]?(?:number|secret)|proxy[_ -]?(?:password|credentials?)|"
     r"authorization"
     r")\s*[:=]\s*([^\s,;]+)"
 )

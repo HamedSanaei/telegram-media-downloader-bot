@@ -78,6 +78,10 @@ def test_event_requires_utc_and_bounded_safe_classifications() -> None:
         ("payment_secret=pay-secret", "pay-secret"),
         ("payment_callback_signature=sig-value", "sig-value"),
         ("provider_transaction_reference=txn-123", "txn-123"),
+        ("gateway_secret=gateway-value", "gateway-value"),
+        ("signed_login_token=login-value", "login-value"),
+        ("card_number=4111111111111111", "4111111111111111"),
+        ("proxy_password=proxy-pass", "proxy-pass"),
         ("proxy_credentials=user:pass", "user:pass"),
         ("https://proxy-user:proxy-pass@proxy.example", "proxy-pass"),  # pragma: allowlist secret
     ],
@@ -115,3 +119,16 @@ def test_event_serialization_is_stable_and_round_trips() -> None:
     second = serialize_event(event)
     assert first == second
     assert deserialize_event(first) == event
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("correlation_id", "Authorization: Bearer secret"),
+        ("job_id", "provider_transaction_reference=secret"),
+        ("event_id", "Traceback (most recent call last)"),
+    ],
+)
+def test_secret_bearing_metadata_identifiers_are_rejected(field: str, value: str) -> None:
+    with pytest.raises(ValueError, match="safe identifier"):
+        _event(**{field: value})

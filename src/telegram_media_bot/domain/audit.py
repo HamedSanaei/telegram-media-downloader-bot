@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 
 _SAFE_CLASSIFICATION = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,191}$")
 
 
 class AuditCategory(StrEnum):
@@ -80,6 +81,8 @@ class TelegramSourceReference:
             raise ValueError("source message IDs must be positive")
         if len(set(self.message_ids)) != len(self.message_ids):
             raise ValueError("source message IDs must be unique")
+        if self.media_group_id is not None and not _SAFE_IDENTIFIER.fullmatch(self.media_group_id):
+            raise ValueError("media_group_id must be a bounded safe identifier")
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +104,13 @@ class AuditEvent:
     def __post_init__(self) -> None:
         if not self.event_id or not self.correlation_id:
             raise ValueError("audit identity and correlation are required")
+        for label, value in (
+            ("event_id", self.event_id),
+            ("correlation_id", self.correlation_id),
+            ("job_id", self.job_id),
+        ):
+            if value is not None and not _SAFE_IDENTIFIER.fullmatch(value):
+                raise ValueError(f"{label} must be a bounded safe identifier")
         _require_utc(self.occurred_at, "audit occurred_at")
         if not self.message.strip() or len(self.message) > 2000:
             raise ValueError("audit message must be 1..2000 characters")

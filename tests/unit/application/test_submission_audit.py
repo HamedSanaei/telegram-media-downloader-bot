@@ -76,6 +76,23 @@ def test_no_effective_destination_means_no_submission_event(tmp_path: Path) -> N
         assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone() == (0,)
 
 
+def test_versioned_privacy_acknowledgement_is_required_before_mirror(tmp_path: Path) -> None:
+    repository = SqliteAuditRepository(tmp_path / "state.sqlite3")
+    repository.initialize()
+    repository.reconcile_config((-1001234567890,))
+    audit = AuditService(repository, enabled=True)
+    mirror = AcceptedSubmissionAuditService(
+        audit,
+        enabled=True,
+        privacy_notice_version="logger-v1",
+    )
+    source = TelegramSourceReference(4242, (55,))
+
+    assert _record(mirror, source) == 0
+    assert audit.acknowledge_privacy(4242, "logger-v1")
+    assert _record(mirror, source) == 1
+
+
 def test_album_extension_preserves_order_and_one_logical_event(tmp_path: Path) -> None:
     path = tmp_path / "state.sqlite3"
     repository = SqliteAuditRepository(path)

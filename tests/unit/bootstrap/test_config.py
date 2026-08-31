@@ -27,6 +27,8 @@ def test_example_configuration_is_valid() -> None:
     assert not settings.telegram.logger.enabled
     assert not settings.telegram.logger.alerts_enabled
     assert not settings.telegram.logger.submission_mirror_enabled
+    assert not settings.telegram.logger.operator_privacy_attested
+    assert settings.telegram.logger.privacy_notice_version == "logger-v1"
 
 
 def test_legacy_configuration_defaults_logger_fully_off() -> None:
@@ -46,6 +48,33 @@ def test_logger_channel_does_not_implicitly_enable_mirroring() -> None:
     settings = Settings.model_validate(raw)
 
     assert not settings.telegram.logger.submission_mirror_enabled
+
+
+def test_logger_flags_and_privacy_attestation_are_independent() -> None:
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw["telegram"]["logger"].update(
+        {
+            "enabled": True,
+            "alerts_enabled": True,
+            "submission_mirror_enabled": False,
+            "operator_privacy_attested": True,
+        }
+    )
+
+    settings = Settings.model_validate(raw)
+
+    assert settings.telegram.logger.enabled
+    assert settings.telegram.logger.alerts_enabled
+    assert not settings.telegram.logger.submission_mirror_enabled
+    assert settings.telegram.logger.operator_privacy_attested
+
+
+def test_privacy_notice_version_is_bounded_safe_identifier() -> None:
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw["telegram"]["logger"]["privacy_notice_version"] = "version with spaces"
+
+    with pytest.raises(ValidationError, match="safe identifier"):
+        Settings.model_validate(raw)
 
 
 @pytest.mark.parametrize("chat_id", [-123, 1001234567890])

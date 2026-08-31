@@ -116,10 +116,11 @@ cannot be falsely removed through the UI. T029 is complete: terminal operational
 Cookie Health transition/reminder alerts now route as typed `ERROR`/`COOKIE_HEALTH` audit events
 into the durable outbox instead of being broadcast to every `telegram.admin_ids`; with no logger
 or destinations the worker only records structured logs, and logger storage faults can never
-change a user job outcome. T030 accepted-submission mirroring is complete; T031 privacy/retention
-controls and T032 E2E rollout remain planned. Mirroring defaults off and will require the exact Persian privacy
-notice acknowledgement. Retention is indefinite with no automatic Telegram purge. ADR-036 through
-ADR-038 are accepted.
+change a user job outcome. T030 accepted-submission mirroring and T031 privacy/retention controls
+are complete; T032 E2E rollout remains planned. Mirroring defaults off and requires explicit
+operator attestation, the exact Persian privacy notice, a versioned durable acknowledgement from
+each submitting user, and a usable private destination. Retention is indefinite with no automatic
+Telegram purge; media cleanup remains unchanged. ADR-036 through ADR-038 are accepted.
 
 T033 implements the fast-feedback CI tiering: a repository-owned deterministic
 changed-path classifier (`scripts/ci_change_policy.py`), a fast `quality` lane for ordinary

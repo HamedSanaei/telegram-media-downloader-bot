@@ -73,7 +73,7 @@ Telethon/MTProto staging-channel, Premium upload queue, or copy-delivery archite
 - T028 Administrator logger-channel management UX — complete; depends on T026/T027
 - T029 Operational error and Cookie Health notification migration — complete; depends on T026-T028
 - T030 Durable accepted-submission audit mirror — complete; depends on T026/T027
-- T031 Privacy, retention, access, and secret-exclusion controls — planned; depends on T026-T030
+- T031 Privacy, retention, access, and secret-exclusion controls — complete; depends on T026-T030
 - T032 End-to-end logger rollout, migration, and operations — planned; depends on T026-T031
 
 Dependency graph:
@@ -95,8 +95,10 @@ logger-channel management UX (add/list/test/enable/disable/remove with a typed v
 reauthorized callbacks). T029 routes terminal operational failures and Cookie Health
 transitions/reminders as typed logger events with no admin-DM fallback. T030 now emits replay-safe
 accepted-submission events after durable job creation, resolves bounded album source identities,
-and supplies native `copyMessage`/`copyMessages` delivery. Delivery draining plus privacy/rollout
-operations remain planned in T031-T032. Alerts and submission
+and supplies native `copyMessage`/`copyMessages` delivery. T031 adds the exact Persian notice,
+versioned durable user acknowledgement, explicit operator attestation, indefinite retention, and
+the permanent secret-exclusion boundary. Delivery draining and rollout operations remain planned
+in T032. Alerts and submission
 mirroring will be separately enabled; mirroring also requires the operator privacy attestation and
 each user's acknowledgement. Audit content has indefinite retention and no automatic Telegram
 deletion. ADR-036 through ADR-038 are accepted.

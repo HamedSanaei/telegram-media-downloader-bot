@@ -1,6 +1,6 @@
 # T031 - Privacy, retention, access, and secret-exclusion controls
 
-**Status:** planned
+**Status:** complete
 
 ## Goal
 
@@ -102,3 +102,23 @@ response procedure, and credential/payment redaction review before each future f
 
 Privacy notice, retention, access control, data classification, secret exclusions, future-feature
 review, tests, and operational ownership are explicit and implementation-ready.
+
+## Implementation record
+
+- Accepted-submission mirroring requires logger and mirror enablement, explicit operator privacy
+  attestation, at least one usable private destination, and the submitting user's durable
+  acknowledgement of the current `privacy_notice_version`.
+- The exact Persian notice appears before durable job acceptance. Its callback stores only
+  `(telegram_user_id, policy_version, acknowledged_at)` in additive SQLite state. Acknowledgement
+  survives restart; changing the configured version requires acknowledgement again.
+- Notice/control interactions never create audit events. Notice-store, sanitizer, and audit faults
+  close only the mirror path and cannot change ordinary download acceptance.
+- Audit identifiers are bounded safe values. The sanitizer rejects raw tracebacks, sensitive paths,
+  cookie rows, and non-string payloads, and redacts authorization, bot-token, account/session,
+  signed-login, proxy, card/payment, and gateway-secret material before durable persistence.
+- Audit copies and safe metadata remain indefinitely retained. There is no automatic Telegram or
+  audit-state purge; media-workspace zero-retention cleanup is unchanged. A future operator purge
+  remains a separately designed, bounded, idempotent operation.
+- Destination probing continues to require a private channel, bot membership, and posting access.
+  Operators own minimal channel membership/access review; destination IDs never reach ordinary
+  users or metric labels.

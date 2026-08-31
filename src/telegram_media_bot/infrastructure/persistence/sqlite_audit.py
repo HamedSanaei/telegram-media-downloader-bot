@@ -101,6 +101,12 @@ class SqliteAuditRepository:
                     PRIMARY KEY (source_chat_id, media_group_id),
                     FOREIGN KEY (event_id) REFERENCES audit_events(event_id)
                 );
+                CREATE TABLE IF NOT EXISTS logger_privacy_acknowledgements (
+                    telegram_user_id INTEGER NOT NULL,
+                    policy_version TEXT NOT NULL,
+                    acknowledged_at TEXT NOT NULL,
+                    PRIMARY KEY (telegram_user_id, policy_version)
+                );
                 """
             )
 
@@ -320,6 +326,24 @@ class SqliteAuditRepository:
             )
             connection.execute("COMMIT")
         return len(message_ids)
+
+    def has_privacy_acknowledgement(self, user_id: int, policy_version: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM logger_privacy_acknowledgements
+                WHERE telegram_user_id=? AND policy_version=?""",
+                (user_id, policy_version),
+            ).fetchone()
+        return row is not None
+
+    def acknowledge_privacy(self, user_id: int, policy_version: str) -> bool:
+        with self._connect() as connection:
+            created = connection.execute(
+                """INSERT OR IGNORE INTO logger_privacy_acknowledgements
+                (telegram_user_id,policy_version,acknowledged_at) VALUES (?,?,?)""",
+                (user_id, policy_version, _now()),
+            ).rowcount
+        return bool(created)
 
     def recover_expired_leases(self) -> tuple[int, int]:
         now = _now()

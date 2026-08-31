@@ -120,6 +120,18 @@ class TelegramLoggerSection(StrictModel):
     channels: tuple[int, ...] = ()
     alerts_enabled: bool = False
     submission_mirror_enabled: bool = False
+    operator_privacy_attested: bool = False
+    privacy_notice_version: str = Field(default="logger-v1", min_length=1, max_length=32)
+
+    @field_validator("privacy_notice_version")
+    @classmethod
+    def validate_privacy_notice_version(cls, value: str) -> str:
+        if not all(
+            character.isascii() and (character.isalnum() or character in "_.:-")
+            for character in value
+        ):
+            raise ValueError("telegram.logger.privacy_notice_version must be a safe identifier")
+        return value
 
     @model_validator(mode="after")
     def validate_logger(self) -> TelegramLoggerSection:

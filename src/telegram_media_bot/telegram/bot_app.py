@@ -15,6 +15,7 @@ from telegram_media_bot.application.services.cookie_health_service import Cookie
 from telegram_media_bot.application.services.durable_update_inbox import DurableUpdateInbox
 from telegram_media_bot.application.services.effect_ledger import EffectLedgerService
 from telegram_media_bot.application.services.job_service import JobService
+from telegram_media_bot.application.services.logger_privacy import LoggerPrivacyService
 from telegram_media_bot.application.services.submission_audit import (
     AcceptedSubmissionAuditService,
 )
@@ -91,12 +92,20 @@ async def run_bot(settings: Settings) -> None:
             audit_store, TelegramAuditDestinationVerifier(bot)
         )
         audit = AuditService(audit_store, enabled=settings.telegram.logger.enabled)
+        mirror_enabled = (
+            settings.telegram.logger.enabled
+            and settings.telegram.logger.submission_mirror_enabled
+            and settings.telegram.logger.operator_privacy_attested
+        )
         submission_audit = AcceptedSubmissionAuditService(
             audit,
-            enabled=(
-                settings.telegram.logger.enabled
-                and settings.telegram.logger.submission_mirror_enabled
-            ),
+            enabled=mirror_enabled,
+            privacy_notice_version=settings.telegram.logger.privacy_notice_version,
+        )
+        logger_privacy = LoggerPrivacyService(
+            audit,
+            enabled=mirror_enabled,
+            policy_version=settings.telegram.logger.privacy_notice_version,
         )
         rate_limiter = RedisRateLimiter.create(settings.redis.url)
         if settings.telegram.required_channels.enabled:
@@ -166,6 +175,7 @@ async def run_bot(settings: Settings) -> None:
                 audit_admin=audit_admin,
                 submission_audit=submission_audit,
                 source_resolver=inbox_store,
+                logger_privacy=logger_privacy,
             )
         )
         inbox = DurableUpdateInbox(inbox_store)

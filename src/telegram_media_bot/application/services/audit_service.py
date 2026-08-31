@@ -32,6 +32,12 @@ class AuditService:
             for destination in self._repository.list_destinations()
         )
 
+    def has_privacy_acknowledgement(self, user_id: int, policy_version: str) -> bool:
+        return self._repository.has_privacy_acknowledgement(user_id, policy_version)
+
+    def acknowledge_privacy(self, user_id: int, policy_version: str) -> bool:
+        return self._repository.acknowledge_privacy(user_id, policy_version)
+
     def emit(
         self,
         *,

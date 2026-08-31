@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 import telegram_media_bot.telegram.handlers as handlers_module
+from telegram_media_bot.application.services.logger_privacy import LOGGER_PRIVACY_NOTICE_FA
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.audit import TelegramSourceReference
 from telegram_media_bot.domain.models import (
@@ -155,6 +156,32 @@ class FakeSubmissionAudit:
     def observe_media_group_member(self, source: object) -> int:
         self.observed.append(source)
         return 0
+
+
+class FakeLoggerPrivacy:
+    policy_version = "logger-v1"
+
+    def __init__(self) -> None:
+        self.acknowledged = False
+
+    def requires_acknowledgement(self, _user_id: int) -> bool:
+        return not self.acknowledged
+
+    def acknowledge(self, _user_id: int) -> bool:
+        created = not self.acknowledged
+        self.acknowledged = True
+        return created
+
+
+class FakeCallback:
+    def __init__(self, user_id: int, data: str) -> None:
+        self.from_user = SimpleNamespace(id=user_id)
+        self.data = data
+        self.message = None
+        self.answers: list[tuple[str | None, bool]] = []
+
+    async def answer(self, text: str | None = None, *, show_alert: bool = False) -> None:
+        self.answers.append((text, show_alert))
 
 
 class FakeSourceResolver:
@@ -327,6 +354,44 @@ async def test_invalid_and_start_control_traffic_are_never_mirrored(
 
     assert mirror.accepted == []
     assert jobs.calls == []
+
+
+async def test_versioned_privacy_notice_precedes_acceptance_and_ack_is_not_mirrored(
+    role_settings: Settings,
+) -> None:
+    jobs = FakeJobs()
+    queue = FakeQueue()
+    mirror = FakeSubmissionAudit()
+    privacy = FakeLoggerPrivacy()
+    router = build_router(
+        settings=role_settings,
+        queue=queue,  # type: ignore[arg-type]
+        repository=FakeRepository(),  # type: ignore[arg-type]
+        access_policy=FakeAccessPolicy(),  # type: ignore[arg-type]
+        jobs=jobs,  # type: ignore[arg-type]
+        users=FakeUsers(),  # type: ignore[arg-type]
+        submission_audit=mirror,  # type: ignore[arg-type]
+        logger_privacy=privacy,  # type: ignore[arg-type]
+    )
+    first = FakeMessage(20, "https://example.com/media")
+
+    await _handler(router, "enqueue_url")(first, durable_update_id=80)
+
+    assert jobs.calls == []
+    assert mirror.accepted == []
+    assert first.answers[0][0] == LOGGER_PRIVACY_NOTICE_FA
+    markup = cast(Any, first.answers[0][1])
+    assert markup.inline_keyboard[0][0].callback_data == "privacy:ack:logger-v1"
+
+    callback = FakeCallback(20, "privacy:ack:logger-v1")
+    await _handler(router, "acknowledge_logger_privacy")(callback)
+    assert callback.answers[-1] == ("تأیید ثبت شد", False)
+    assert mirror.accepted == []
+
+    second = FakeMessage(20, "https://example.com/media", message_id=101)
+    await _handler(router, "enqueue_url")(second, durable_update_id=81)
+    assert len(jobs.calls) == 1
+    assert len(mirror.accepted) == 1
 
 
 async def test_existing_inspection_is_reconciled_without_new_pending_status(

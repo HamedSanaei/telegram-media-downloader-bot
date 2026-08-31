@@ -558,8 +558,8 @@ Telethon/MTProto session, staging-channel, Premium queue, or copy-message delive
 
 ## Milestone 5 architecture: Operator Logger and private audit channels
 
-**Implementation status:** T026-T030 implemented and feature-gated off by default; T031-T032
-planned. Repository initialization and config-destination reconciliation run at bot and worker
+**Implementation status:** T026-T031 implemented and feature-gated off by default; T032 planned.
+Repository initialization and config-destination reconciliation run at bot and worker
 startup; accepted submissions create durable native-copy intents, while production delivery
 draining is completed by T032.
 
@@ -626,8 +626,11 @@ numeric user IDs.
 Accepted download submissions are recorded only after durable acceptance (implemented T030). Native
 Telegram copy operations preserve original media, captions, and album ordering; media groups receive
 one logical submission identity. Control interactions are excluded. The original message is not
-edited or deleted. A privacy notice will gate activation, and audit copies/safe metadata are
-retained indefinitely by the first implementation; no automatic Telegram deletion is introduced.
+edited or deleted. Before acceptance, the exact Persian privacy notice gates each user's current
+versioned acknowledgement. Mirroring additionally requires explicit operator privacy attestation
+and a usable private destination. Acknowledgements survive restarts; changing the configured notice
+version requires acknowledgement again. Audit copies/safe metadata are retained indefinitely; no
+automatic Telegram deletion is introduced and media-workspace cleanup remains independent.
 
 ### Reliability and rollout
 
