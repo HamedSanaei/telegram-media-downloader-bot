@@ -104,5 +104,4 @@ Implemented in the working tree: a deterministic, unit-testable changed-path cla
 (dependency/package/plugin-sdk/docker-runtime/updater-integration/installer-linux/installer-windows),
 stable `change-detection` / `final-ci-gate` checks, fail-conservative fallback for any unclassifiable
 or unknown change, safe same-ref development concurrency, and preserved tag-only publication
-safety. T020-T025 runtime policy/readiness work is implemented locally; T026-T032 remain
-documentation-only logger planning and no logger runtime activation has occurred.
+safety. None of T015-T032 runtime work is started.
