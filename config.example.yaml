@@ -227,6 +227,8 @@ web_companion:
   enabled: false
   host: 127.0.0.1
   port: 8090
+  # Public HTTPS base URL embedded in generated Instagram connection links (https only).
+  public_base_url: null
   session_max_seconds: 300
   interactive_flow_max_seconds: 600
   interactive_flow_max_sessions: 100

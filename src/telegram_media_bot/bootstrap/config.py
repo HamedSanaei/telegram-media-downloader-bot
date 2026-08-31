@@ -553,6 +553,8 @@ class WebCompanionSection(StrictModel):
     enabled: bool = False
     host: str = "127.0.0.1"
     port: int = Field(default=8090, ge=1, le=65535)
+    #: Optional public HTTPS base URL the bot embeds in generated connection links.
+    public_base_url: str | None = None
     #: Browser session lifetime for one completed connection exchange.
     session_max_seconds: int = Field(default=300, ge=60, le=3600)
     #: Bounded in-memory interactive login/2FA flow lifetime.
@@ -573,6 +575,16 @@ class WebCompanionSection(StrictModel):
     handoff_verification_key: SecretStr | None = None
     #: Encoded Ed25519 private key the bot uses to sign handoff claims (bot surface only).
     handoff_signing_key: SecretStr | None = None
+
+    @field_validator("public_base_url")
+    @classmethod
+    def validate_public_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise ValueError("web_companion.public_base_url must be an absolute HTTPS URL")
+        return value.rstrip("/")
 
     @field_validator("trusted_proxies")
     @classmethod

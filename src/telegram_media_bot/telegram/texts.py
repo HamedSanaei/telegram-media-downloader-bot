@@ -54,3 +54,18 @@ CANCELLED_TEXT = "درخواست لغو شد و فایل‌های موقت پا�
 CANNOT_CANCEL_TEXT = "این کار پیدا نشد یا دیگر قابل لغو نیست."
 PROCESSING_TEXT = "در حال دریافت… {percent}٪"
 RESUME_NOTICE_TEXT = "مشکل دسترسی این درخواست برطرف شد و دانلود دوباره در حال انجام است."
+
+# Instagram account connection (T018). Persian, secret-free, never reveals usernames/cookies.
+INSTAGRAM_NOT_AVAILABLE_TEXT = (
+    "اتصال حساب اینستاگرام در این نصب فعال نیست. با مدیر ربات تماس بگیرید."
+)
+INSTAGRAM_CONNECT_PROMPT_TEXT = (
+    "برای اتصال حساب اینستاگرام، روی لینک زیر بزنید و ورود را در صفحهٔ وب انجام دهید. "
+    "رمز عبور و کد دومرحله‌ای هرگز در چت تلگرام درخواست یا ذخیره نمی‌شوند."
+)
+INSTAGRAM_DISCONNECTED_TEXT = (
+    "حساب اینستاگرام شما از این ربات جدا شد. برای استفادهٔ مجدد می‌توانید دوباره متصل شوید."
+)
+INSTAGRAM_CONNECT_STATUS_FREE_NOTICE = (
+    "اتصال حساب برای همهٔ کاربران (رایگان و VIP) ممکن است، اما خودِ اتصال به‌تنهایی دسترسی VIP نمی‌دهد."
+)

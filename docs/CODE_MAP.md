@@ -103,7 +103,7 @@
   terminal-failure administrator alerts, and cleanup;
 - `telegram/handlers.py`: owner validation, admin controls, and safe enqueue ordering.
 
-## Milestone 4 ownership (T014/T015/T016/T017 implemented; the rest still planned)
+## Milestone 4 ownership (T014/T015/T016/T017/T018 implemented; the rest still planned)
 
 T014's entitlement foundation is implemented (`domain/subscriptions.py`,
 `application/services/entitlements.py`, `application/ports/subscriptions.py`,
@@ -132,6 +132,7 @@ T017-T025 and do not exist yet.
 | `bootstrap/companion.py` | Reduced least-privilege `CompanionSettings` (no bot token/signer) and deterministic `build_companion_app` (implemented) |
 | `application/ports/instagram_credentials.py` | Owner-bound encrypted-credential repository, key store/cryptor, lease, and ephemeral materialization contracts (implemented) |
 | `application/services/billing.py` | Order lifecycle, verified-result confirmation, idempotent atomic refund/reversal, and reconciliation queries without provider-name branching (implemented) |
+| `application/services/instagram_connection.py` | Mints handoff links, runs the transient login, stores success in the vault, and exposes sanitized status/disconnect (implemented) |
 | `application/services/credential_resolution.py` | Credential policy matrix, public-only fallback eligibility, private user-only enforcement, and one-switch accounting |
 | `application/services/credential_vault.py` | `CredentialVault` connect/re-connect (generation++), expiry/challenge markers, disconnect/revoke erase, and admin key-rotation re-encryption (implemented) |
 | `infrastructure/persistence/` additions | Additive SQLite repositories for payments (`sqlite_payments.py`), single-use handoff nonces (`sqlite_handoff.py`), and encrypted credentials/events/leases (`sqlite_instagram_credentials.py`), all implemented |
@@ -139,7 +140,7 @@ T017-T025 and do not exist yet.
 | `infrastructure/payment/<provider>/` | First provider adapter selected by composition; intentionally blocked in T024 until a provider is chosen |
 | companion web package/process | Separate least-privilege `aiohttp.web` account-link and payment-callback boundary without the Telegram bot token (implemented, disabled by default) |
 | `infrastructure/ytdlp/`, `infrastructure/gallerydl/`, and media router changes | Consume explicit ephemeral credential context while remaining unaware of VIP/subscription policy |
-| `telegram/` additions | `/vip`, account-link, entitlement-gating, expiry/renewal, reconnect, disconnect, and audited administrator UX |
+| `telegram/` additions | `/vip`, entitlement-gating, expiry/renewal, audited administrator UX (T023); `/instagram`, `instagram_ux.py`, Persian connection prompts/status/disconnect (implemented) |
 | `workers/` and queue/persistence changes | Carry safe entitlement/credential snapshots, retain bounded fallback state, lease credentials, and clean plaintext on every terminal/recovery path |
 
 ## Proposed Milestone 5 ownership (not implemented)

@@ -26,6 +26,7 @@ from telegram_media_bot.application.ports.user_repository import UserRepository
 from telegram_media_bot.application.services.access_policy import AccessPolicyService
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.effect_ledger import EffectLedgerService
+from telegram_media_bot.application.services.instagram_connection import InstagramConnectionService
 from telegram_media_bot.application.services.instagram_delivery import (
     instagram_default_bundle_option,
     requires_instagram_image_confirmation,
@@ -68,6 +69,12 @@ from telegram_media_bot.domain.models import (
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
 from telegram_media_bot.telegram.admin_handlers import ADMIN_MENU_TEXT, build_admin_router
 from telegram_media_bot.telegram.admin_menu import build_admin_main_keyboard
+from telegram_media_bot.telegram.instagram_ux import (
+    render_connect_prompt,
+    render_connection_status,
+    render_disconnect_confirmation,
+    render_instagram_unavailable,
+)
 from telegram_media_bot.telegram.middleware import CorrelationMiddleware
 from telegram_media_bot.telegram.texts import (
     ACCESS_DENIED_TEXT,
@@ -116,6 +123,7 @@ def build_router(
     cookie_manager: CookieManager | None = None,
     cookie_health_service: CookieHealthService | None = None,
     effects: EffectLedgerService | None = None,
+    connection: InstagramConnectionService | None = None,
 ) -> Router:
     router = Router(name="main")
     router.message.outer_middleware(CorrelationMiddleware())
@@ -197,6 +205,30 @@ def build_router(
             f"Database: {'OK' if database_ok else 'FAIL'}\n"
             f"Queue depth: {depth}"
         )
+
+    @router.message(Command("instagram"))
+    async def instagram_command(message: Message) -> None:
+        """Owner-bound Instagram connect/reconnect/disconnect/status entry point (T018)."""
+        if message.from_user is None:
+            return
+        owner = message.from_user.id
+        if connection is None:
+            await message.answer(render_instagram_unavailable())
+            return
+        parts = (message.text or "/instagram").split()[1:]
+        action = parts[0].casefold() if parts else "status"
+        try:
+            if action == "connect":
+                link = await asyncio.to_thread(connection.create_connect_link, owner)
+                await message.answer(render_connect_prompt(link))
+            elif action == "disconnect":
+                await asyncio.to_thread(connection.disconnect, owner)
+                await message.answer(render_disconnect_confirmation())
+            else:
+                view = await asyncio.to_thread(connection.status, owner)
+                await message.answer(render_connection_status(view))
+        except Exception:
+            await message.answer(render_instagram_unavailable())
 
     @router.message(Command("queue"))
     async def queue_status(message: Message) -> None:

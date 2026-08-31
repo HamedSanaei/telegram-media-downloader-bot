@@ -200,6 +200,23 @@ days; leases expire and release; a single atomic lease prevents concurrent use. 
 value, raw cookie, nonce, or key is durable or logged. Tests cover tamper/wrong-owner/
 wrong-generation/key-rotation/isolation/concurrency/permission containment.
 
+## Instagram account connection (T018)
+
+The secure Instagram connection surface is implemented in the working tree with no media-policy
+change: `domain/instagram_connection.py` (login result + safe failure categories),
+`application/ports/instagram_login.py` (replaceable `InstagramSessionAcquirer`),
+`application/services/instagram_connection.py` (`InstagramConnectionService` mints Ed25519-signed
+single-use links with the handoff token in the URL fragment, runs the transient login, stores
+success encrypted in the vault, and exposes sanitized status/disconnect),
+`infrastructure/instagram_login/fake.py` (deterministic fake acquirer),
+`infrastructure/web_companion/flow.py` (bounded-memory browser flow; passwords/2FA codes forwarded
+once and never retained), `bootstrap/instagram.py` (factory returning None unless vault keys and
+the signing key are configured), and a Persian `/instagram connect|status|disconnect` command with
+sanitized presentation (`telegram/instagram_ux.py`). `web_companion.public_base_url` configures the
+link origin. Free and VIP users use the same owner-bound entry points; connecting grants no VIP. A
+real upstream login adapter stays operator-supplied behind the acquirer port and must fail closed.
+The in-dashboard connection/reconnect/disconnect actions land with the `/vip` dashboard in T023.
+
 ## Implemented production controls
 
 - Python 3.14.5, committed `uv.lock`, immutable Docker build, non-root/read-only app containers, and

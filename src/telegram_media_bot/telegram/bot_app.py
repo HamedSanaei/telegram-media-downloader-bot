@@ -13,6 +13,7 @@ from telegram_media_bot.application.services.effect_ledger import EffectLedgerSe
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.bootstrap.instagram import build_instagram_connection_service
 from telegram_media_bot.infrastructure.analytics.usage_chart_renderer import PngUsageChartRenderer
 from telegram_media_bot.infrastructure.cookies.health import (
     MissingCookieChecker,
@@ -136,6 +137,7 @@ async def run_bot(settings: Settings) -> None:
                 ),
                 cookie_health_service=cookie_health_service,
                 effects=effects,
+                connection=build_instagram_connection_service(settings),
             )
         )
         inbox = DurableUpdateInbox(inbox_store)

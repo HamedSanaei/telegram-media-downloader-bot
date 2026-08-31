@@ -60,7 +60,7 @@ def test_tampered_signature_rejected() -> None:
     payload, signature = token.split(".", 1)
     flip_index = max(1, len(signature) // 3)
     replacement = "A" if signature[flip_index] != "A" else "B"
-    tampered = f"{payload}.{signature[:flip_index]}{replacement}{signature[flip_index+1:]}"
+    tampered = f"{payload}.{signature[:flip_index]}{replacement}{signature[flip_index + 1 :]}"
     result = verifier.verify(tampered, now=datetime.now(UTC))
     assert result.outcome is HandoffVerificationOutcome.INVALID_SIGNATURE
 
@@ -72,7 +72,7 @@ def test_tampered_payload_rejected() -> None:
     payload, signature = token.split(".", 1)
     index = max(1, len(payload) // 2)
     replacement = "A" if payload[index] != "A" else "B"
-    tampered = f"{payload[:index]}{replacement}{payload[index+1:]}.{signature}"
+    tampered = f"{payload[:index]}{replacement}{payload[index + 1 :]}.{signature}"
     result = verifier.verify(tampered, now=datetime.now(UTC))
     assert result.outcome is HandoffVerificationOutcome.INVALID_SIGNATURE
 

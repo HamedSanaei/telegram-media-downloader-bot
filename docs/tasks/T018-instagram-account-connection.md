@@ -1,6 +1,6 @@
 # T018 - Instagram account connection and recovery UX
 
-**Status:** planned
+**Status:** implemented
 
 ## Goal
 
@@ -118,3 +118,35 @@ remain replaceable, and never add follower-approval bypass, account takeover, or
 
 Secure connection/reconnection/revocation flows, consent and Persian UX, transient-secret tests,
 sanitized lifecycle handling, documentation, and gates pass with no media-policy change.
+
+## Implementation notes
+
+Built on the accepted ADR-033/035 foundations. The secure connection surface and its
+owner-bound lifecycle are implemented without any media-policy change:
+
+- `domain/instagram_connection.py` — `InstagramLoginResult` and safe `LoginFailureCategory` for
+  the transient flow; secrets are never durable.
+- `application/ports/instagram_login.py` — `InstagramSessionAcquirer` port that returns a
+  normalized login result (a real upstream adapter is operator-supplied and must fail closed;
+  no provider client is bundled).
+- `application/services/instagram_connection.py` — `InstagramConnectionService`: mints an Ed25519
+  signed single-use connection link with the handoff token in the URL fragment, runs the
+  transient login, stores a successful session encrypted in the vault (T017), and exposes
+  sanitized status/disconnect.
+- `infrastructure/instagram_login/fake.py` — deterministic `FakeInstagramSessionAcquirer` for
+  tests/operator use (correct password, 2FA checkpoint, reject modes).
+- `infrastructure/web_companion/flow.py` — `CompanionInstagramConnectionFlow` drives the browser
+  flow with bounded in-memory phase markers; passwords/2FA codes are forwarded once and never
+  retained; a successful login stores ciphertext in the vault.
+- `bootstrap/instagram.py` — `build_instagram_connection_service` composes the service from
+  settings only when vault keys and the handoff signing key are present (None otherwise).
+- `telegram/instagram_ux.py` + Persian texts + `/instagram connect|status|disconnect` command on
+  `build_router` (owner-bound, injected optional connection); `bot_app` passes the composed
+  service. Free and VIP users use the same owner-bound entry points; connecting grants no VIP.
+- `bootstrap/config.py`/`config.example.yaml` gain `web_companion.public_base_url` (https only)
+  used in generated links.
+
+Tests cover connect-link signing/fragment, password/2FA login, challenge-then-2FA, deny,
+password/2FA absence from the vault/logs/database, disconnect erase, cross-user isolation, and the
+sanitized Persian rendering. The fully interactive account-status surface (in-dashboard connect/
+reconnect/disconnect actions) is delivered with the `/vip` dashboard in T023.
