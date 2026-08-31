@@ -18,7 +18,7 @@ dependencies = [
   "structlog>=25.1,<26",
   "tzdata>=2025.2",
   "yt-dlp[default]>=2026.7.4",
-  "cryptography>=46,<47",
+  "cryptography>=50,<51",
 ]
 
 [dependency-groups]

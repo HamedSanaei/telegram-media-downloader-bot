@@ -14,9 +14,8 @@ Noto Sans Regular is bundled for administrator report rendering under the SIL Op
 1.1; its `OFL.txt` is shipped beside the font resource.
 
 The `cryptography` package (runtime, Apache-2.0 or BSD-3-Clause dependencies on the Python Package
-Index) is used for Ed25519 handoff signing/verification and (in later tasks) AES-256-GCM
-credential-vault encryption. Its transitive `cffi` dependency and the `pycparser`/`cffi` license
+Index) is used for Ed25519 handoff signing/verification and AES-256-GCM credential-vault
+encryption. Its transitive `cffi` dependency and the `pycparser`/`cffi` license
 notices remain governed by their own upstream terms and are already present in the installed Python
 distribution inside the Docker image. `cryptography` source code is not copied into this repository;
 no plaintext keys, cookies, or secrets are stored through it.
-
