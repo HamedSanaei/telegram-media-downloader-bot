@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import importlib
+import sys
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING
 
+import pytest
+
 from telegram_media_bot.application.services.audit_outbox import AuditOutboxProcessor
+from telegram_media_bot.bootstrap import config as config_module
 from telegram_media_bot.domain.audit import (
     AuditCategory,
     AuditDeliveryOutcome,
@@ -28,10 +35,27 @@ class SuccessfulDelivery:
         return AuditDeliveryResult(AuditDeliveryOutcome.SUCCEEDED)
 
 
-def test_dispatcher_has_independent_bounded_thirty_second_schedule() -> None:
-    from telegram_media_bot.workers.settings import WorkerSettings
+@pytest.fixture
+def worker_settings_module(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[ModuleType]:
+    module_name = "telegram_media_bot.workers.settings"
+    monkeypatch.setattr(config_module, "load_settings", lambda *args, **kwargs: settings)
+    sys.modules.pop(module_name, None)
+    module = importlib.import_module(module_name)
+    try:
+        yield module
+    finally:
+        sys.modules.pop(module_name, None)
 
-    jobs = {job.name: job for job in WorkerSettings.cron_jobs}
+
+def test_dispatcher_has_independent_bounded_thirty_second_schedule(
+    worker_settings_module: ModuleType,
+) -> None:
+    worker_settings = worker_settings_module.WorkerSettings
+
+    jobs = {job.name: job for job in worker_settings.cron_jobs}
 
     dispatcher = jobs["cron:audit_dispatch_job"]
     assert dispatcher.second == {5, 35}
@@ -41,8 +65,9 @@ def test_dispatcher_has_independent_bounded_thirty_second_schedule() -> None:
 
 def test_operational_alert_gate_is_independent_from_submission_mirror(
     settings: Settings,
+    worker_settings_module: ModuleType,
 ) -> None:
-    from telegram_media_bot.workers.settings import _worker_alerts_enabled
+    worker_alerts_enabled = worker_settings_module._worker_alerts_enabled
 
     mirror_only = settings.model_copy(
         update={
@@ -67,9 +92,9 @@ def test_operational_alert_gate_is_independent_from_submission_mirror(
         }
     )
 
-    assert not _worker_alerts_enabled(settings)
-    assert not _worker_alerts_enabled(mirror_only)
-    assert _worker_alerts_enabled(alerts)
+    assert not worker_alerts_enabled(settings)
+    assert not worker_alerts_enabled(mirror_only)
+    assert worker_alerts_enabled(alerts)
 
 
 def _event() -> AuditEvent:
@@ -113,8 +138,11 @@ async def test_bounded_worker_dispatch_updates_only_safe_aggregate_metrics(
     assert "safe rollout event" not in rendered
 
 
-def test_logger_health_is_safe_secondary_readiness_detail(settings: Settings) -> None:
-    from telegram_media_bot.workers.settings import _logger_health_component
+def test_logger_health_is_safe_secondary_readiness_detail(
+    settings: Settings,
+    worker_settings_module: ModuleType,
+) -> None:
+    logger_health_component = worker_settings_module._logger_health_component
 
     logger_settings = settings.telegram.logger.model_copy(
         update={
@@ -141,7 +169,7 @@ def test_logger_health_is_safe_secondary_readiness_detail(settings: Settings) ->
         oldest_pending_age_seconds=45,
     )
 
-    component = _logger_health_component(configured, snapshot)
+    component = logger_health_component(configured, snapshot)
 
     assert component.name == "operator_logger"
     assert component.healthy  # Logger degradation must not block ordinary download readiness.
