@@ -93,3 +93,15 @@ migration, dependency, Compose service, configuration-model field, version, rele
 deployment. Logger activation is gated by explicit enablement, valid config/runtime destinations,
 and the Persian privacy notice. Audit content is planned for indefinite retention; no automatic
 Telegram deletion is planned. Proposed ADR-036 through ADR-038 are not accepted decisions.
+
+## Milestone 6 - CI performance and developer velocity
+
+- T033 Fast-feedback CI and conditional heavy validation — complete; independent of T015-T032
+  runtime feature work
+
+Implemented in the working tree: a deterministic, unit-testable changed-path classifier, a fast
+`quality` lane for ordinary source/docs changes, conditional heavy lanes
+(dependency/package/plugin-sdk/docker-runtime/updater-integration/installer-linux/installer-windows),
+stable `change-detection` / `final-ci-gate` checks, fail-conservative fallback for any unclassifiable
+or unknown change, safe same-ref development concurrency, and preserved tag-only publication
+safety. None of T015-T032 runtime work is started.

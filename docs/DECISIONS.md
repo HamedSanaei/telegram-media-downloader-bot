@@ -610,3 +610,45 @@ Private channels have minimal human membership and bot post-only access. Cookies
 authorization headers, bot tokens, credentials, filesystem paths, raw exceptions, Instagram
 sessions, signed login tokens, payment secrets, and gateway credentials are prohibited from audit
 events, outbox rows, logs, metrics, and Telegram messages.
+
+## ADR-039: CI validation is fast by default, conservative by classification, and full for releases
+
+**Status:** accepted
+
+CI provides three explicit validation tiers: an always-reporting fast lane for ordinary source and
+documentation changes, conditional heavy lanes selected by a deterministic changed-path classifier
+(`scripts/ci_change_policy.py`), and a full mode for manual, scheduled, and release validation.
+The classifier is repository-owned and unit-testable without GitHub Actions; it computes the real PR
+base/head or push before/head range, tallies every matching category, and requests all heavy lanes on
+any unknown, root-critical, workflow/policy, or unclassifiable change because uncertainty never
+permits a safe skip.
+
+Stable `change-detection`, `quality` (the fast lane, keeping branch-protection compatibility with the
+former required check), and `final-ci-gate` checks report on every development run. The conditional
+heavy lanes are `dependency`, `package`, `plugin-sdk`, `docker-runtime`, `updater-integration`,
+`installer-linux`, and `installer-windows`. The final gate evaluates `needs` with an always-run
+condition and understands `success`, `failure`, `cancelled`, and `skipped` structurally: an explicitly
+irrelevant heavy job may succeed by skipping, while a relevant failure, timeout, or cancellation
+fails the gate. Workflow-level `paths:` filters are prohibited because they can leave required checks
+permanently pending. Development/PR runs cancel superseded work for the same ref, but publication
+uses a separate non-destructive concurrency policy.
+
+Docker image/runtime correctness and the historical privileged updater/rollback matrix are separate
+conditional lanes. Installer Linux/Windows, dependency/package, and plugin SDK checks activate from
+their owned paths; full/manual/nightly validation forces all lanes. The tag-only publication
+workflow remains independently full and fail-closed, retaining tag/package/release-policy checks,
+published-image smokes, updater compatibility, reproducible archives, and release ordering.
+Passing fast CI alone never proves a release safe. `release-policy.json` changes expand updater and
+both installer lanes so a withdrawn-release safety regression cannot pass under fast gating.
+
+Branch protection's stable merge-blocking required check is `final-ci-gate`, because it is the
+aggregate safety check that depends on `change-detection`, the `quality` fast lane, and every
+conditional heavy lane (`dependency`, `package`, `plugin-sdk`, `docker-runtime`,
+`updater-integration`, `installer-linux`, `installer-windows`). `quality` is the explicit
+fast-feedback check and may also be required for visibility, but `quality` + `change-detection`
+alone is NOT a sufficient merge gate: a relevant heavy lane (for example `docker-runtime` after a
+`Dockerfile` change) can fail while `quality` and `change-detection` pass, and only
+`final-ci-gate` surfaces that failure. Recommended required checks: `final-ci-gate` (required) and,
+optionally, `quality` (required for visibility). `change-detection` does not need to be required
+separately because `final-ci-gate` already depends on it and fails whenever classification fails.
+No removed job name should remain required.

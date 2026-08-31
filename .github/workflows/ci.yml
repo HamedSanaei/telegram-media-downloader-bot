@@ -1,15 +1,124 @@
 name: CI
 
+# Tiered fast-feedback validation (T033).
+#
+# The workflow always starts (no workflow-level `paths:` filter) so stable required checks always
+# report. `change-detection` deterministically classifies the changed paths (scripts/ci_change_policy.py)
+# and routes: ordinary changes run the fast `quality` lane; relevant heavy lanes (dependency,
+# package, plugin-sdk, docker-runtime, updater-integration, installer-linux, installer-windows) run
+# only when their owned paths changed or full validation is requested. `final-ci-gate` is a stable
+# always-evaluating check that understands success/failure/cancelled/skipped. Classification that
+# fails, cannot resolve a base, or meets an unknown/root-critical file fails conservative and runs
+# every heavy lane.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      full_validation:
+        description: Run every heavy validation lane
+        required: false
+        default: "false"
+        type: boolean
+  # Optional nightly full validation for drift/cold-cache coverage. Cadence chosen conservatively;
+  # it shares the development concurrency group, so a fresh main push supersedes it.
+  schedule:
+    - cron: "0 2 * * *"
 
 permissions:
   contents: read
 
+concurrency:
+  # Development runs cancel safely when a newer commit arrives on the same ref. Publication uses a
+  # separate workflow with cancellation disabled (see publish-container.yml) so an in-flight
+  # release transaction is never abandoned mid-publication.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  change-detection:
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+      dependency: ${{ steps.classify.outputs.dependency }}
+      package: ${{ steps.classify.outputs.package }}
+      plugin_sdk: ${{ steps.classify.outputs.plugin_sdk }}
+      docker: ${{ steps.classify.outputs.docker }}
+      updater: ${{ steps.classify.outputs.updater }}
+      installer_linux: ${{ steps.classify.outputs.installer_linux }}
+      installer_windows: ${{ steps.classify.outputs.installer_windows }}
+      conservative: ${{ steps.classify.outputs.conservative }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify changed paths into CI lanes
+        id: classify
+        run: |
+          set -euo pipefail
+
+          EVENT="${{ github.event_name }}"
+          BASE=""
+          HEAD="$GITHUB_SHA"
+          FULL="0"
+
+          if [ "$EVENT" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          elif [ "$EVENT" = "push" ]; then
+            BASE="${{ github.event.before }}"
+          else
+            # workflow_dispatch / schedule always request full validation.
+            FULL="1"
+          fi
+
+          CHANGED_FILE="/tmp/ci-changed.txt"
+          : > "$CHANGED_FILE"
+          if [ "$FULL" = "0" ]; then
+            if [ -z "$BASE" ] \
+               || [[ "$BASE" =~ ^0+$ ]] \
+               || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+              # Base cannot be resolved (first push, detached history): fail conservative.
+              FULL="1"
+            else
+              git diff --name-only "$BASE" "$HEAD" > "$CHANGED_FILE" \
+                || FULL="1"
+            fi
+          fi
+
+          MAIN_PUSH="0"
+          if [ "$EVENT" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            MAIN_PUSH="1"
+          fi
+
+          if [ "$FULL" = "1" ]; then
+            python3 scripts/ci_change_policy.py --full --json > /tmp/policy.json
+          elif [ "$MAIN_PUSH" = "1" ]; then
+            python3 scripts/ci_change_policy.py --paths-file "$CHANGED_FILE" \
+              --main-push --json > /tmp/policy.json
+          else
+            python3 scripts/ci_change_policy.py --paths-file "$CHANGED_FILE" --json \
+              > /tmp/policy.json
+          fi
+
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open("/tmp/policy.json", encoding="utf-8") as handle:
+              policy = json.load(handle)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              for lane in (
+                  "docs_only", "dependency", "package", "plugin_sdk", "docker",
+                  "updater", "installer_linux", "installer_windows", "conservative",
+              ):
+                  out.write(f"{lane}={str(bool(policy.get(lane, False))).lower()}\n")
+          PY
+
   quality:
+    needs: [change-detection]
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,28 +126,34 @@ jobs:
         with:
           version: "0.11.31"
           enable-cache: true
-      - name: Parse complete release Bash scripts
-        shell: bash
-        run: |
-          bash -n install.sh
-          bash -n manage.sh
-          bash -n scripts/tmb.sh
-          bash -n scripts/build_release_archives.sh
-          bash -n scripts/tests/test_tmb_update.sh
-          bash -n scripts/tests/test_tmb_upgrade_integration.sh
-          bash -n scripts/tests/test_local_api_readiness.sh
+      - run: uv python install 3.14.5
+      # scripts/check_agent_context.py is the repo-navigation guard that must run in CI (enforced
+      # by check_agent_context.py itself); ci_fast_quality.sh / ci_docs_quality.sh invoke it.
+      - name: Documentation-integrity fast lane
+        if: ${{ needs.change-detection.outputs.docs_only == 'true' }}
+        run: bash scripts/ci_docs_quality.sh
+      - name: Full fast-quality lane
+        if: ${{ needs.change-detection.outputs.docs_only != 'true' }}
+        run: bash scripts/ci_fast_quality.sh
+      - uses: actions/upload-artifact@v4
+        if: ${{ needs.change-detection.outputs.docs_only != 'true' }}
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  dependency:
+    needs: [change-detection]
+    if: always() && needs.change-detection.outputs.dependency == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.31"
+          enable-cache: true
       - run: uv python install 3.14.5
       - run: uv lock --check
       - run: uv sync --frozen --group dev
-      - run: uv run python scripts/check_architecture.py
-      - run: uv run python scripts/check_agent_context.py
-      - run: uv run python scripts/check_text_integrity.py
-      - run: uv run python scripts/generate_file_manifest.py --check
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run mypy src tests
-      - run: uv run pre-commit run detect-secrets --all-files
-      - run: uv run pip check
       # PYSEC-2026-3721 affects the uv-seeded bootstrap pip (<26.2) that pip-audit scans in
       # --local mode. Tooling pip is not a locked runtime dependency, so refresh it inside the
       # job environment right before auditing instead of weakening or skipping the audit.
@@ -48,22 +163,44 @@ jobs:
         run: uv run --no-sync python -m pip install --upgrade "pip>=26.2"
       - run: >-
           uv run --no-sync pip-audit --local --skip-editable --progress-spinner off
+
+  package:
+    needs: [change-detection]
+    if: always() && needs.change-detection.outputs.package == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.31"
+          enable-cache: true
+      - run: uv python install 3.14.5
+      - run: uv sync --frozen --group dev
       - run: uv build
       - name: Verify wheel, sdist, font license, and clean wheel install
         run: uv run python scripts/check_package_assets.py --install-smoke
+
+  plugin-sdk:
+    needs: [change-detection]
+    if: always() && needs.change-detection.outputs.plugin_sdk == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.31"
+          enable-cache: true
       - name: Verify external extractor SDK
         working-directory: plugins/example_extractor
         run: |
+          uv python install 3.14.5
           uv lock --check
           uv sync --frozen --group dev
           uv run pytest -m "not contract"
-      - run: uv run pytest -m "not contract" --cov=telegram_media_bot --cov-report=term-missing --cov-report=xml
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml
-          path: coverage.xml
 
-  docker:
+  docker-runtime:
+    needs: [change-detection]
+    if: always() && needs.change-detection.outputs.docker == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -72,16 +209,6 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.11.31"
-      - name: Parse complete release Bash scripts
-        shell: bash
-        run: |
-          bash -n install.sh
-          bash -n manage.sh
-          bash -n scripts/tmb.sh
-          bash -n scripts/build_release_archives.sh
-          bash -n scripts/tests/test_tmb_update.sh
-          bash -n scripts/tests/test_tmb_upgrade_integration.sh
-          bash -n scripts/tests/test_local_api_readiness.sh
       - run: uv lock --check
       - name: Validate rendered Compose restart policy for all services
         run: |
@@ -164,6 +291,28 @@ jobs:
             usage-chart-artifacts/usage-chart-weekly-smoke.png
             usage-chart-artifacts/usage-chart-monthly-smoke.png
           if-no-files-found: error
+
+  updater-integration:
+    needs: [change-detection]
+    if: always() && needs.change-detection.outputs.updater == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.31"
+      - run: uv lock --check
+      - name: Parse release Bash scripts (independent packaged verification)
+        run: |
+          bash -n install.sh
+          bash -n manage.sh
+          bash -n scripts/tmb.sh
+          bash -n scripts/build_release_archives.sh
+          bash -n scripts/tests/test_tmb_update.sh
+          bash -n scripts/tests/test_tmb_upgrade_integration.sh
+          bash -n scripts/tests/test_local_api_readiness.sh
       - name: Run privileged updater filesystem and SQLite integration test
         shell: bash
         env:
@@ -204,18 +353,15 @@ jobs:
           RUN_PRIVILEGED_UPGRADE_TESTS=1 \
             bash scripts/tests/test_local_api_readiness.sh
 
-  installer-quality:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  installer-linux:
+    needs: [change-detection]
+    if: always() && needs.change-detection.outputs.installer_linux == 'true'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck Linux management scripts
-        if: runner.os == 'Linux'
         run: shellcheck install.sh manage.sh scripts/tmb.sh scripts/tests/*.sh
       - name: Parse complete release Bash scripts
-        if: runner.os == 'Linux'
         run: |
           bash -n install.sh
           bash -n manage.sh
@@ -225,10 +371,15 @@ jobs:
           bash -n scripts/tests/test_tmb_upgrade_integration.sh
           bash -n scripts/tests/test_local_api_readiness.sh
       - name: Test Linux update recovery
-        if: runner.os == 'Linux'
         run: bash scripts/tests/test_tmb_update.sh
+
+  installer-windows:
+    needs: [change-detection]
+    if: always() && needs.change-detection.outputs.installer_windows == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
       - name: Install PSScriptAnalyzer
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -282,7 +433,6 @@ jobs:
 
           Write-Host "PSScriptAnalyzer version: $($module.Version)"
       - name: Analyze PowerShell management scripts
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $issues = @("install.ps1", "scripts/tmb.ps1") | ForEach-Object {
@@ -292,6 +442,80 @@ jobs:
           $errors = $issues | Where-Object Severity -eq Error
           if ($errors) { throw "PSScriptAnalyzer reported installer errors." }
       - name: Test Windows update recovery
-        if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/tests/Test-TmbUpdate.ps1
+
+  final-ci-gate:
+    if: always()
+    needs:
+      - change-detection
+      - quality
+      - dependency
+      - package
+      - plugin-sdk
+      - docker-runtime
+      - updater-integration
+      - installer-linux
+      - installer-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate final gate from structured job results
+        env:
+          CHANGE_DETECTION: ${{ needs.change-detection.result }}
+          QUALITY: ${{ needs.quality.result }}
+          DEP: ${{ needs.dependency.result }}
+          PKG: ${{ needs.package.result }}
+          PLG: ${{ needs.plugin-sdk.result }}
+          DKR: ${{ needs.docker-runtime.result }}
+          UPD: ${{ needs.updater-integration.result }}
+          ILX: ${{ needs.installer-linux.result }}
+          IWX: ${{ needs.installer-windows.result }}
+          RQ_DEP: ${{ needs.change-detection.outputs.dependency }}
+          RQ_PKG: ${{ needs.change-detection.outputs.package }}
+          RQ_PLG: ${{ needs.change-detection.outputs.plugin_sdk }}
+          RQ_DKR: ${{ needs.change-detection.outputs.docker }}
+          RQ_UPD: ${{ needs.change-detection.outputs.updater }}
+          RQ_ILX: ${{ needs.change-detection.outputs.installer_linux }}
+          RQ_IWX: ${{ needs.change-detection.outputs.installer_windows }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import sys
+
+          required = {
+              "dependency": os.getenv("RQ_DEP") == "true",
+              "package": os.getenv("RQ_PKG") == "true",
+              "plugin_sdk": os.getenv("RQ_PLG") == "true",
+              "docker_runtime": os.getenv("RQ_DKR") == "true",
+              "updater_integration": os.getenv("RQ_UPD") == "true",
+              "installer_linux": os.getenv("RQ_ILX") == "true",
+              "installer_windows": os.getenv("RQ_IWX") == "true",
+          }
+          results = {
+              "dependency": os.getenv("DEP"),
+              "package": os.getenv("PKG"),
+              "plugin_sdk": os.getenv("PLG"),
+              "docker_runtime": os.getenv("DKR"),
+              "updater_integration": os.getenv("UPD"),
+              "installer_linux": os.getenv("ILX"),
+              "installer_windows": os.getenv("IWX"),
+          }
+          problems = []
+          if os.getenv("CHANGE_DETECTION") != "success":
+              problems.append(f"change classification result={os.getenv('CHANGE_DETECTION')}")
+          quality = os.getenv("QUALITY")
+          if quality != "success":
+              problems.append(f"quality lane result={quality}")
+          for name, result in results.items():
+              if result == "cancelled":
+                  problems.append(f"{name} was cancelled")
+              elif result in ("failure", "startup_failure"):
+                  problems.append(f"{name} failed")
+              elif result == "skipped" and required.get(name):
+                  problems.append(f"{name} was required but skipped")
+          if problems:
+              for problem in problems:
+                  print(f"::error::final gate: {problem}")
+              sys.exit(1)
+          print("final gate: all required lanes succeeded (irrelevant heavy lanes skipped)")
+          PY

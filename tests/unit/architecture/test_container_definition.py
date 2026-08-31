@@ -179,7 +179,7 @@ def test_ci_builds_and_smoke_tests_runtime_with_shared_buildkit_cache() -> None:
         Path(".github/workflows/ci.yml").read_text(encoding="utf-8"),
         Loader=yaml.BaseLoader,
     )
-    steps = workflow["jobs"]["docker"]["steps"]
+    steps = workflow["jobs"]["docker-runtime"]["steps"]
     setup_index = next(
         index
         for index, step in enumerate(steps)
@@ -227,11 +227,42 @@ def test_ci_builds_and_smoke_tests_runtime_with_shared_buildkit_cache() -> None:
     assert artifact["with"]["name"] == "usage-chart-smoke"
     assert "usage-chart-weekly-smoke.png" in artifact["with"]["path"]
     assert "usage-chart-monthly-smoke.png" in artifact["with"]["path"]
-    assert any("RUN_PRIVILEGED_UPGRADE_TESTS" in str(step.get("env", "")) for step in steps)
-    assert any("test_tmb_upgrade_integration.sh" in run for run in runs)
-    assert any("TMB_TEST_PREVIOUS_VERSION=1.2.1" in run for run in runs)
-    assert any("TMB_USE_RELEASE_UPDATER_ASSET=1" in run for run in runs)
+    # The privileged updater matrix is a separate conditional lane in T033; runtime image validation
+    # must not silently include it, and updater integration must live in its dedicated lane.
+    assert all("test_tmb_upgrade_integration.sh" not in run for run in runs)
     assert all("docker compose --profile local-api build" not in run for run in runs)
+
+
+def test_updater_integration_lane_retains_full_historical_matrix() -> None:
+    """The conditional updater-integration lane still owns every privileged updater scenario."""
+    workflow = yaml.load(
+        Path(".github/workflows/ci.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    assert "updater-integration" in workflow["jobs"]
+    steps = workflow["jobs"]["updater-integration"]["steps"]
+    runs = [step.get("run", "") for step in steps]
+    envs = [str(step.get("env", "")) for step in steps]
+    combined = "\n".join(runs + envs)
+
+    assert any("test_local_api_readiness.sh" in run for run in runs)
+    for marker in (
+        "TMB_TEST_PREVIOUS_VERSION=1.0.2",
+        "TMB_TEST_PREVIOUS_VERSION=1.2.1",
+        "TMB_TEST_PREVIOUS_VERSION=1.3.0",
+        "TMB_TEST_PREVIOUS_VERSION=1.3.1",
+        "TMB_USE_RELEASE_UPDATER_ASSET=1",
+        "TMB_TEST_ACTIVE_LOCAL_API_LOG_WRITER=1",
+        "TMB_TEST_INITIAL_SERVICE_STATE=all-running",
+        "TMB_TEST_INITIAL_SERVICE_STATE=no-local-api",
+        "TMB_TEST_INITIAL_SERVICE_STATE=no-bot",
+        "TMB_TEST_INITIAL_SERVICE_STATE=mixed",
+        "TMB_TEST_UPDATER_FAILURE_STAGE=backup",
+        "TMB_TEST_UPDATER_FAILURE_STAGE=offline-doctor",
+        "TMB_TEST_UPDATER_FAILURE_STAGE=online-doctor",
+        "RUN_PRIVILEGED_UPGRADE_TESTS",
+    ):
+        assert marker in combined
 
 
 def test_release_uses_the_same_shared_buildkit_cache_scope_as_ci() -> None:

@@ -31,6 +31,7 @@ Identify the relevant decision here, then read its complete text in `docs/DECISI
 | planned typed audit events and durable logger outbox | proposed ADR-036 |
 | planned config/runtime logger destination ownership | proposed ADR-037 |
 | planned Telegram source mirroring, privacy, and retention | proposed ADR-038 |
+| CI validation tiers and fail-conservative gating | ADR-039 (accepted) |
 
 Supersession matters: ADR-021 supersedes the codec restriction in ADR-020. Status and task history
 may describe later production regressions without replacing the accepted decision.

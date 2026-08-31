@@ -90,6 +90,17 @@ end-to-end rollout. ADR-036 through ADR-038 are proposed, not accepted. This is 
 no Python behavior, schema, migration, dependency, Compose service, configuration model, package
 version, tag, release, deployment, or history changed.
 
+T033 implements the fast-feedback CI tiering in the working tree: a repository-owned deterministic
+changed-path classifier (`scripts/ci_change_policy.py`), a fast `quality` lane for ordinary
+source/documentation changes, conditional heavy lanes (dependency/package/plugin-sdk/
+docker-runtime/updater-integration/installer-linux/installer-windows), and an always-evaluated
+`final-ci-gate` that understands success/failure/cancelled/skipped and aggregates all relevant
+lanes. `final-ci-gate` is the merge-blocking branch-protection required check (`quality` may also
+be required for visibility; `quality` + `change-detection` alone is not a sufficient gate).
+Development runs cancel superseded same-ref work; permission/license gates still require human
+review. The tag-only publication workflow is unchanged. Post-implementation GitHub run timing is
+pending the first push.
+
 Patch 1.2.2 fixed updater preflight validation for runtime cookie paths without mutating persistent
 data, patch 1.2.1 fixed strict mixed-carousel video-child discovery, and release 1.2.0 introduced
 Instagram Photo/File delivery plus redacted administrator failure alerts. The v1 flow is URL

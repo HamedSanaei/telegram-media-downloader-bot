@@ -78,7 +78,9 @@
 | `scripts/tmb.sh`, `scripts/tmb.ps1` | Cross-platform lifecycle/menu/update/backup/cleanup command with requested/candidate withdrawal guards before state changes; Linux adds prepared-image/read-only-data static preflight, pre-downtime image pulls, exact writer/service-state tracking, private atomic offline backups, isolated transactional replacement, offline post-install plus conditional post-start online verification, runtime probes, SIGINT recovery, rollback, `tmb` repair, and guarded project-image reclamation |
 | `scripts/build_release_archives.sh` | Policy-gated reproducible tar/ZIP assets, checksummed standalone updater bootstrap, v1.0.2-safe executable Linux updater packaging, and an explicit deterministic epoch for current-tree integration fixtures |
 | `scripts/tests/` | Mocked withdrawal/recovery plus opt-in privileged release-upgrade tests for direct/candidate version denial, allowed forward recovery, phased offline/online verification, exact mixed service restoration, active Local API logs, archive inclusion/exclusion, redacted failures, SIGINT, runtime identity, filesystem/SQLite permissions, Compose bind contracts, and the delayed Local API startup readiness regression (`test_local_api_readiness.sh`) |
-| `.github/workflows/ci.yml` | Quality/security and agent-context guardrails, Compose validation, shared-cache Docker build, runtime dependency doctor, native-selector/remux, CLI, and multipart smoke tests |
+| `scripts/ci_change_policy.py` | Deterministic, GitHub-Actions-independent CI change classifier: event-aware PR/push changed-range handling, category union (docs/python/deps/package/plugin/docker/updater/linux/windows/policy/workflow), and fail-conservative fallback that requests every heavy lane rather than skipping |
+| `scripts/ci_fast_quality.sh`, `scripts/ci_docs_quality.sh` | Fast-quality lane runners: full non-contract integrity/lint/type/secret suite for ordinary changes; a docs-only minimum integrity set for conclusively documentation-only changes |
+| `.github/workflows/ci.yml` | Tiered fast-feedback CI (T033): stable `change-detection`, always-reporting `quality`, conditional heavy lanes (dependency/package/plugin-sdk/docker-runtime/updater-integration/installer-linux/installer-windows), and an always-evaluated `final-ci-gate` that understands success/failure/cancelled/skipped; safe same-ref development concurrency; no workflow-level `paths:` filters. `final-ci-gate` is the aggregate merge-safety check required by branch protection (`quality` optional for visibility; `quality` + `change-detection` alone is not a sufficient gate) |
 | `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication using the CI cache, runtime doctor/native-selector/remux/CLI/multipart smoke tests, and reproducible release assets |
 
 ## Upstream compatibility hot spots
@@ -141,3 +143,14 @@ do not exist in the current application.
 | `telegram/admin_menu.py` / `telegram/admin_handlers.py` additions | `🧾 کانال‌های لاگر` management flow, numeric channel validation, test, enable/disable/remove, and health UI |
 | `workers/` or logger dispatcher | Asynchronous outbox draining, bounded retry/reconciliation, and restart-safe isolation from user jobs |
 | `docs/` task/ADR/spec additions | T026-T032, proposed ADR-036-038, privacy notice, retention, rollout, and operational runbooks |
+
+## Milestone 6 ownership (implemented)
+
+T033's tiered CI entitlement foundation is implemented (see `scripts/ci_change_policy.py`,
+`scripts/ci_fast_quality.sh`, `scripts/ci_docs_quality.sh`, and the tiered `.github/workflows/ci.yml`
+above). The deployment workflow remains unchanged. The following measurement/reporting surface is
+left as an explicitly deferred, non-functional follow-up; no secrets or production state are involved.
+
+| Remaining (deferred) | Planned ownership |
+|---|---|
+| CI measurement/reporting | Bounded workflow/job/step duration, cold/warm cache, cancellation, fallback, and lane-outcome measurements without secrets or production state |
