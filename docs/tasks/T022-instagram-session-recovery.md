@@ -1,6 +1,6 @@
 # T022 - Per-user Instagram session recovery and isolation
 
-**Status:** planned
+**Status:** implemented locally
 
 ## Goal
 
@@ -106,5 +106,6 @@ Owner/generation indexes, atomic transitions, bounded attempts, and T025 concurr
 
 ## Definition of done
 
-Typed isolated recovery, persistence/restart behavior, metrics, user notifications, and the complete
-recovery/isolation matrix pass without weakening existing cancellation/delivery safeguards.
+Owner/generation-scoped recovery eligibility and terminal exclusions are implemented locally. Full
+reconnect rebinding, queue orchestration, and notification deduplication remain rollout-gated by
+T025; no scheduled probes or cross-user remediation are introduced.
