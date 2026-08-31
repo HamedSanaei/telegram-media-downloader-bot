@@ -145,9 +145,9 @@ T017-T025 and do not exist yet.
 | `telegram/` additions | `/vip`, entitlement-gating, expiry/renewal, audited administrator UX (T023); `/instagram`, `instagram_ux.py`, Persian connection prompts/status/disconnect (implemented) |
 | `workers/` and queue/persistence changes | Carry the explicit operator credential seam while preserving legacy jobs; future safe user snapshots/fallback state remain T020-T022 |
 
-## Milestone 5 ownership (T026-T031 implemented; T032 planned)
+## Milestone 5 ownership (T026-T032 implemented)
 
-The following runtime ownership implements the logger milestone so far.
+The following runtime ownership implements the completed logger milestone.
 
 | Area | Ownership |
 |---|---|
@@ -161,8 +161,8 @@ The following runtime ownership implements the logger milestone so far.
 | `application/services/logger_privacy.py`, `infrastructure/persistence/sqlite_audit.py` | Exact Persian notice, versioned durable per-user acknowledgement, operator-attestation activation gate, and indefinite-retention boundary (implemented T031) |
 | `infrastructure/telegram/audit_delivery.py`, `infrastructure/persistence/sqlite_audit.py` | Native single/group copy transport, typed failure outcomes, per-destination outbox, and restart-safe album source merging (implemented T027/T030) |
 | `telegram/admin_menu.py` / `telegram/admin_handlers.py` | Logger-channel management flow, numeric channel validation, test, enable/disable/remove, and health UI (implemented T028) |
-| `workers/settings.py`, `workers/jobs.py` | `AuditService` wiring; terminal-error and Cookie Health typed-event emission with no admin-DM fallback (implemented T029); outbox draining remains planned T032 |
-| `docs/` | Completed T026-T031, accepted ADR-036-038, privacy/retention policy, rollout, and operational runbook (T032 rollout work planned) |
+| `workers/settings.py`, `workers/jobs.py` | Independent alert admission, bounded 30-second/20-item outbox dispatch, aggregate health/metrics, and restart-safe native Telegram delivery (implemented T029/T032) |
+| `docs/` | Completed T026-T032, accepted ADR-036-038, privacy/retention policy, staged rollout, incident, backup, and rollback runbooks |
 
 ## Milestone 6 ownership (implemented)
 

@@ -558,12 +558,12 @@ Telethon/MTProto session, staging-channel, Premium queue, or copy-message delive
 
 ## Milestone 5 architecture: Operator Logger and private audit channels
 
-**Implementation status:** T026-T031 implemented and feature-gated off by default; T032 planned.
+**Implementation status:** T026-T032 implemented and feature-gated off by default.
 Repository initialization and config-destination reconciliation run at bot and worker
 startup; accepted submissions create durable native-copy intents, while production delivery
 draining is completed by T032.
 
-### Flow (T026-T030 implemented; dispatcher planned for T032)
+### Flow (T026-T032 implemented)
 
 ```text
 accepted Telegram update
@@ -574,7 +574,7 @@ accepted Telegram update
         |
         +--> typed AuditEvent --> SQLite/WAL logger outbox
                                       |
-                                      +--> per-destination dispatcher (planned T029-T032)
+                                      +--> per-destination dispatcher (implemented T032)
                                              |
                                              +--> Telegram native copy/send gateway (implemented T030)
                                              +--> PENDING / COMPLETED / UNCERTAIN (modeled)
@@ -582,9 +582,8 @@ accepted Telegram update
 
 Terminal worker failures and persisted Cookie Health transitions emit typed events after their
 existing durable state changes (implemented T029); no unsolicited operational path enumerates
-`telegram.admin_ids` anymore. The planned dispatcher owns fan-out, bounded retry, leases, and
-destination health. It never changes job status, cancellation precedence, cleanup, or delivery
-uncertainty.
+`telegram.admin_ids` anymore. The dispatcher owns fan-out, bounded retry, leases, and destination
+health. It never changes job status, cancellation precedence, cleanup, or delivery uncertainty.
 
 ### Ownership and boundaries (T026/T027)
 
@@ -600,13 +599,14 @@ uncertainty.
   (implemented).
 - `infrastructure/telegram/audit_destination_verifier.py`: typed channel probe proving existence,
   channel type, bot membership, and posting permission with a sanitized test message; no raw
-  Telegram exceptions surface (implemented T028). Native `copyMessage`/`copyMessages` delivery
-  remains planned T029-T030.
+  Telegram exceptions surface (implemented T028). Native `copyMessage`/`copyMessages` delivery is
+  implemented by T030 and wired into the worker dispatcher by T032.
 - `telegram/admin_menu.py` and `admin_handlers.py`: role-authorized logger-channel management;
   callbacks reauthorized and validated at execution time (implemented T028).
-- `workers/settings.py` and `workers/jobs.py`: `AuditService` wiring plus typed
-  terminal-error/Cookie Health event emission; no `telegram.admin_ids` fallback (implemented
-  T029). Asynchronous outbox draining and bounded reconciliation remain planned T032.
+- `workers/settings.py` and `workers/jobs.py`: `AuditService` wiring plus typed terminal-error/
+  Cookie Health event emission; no `telegram.admin_ids` fallback (implemented T029). A separate
+  30-second cron drains at most 20 logger effects, records bounded aggregate metrics/health, and
+  keeps dispatcher faults outside download outcomes (implemented T032).
 
 Configured destinations and runtime-created destinations reconcile as a deduplicated union by
 numeric `chat_id`. Config-managed rows cannot be removed through the runtime API or the T028 admin

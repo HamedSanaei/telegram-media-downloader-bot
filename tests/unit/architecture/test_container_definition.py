@@ -466,6 +466,24 @@ def test_linux_update_backup_is_offline_atomic_and_preserves_exact_service_state
     assert "PREVIOUS_WRITER_SERVICES" in updater
 
 
+def test_windows_manual_backup_stops_writers_and_includes_logger_sqlite_state() -> None:
+    updater = Path("scripts/tmb.ps1").read_text(encoding="utf-8")
+    backup = updater.split("function New-TmbBackup {", maxsplit=1)[1].split("\n}", maxsplit=1)[0]
+    consistent = updater.split("function New-ConsistentTmbBackup {", maxsplit=1)[1].split(
+        "\n}", maxsplit=1
+    )[0]
+
+    assert '"data/state"' in backup
+    assert '"data/cookies"' in backup
+    assert '"config.yaml"' in backup
+    assert "Get-RunningApplicationServices" in consistent
+    assert 'Invoke-Compose (@("stop", "-t", "45") + $PreviousServices)' in consistent
+    assert consistent.index("Invoke-Compose") < consistent.index("New-TmbBackup")
+    assert "Start-TmbServices -Services $PreviousServices" in consistent
+    assert "Wait-TmbServicesHealthy -Services $PreviousServices" in consistent
+    assert '"backup" { New-ConsistentTmbBackup }' in updater
+
+
 def test_runtime_image_guarantees_compatible_7zip_commands_and_shared_identity() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
     compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))

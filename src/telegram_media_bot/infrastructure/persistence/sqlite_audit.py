@@ -138,6 +138,11 @@ class SqliteAuditRepository:
                 WHERE config_owned=0 AND runtime_owned=0""",
                 (now,),
             )
+            _terminalize_inactive_effects(
+                connection,
+                failure_class="DestinationRemoved",
+                where="config_owned=0 AND runtime_owned=0",
+            )
             connection.execute("COMMIT")
 
     def list_destinations(self) -> tuple[LoggerDestination, ...]:
@@ -182,22 +187,39 @@ class SqliteAuditRepository:
                 WHERE chat_id=?""",
                 (int(config_owned), "active" if config_owned else "disabled", _now(), chat_id),
             )
+            if not config_owned:
+                _terminalize_inactive_effects(
+                    connection,
+                    failure_class="DestinationRemoved",
+                    where="chat_id=?",
+                    parameters=(chat_id,),
+                )
             connection.execute("COMMIT")
         return True
 
     def set_destination_enabled(self, chat_id: int, enabled: bool) -> LoggerDestination:
         health = LoggerDestinationHealth.ACTIVE if enabled else LoggerDestinationHealth.DISABLED
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             changed = connection.execute(
                 """UPDATE logger_destinations SET enabled=?,health=?,last_failure_class=NULL,
                 updated_at=? WHERE chat_id=? AND (config_owned=1 OR runtime_owned=1)""",
                 (int(enabled), health.value, _now(), chat_id),
             ).rowcount
             if not changed:
+                connection.execute("ROLLBACK")
                 raise PersistenceError("logger destination does not exist")
+            if not enabled:
+                _terminalize_inactive_effects(
+                    connection,
+                    failure_class="DestinationDisabled",
+                    where="chat_id=?",
+                    parameters=(chat_id,),
+                )
             row = connection.execute(
                 "SELECT * FROM logger_destinations WHERE chat_id=?", (chat_id,)
             ).fetchone()
+            connection.execute("COMMIT")
         assert row is not None
         return _destination(row)
 
@@ -210,16 +232,26 @@ class SqliteAuditRepository:
         """Record the outcome of an operator probe for one destination (T028)."""
         now = _now()
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             changed = connection.execute(
                 """UPDATE logger_destinations SET health=?,last_failure_class=?,updated_at=?
                 WHERE chat_id=? AND (config_owned=1 OR runtime_owned=1)""",
                 (health.value, _failure(failure_class), now, chat_id),
             ).rowcount
             if not changed:
+                connection.execute("COMMIT")
                 return None
+            if health in {LoggerDestinationHealth.FORBIDDEN, LoggerDestinationHealth.DISABLED}:
+                _terminalize_inactive_effects(
+                    connection,
+                    failure_class=failure_class or "DestinationUnavailable",
+                    where="chat_id=?",
+                    parameters=(chat_id,),
+                )
             row = connection.execute(
                 "SELECT * FROM logger_destinations WHERE chat_id=?", (chat_id,)
             ).fetchone()
+            connection.execute("COMMIT")
         assert row is not None
         return _destination(row)
 
@@ -372,7 +404,10 @@ class SqliteAuditRepository:
             rows = connection.execute(
                 """SELECT o.*,e.event_json FROM logger_outbox o
                 JOIN audit_events e USING(event_id)
+                JOIN logger_destinations d ON d.chat_id=o.destination_chat_id
                 WHERE o.state IN ('pending','retryable') AND o.next_attempt_at<=?
+                AND d.enabled=1 AND d.health IN ('active','unreachable')
+                AND (d.config_owned=1 OR d.runtime_owned=1)
                 ORDER BY o.next_attempt_at,o.event_id,o.destination_chat_id LIMIT ?""",
                 (now.isoformat(), limit),
             ).fetchall()
@@ -444,11 +479,19 @@ class SqliteAuditRepository:
     def mark_terminal(self, item: LoggerOutboxItem, failure_class: str) -> None:
         self._finish(item, LoggerOutboxState.FAILED_TERMINAL, failure_class)
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """UPDATE logger_destinations SET health='forbidden',last_failure_class=?,
                 updated_at=? WHERE chat_id=?""",
                 (_failure(failure_class), _now(), item.destination_chat_id),
             )
+            _terminalize_inactive_effects(
+                connection,
+                failure_class=failure_class,
+                where="chat_id=?",
+                parameters=(item.destination_chat_id,),
+            )
+            connection.execute("COMMIT")
 
     def health_snapshot(self) -> LoggerHealthSnapshot:
         with self._connect() as connection:
@@ -465,15 +508,29 @@ class SqliteAuditRepository:
                     "SELECT state,COUNT(*) AS count FROM logger_outbox GROUP BY state"
                 ).fetchall()
             }
+            oldest = connection.execute(
+                """SELECT MIN(created_at) FROM logger_outbox
+                WHERE state IN ('pending','leased','sending','retryable')"""
+            ).fetchone()
+        oldest_pending_age_seconds = 0
+        if oldest is not None and oldest[0] is not None:
+            oldest_pending_age_seconds = max(
+                0,
+                int((datetime.now(UTC) - datetime.fromisoformat(str(oldest[0]))).total_seconds()),
+            )
         return LoggerHealthSnapshot(
+            effective_destinations=sum(destinations.values()),
             active_destinations=destinations.get(LoggerDestinationHealth.ACTIVE.value, 0),
+            unreachable_destinations=destinations.get(LoggerDestinationHealth.UNREACHABLE.value, 0),
             forbidden_destinations=destinations.get(LoggerDestinationHealth.FORBIDDEN.value, 0),
+            disabled_destinations=destinations.get(LoggerDestinationHealth.DISABLED.value, 0),
             pending_effects=effects.get(LoggerOutboxState.PENDING.value, 0)
             + effects.get(LoggerOutboxState.LEASED.value, 0)
             + effects.get(LoggerOutboxState.SENDING.value, 0),
             retryable_effects=effects.get(LoggerOutboxState.RETRYABLE.value, 0),
             uncertain_effects=effects.get(LoggerOutboxState.UNCERTAIN.value, 0),
             terminal_effects=effects.get(LoggerOutboxState.FAILED_TERMINAL.value, 0),
+            oldest_pending_age_seconds=oldest_pending_age_seconds,
         )
 
     def _finish(
@@ -541,6 +598,24 @@ class SqliteAuditRepository:
         ).rowcount
         if not changed:
             raise PersistenceError("stale logger delivery lease")
+
+
+def _terminalize_inactive_effects(
+    connection: sqlite3.Connection,
+    *,
+    failure_class: str,
+    where: str,
+    parameters: tuple[object, ...] = (),
+) -> int:
+    """Quarantine work that has not crossed the external-send boundary."""
+    now = _now()
+    return connection.execute(
+        f"""UPDATE logger_outbox SET state='failed_terminal',lease_token=NULL,lease_until=NULL,
+        failed_at=?,last_failure_class=?,updated_at=?
+        WHERE destination_chat_id IN (SELECT chat_id FROM logger_destinations WHERE {where})
+        AND state IN ('pending','retryable','leased')""",
+        (now, _failure(failure_class), now, *parameters),
+    ).rowcount
 
 
 def serialize_event(event: AuditEvent) -> str:

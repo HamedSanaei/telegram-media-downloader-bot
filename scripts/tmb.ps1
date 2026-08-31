@@ -56,6 +56,22 @@ function New-TmbBackup {
     Write-Host "Backup created: $Archive"
 }
 
+function New-ConsistentTmbBackup {
+    $PreviousServices = @(Get-RunningApplicationServices)
+    try {
+        if ($PreviousServices.Count -gt 0) {
+            Invoke-Compose (@("stop", "-t", "45") + $PreviousServices)
+        }
+        New-TmbBackup
+    }
+    finally {
+        if ($PreviousServices.Count -gt 0) {
+            Start-TmbServices -Services $PreviousServices
+            Wait-TmbServicesHealthy -Services $PreviousServices
+        }
+    }
+}
+
 function Get-ReleaseUrl {
     param([string]$AssetName)
     if ($env:TMB_RELEASE_TAG) {
@@ -352,7 +368,7 @@ switch ($Command) {
         }
         Invoke-TmbCleanup -DryRun:($Service -eq "--dry-run")
     }
-    "backup" { New-TmbBackup }
+    "backup" { New-ConsistentTmbBackup }
     "uninstall" {
         Invoke-Compose @("down")
         if ((Read-Host "Type DELETE to remove config and data") -eq "DELETE") {

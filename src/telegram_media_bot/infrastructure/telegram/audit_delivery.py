@@ -29,6 +29,7 @@ class TelegramAuditDelivery:
         self._bot = bot
 
     async def deliver(self, item: LoggerOutboxItem) -> AuditDeliveryResult:
+        side_effect_completed = False
         try:
             if item.event.category is AuditCategory.USER_SUBMISSION:
                 source = item.event.source
@@ -48,6 +49,7 @@ class TelegramAuditDelivery:
                         from_chat_id=source.chat_id,
                         message_ids=list(source.message_ids),
                     )
+                side_effect_completed = True
                 await self._bot.send_message(
                     item.destination_chat_id,
                     _metadata_text(item.event),
@@ -55,8 +57,15 @@ class TelegramAuditDelivery:
             else:
                 await self._bot.send_message(item.destination_chat_id, item.event.message)
         except TelegramRetryAfter as exc:
-            return AuditDeliveryResult(AuditDeliveryOutcome.RETRYABLE, safe_failure_class(exc))
+            outcome = (
+                AuditDeliveryOutcome.UNCERTAIN
+                if side_effect_completed
+                else AuditDeliveryOutcome.RETRYABLE
+            )
+            return AuditDeliveryResult(outcome, safe_failure_class(exc))
         except (TelegramForbiddenError, TelegramBadRequest) as exc:
+            if side_effect_completed:
+                return AuditDeliveryResult(AuditDeliveryOutcome.UNCERTAIN, safe_failure_class(exc))
             return AuditDeliveryResult(
                 AuditDeliveryOutcome.FAILED_TERMINAL, safe_failure_class(exc)
             )

@@ -19,8 +19,11 @@ from telegram_media_bot.infrastructure.telegram.audit_delivery import TelegramAu
 
 
 class FakeBot:
-    def __init__(self, failure: Exception | None = None) -> None:
+    def __init__(
+        self, failure: Exception | None = None, metadata_failure: Exception | None = None
+    ) -> None:
         self.failure = failure
+        self.metadata_failure = metadata_failure
         self.copies: list[dict[str, object]] = []
         self.groups: list[dict[str, object]] = []
         self.messages: list[tuple[int, str]] = []
@@ -36,6 +39,8 @@ class FakeBot:
         self.groups.append(kwargs)
 
     async def send_message(self, chat_id: int, text: str) -> None:
+        if self.metadata_failure is not None:
+            raise self.metadata_failure
         self.messages.append((chat_id, text))
 
 
@@ -104,3 +109,13 @@ async def test_forbidden_is_terminal_and_network_ambiguity_is_uncertain() -> Non
 
     assert forbidden_result.outcome is AuditDeliveryOutcome.FAILED_TERMINAL
     assert uncertain_result.outcome is AuditDeliveryOutcome.UNCERTAIN
+
+
+async def test_metadata_failure_after_copy_is_uncertain_and_never_retryable() -> None:
+    method = CopyMessage(chat_id=-1001234567890, from_chat_id=4242, message_id=10)
+    bot = FakeBot(metadata_failure=TelegramForbiddenError(method=method, message="forbidden"))
+
+    result = await TelegramAuditDelivery(cast(Bot, cast(Any, bot))).deliver(_item())
+
+    assert len(bot.copies) == 1
+    assert result.outcome is AuditDeliveryOutcome.UNCERTAIN

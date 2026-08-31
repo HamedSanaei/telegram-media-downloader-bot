@@ -169,12 +169,16 @@ class DestinationProbeResult:
 
 @dataclass(frozen=True, slots=True)
 class LoggerHealthSnapshot:
+    effective_destinations: int
     active_destinations: int
+    unreachable_destinations: int
     forbidden_destinations: int
+    disabled_destinations: int
     pending_effects: int
     retryable_effects: int
     uncertain_effects: int
     terminal_effects: int
+    oldest_pending_age_seconds: int
 
 
 def _require_utc(value: datetime, label: str) -> None:

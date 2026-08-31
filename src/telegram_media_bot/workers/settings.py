@@ -17,11 +17,13 @@ from arq.typing import WorkerSettingsBase
 
 from telegram_media_bot.application.ports.delivery import DeliveryGateway
 from telegram_media_bot.application.ports.download_engine import DownloadEngine
+from telegram_media_bot.application.services.audit_outbox import AuditOutboxProcessor
 from telegram_media_bot.application.services.audit_service import AuditService
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
 from telegram_media_bot.bootstrap.config import Settings, load_settings
+from telegram_media_bot.domain.audit import LoggerHealthSnapshot
 from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.models import (
     ComponentHealth,
@@ -60,6 +62,7 @@ from telegram_media_bot.infrastructure.storage.workspace import (
     cleanup_job_workspace,
     sweep_workspaces,
 )
+from telegram_media_bot.infrastructure.telegram.audit_delivery import TelegramAuditDelivery
 from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
 from telegram_media_bot.infrastructure.ytdlp.engine import YtDlpEngine
 from telegram_media_bot.telegram.bot_factory import (
@@ -70,6 +73,7 @@ from telegram_media_bot.telegram.bot_factory import (
 )
 from telegram_media_bot.telegram.delivery import RoutedDeliveryGateway
 from telegram_media_bot.workers.jobs import (
+    audit_dispatch_job,
     maintenance_job,
     process_download_job,
     process_highlight_tray_job,
@@ -101,7 +105,10 @@ async def startup(ctx: dict[str, Any]) -> None:
         audit_store = SqliteAuditRepository(settings.database_path())
         await asyncio.to_thread(audit_store.initialize)
         await asyncio.to_thread(audit_store.reconcile_config, settings.telegram.logger.channels)
-        audit = AuditService(audit_store, enabled=settings.telegram.logger.enabled)
+        audit = AuditService(
+            audit_store,
+            enabled=_worker_alerts_enabled(settings),
+        )
         inbound_store = SqliteInboundUpdateRepository(settings.database_path())
         await asyncio.to_thread(inbound_store.initialize)
         effect_store = SqliteEffectLedger(settings.database_path())
@@ -139,6 +146,24 @@ async def startup(ctx: dict[str, Any]) -> None:
             instagram_max_highlight_items=settings.media.instagram.max_highlight_items,
         )
         metrics = MetricsRegistry()
+        audit_processor = (
+            AuditOutboxProcessor(
+                audit_store,
+                TelegramAuditDelivery(bot),
+                observer=lambda outcome, category: metrics.record_audit_delivery(
+                    outcome=outcome.value,
+                    category=category.value,
+                ),
+            )
+            if settings.telegram.logger.enabled
+            else None
+        )
+        audit_snapshot = await asyncio.to_thread(audit_store.health_snapshot)
+        metrics.set_audit_outbox(
+            pending=audit_snapshot.pending_effects + audit_snapshot.retryable_effects,
+            uncertain=audit_snapshot.uncertain_effects,
+            oldest_pending_seconds=audit_snapshot.oldest_pending_age_seconds,
+        )
         cookie_health_service = CookieHealthService(
             store=cookie_health_store,
             checker=(
@@ -173,6 +198,8 @@ async def startup(ctx: dict[str, Any]) -> None:
             bot_identity_available=True,
             cookie_health_service=cookie_health_service,
             audit=audit,
+            audit_store=audit_store,
+            audit_processor=audit_processor,
             # The current public path remains operator-backed; this explicit project-owned
             # context is the seam used by later authenticated routing tasks.
             credential_context=ResolvedCredential.operator_public(),
@@ -375,6 +402,12 @@ async def _health_report(ctx: dict[str, Any]) -> HealthReport:
         ComponentHealth("telegram", telegram_ok),
         ComponentHealth("ffmpeg", shutil.which("ffmpeg") is not None),
         engine_health,
+        _logger_health_component(
+            settings,
+            await asyncio.to_thread(
+                cast(SqliteAuditRepository, ctx["audit_store"]).health_snapshot
+            ),
+        ),
     ]
     runtime = ctx.get("telegram_runtime")
     if settings.telegram.local_bot_api.enabled and isinstance(runtime, TelegramRuntime):
@@ -388,6 +421,37 @@ async def _health_report(ctx: dict[str, Any]) -> HealthReport:
             )
         )
     return HealthReport(checks=tuple(checks))
+
+
+def _logger_health_component(settings: Settings, snapshot: LoggerHealthSnapshot) -> ComponentHealth:
+    logger_settings = settings.telegram.logger
+    if not logger_settings.enabled:
+        state = "disabled"
+    elif snapshot.active_destinations:
+        state = "operational"
+    else:
+        state = "degraded"
+    detail = (
+        f"state={state};enabled={int(logger_settings.enabled)};"
+        f"configured={len(logger_settings.channels)};"
+        f"effective={snapshot.effective_destinations};active={snapshot.active_destinations};"
+        f"unreachable={snapshot.unreachable_destinations};"
+        f"forbidden={snapshot.forbidden_destinations};disabled={snapshot.disabled_destinations};"
+        f"pending={snapshot.pending_effects};retryable={snapshot.retryable_effects};"
+        f"uncertain={snapshot.uncertain_effects};terminal={snapshot.terminal_effects};"
+        f"oldest_pending_seconds={snapshot.oldest_pending_age_seconds};"
+        f"alerts={int(logger_settings.alerts_enabled)};"
+        f"mirror={int(logger_settings.submission_mirror_enabled)};"
+        f"privacy_attested={int(logger_settings.operator_privacy_attested)}"
+    )
+    # Logger delivery is deliberately secondary; degraded logger state must not make downloads
+    # unready. The detail is the operator readiness indicator and contains no destination IDs.
+    return ComponentHealth("operator_logger", True, detail)
+
+
+def _worker_alerts_enabled(settings: Settings) -> bool:
+    logger_settings = settings.telegram.logger
+    return logger_settings.enabled and logger_settings.alerts_enabled
 
 
 def _resume_notifier(delivery: DeliveryGateway) -> RecoveryNotifier:
@@ -436,6 +500,7 @@ class WorkerSettings(WorkerSettingsBase):
     )
     cron_jobs: tuple[Any, ...] = (
         cron(maintenance_job, minute=None, second={0, 30}, run_at_startup=True),
+        cron(audit_dispatch_job, minute=None, second={5, 35}, run_at_startup=False),
     )
     on_startup: Any = startup
     on_shutdown: Any = shutdown

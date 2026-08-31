@@ -14,8 +14,38 @@ from telegram_media_bot.domain.errors import ConfigurationError
 from telegram_media_bot.domain.models import ComponentHealth
 from telegram_media_bot.infrastructure.analytics import usage_chart_doctor
 from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
+from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
 from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
 from telegram_media_bot.infrastructure.ytdlp.engine import YtDlpEngine
+
+
+def test_logger_doctor_uses_safe_aggregate_durable_state(
+    settings: Settings, tmp_path: Path
+) -> None:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    raw["telegram"]["logger"].update(
+        {
+            "enabled": True,
+            "channels": [-1001234567890],
+            "alerts_enabled": True,
+        }
+    )
+    configured = Settings.model_validate(raw)
+    missing_healthy, missing_detail = cli._logger_doctor_health(configured)
+    assert not missing_healthy
+    assert missing_detail == "enabled;durable_state=missing"
+
+    repository = SqliteAuditRepository(configured.database_path())
+    repository.initialize()
+    repository.reconcile_config(configured.telegram.logger.channels)
+    healthy, detail = cli._logger_doctor_health(configured)
+
+    assert healthy
+    assert "effective=1" in detail
+    assert "active=1" in detail
+    assert "alerts=1" in detail
+    assert "-1001234567890" not in detail
 
 
 def test_config_check_does_not_print_configuration_or_secrets(

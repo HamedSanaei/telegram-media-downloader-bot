@@ -1,6 +1,6 @@
 # T032 - End-to-end logger rollout, migration, and operations
 
-**Status:** planned
+**Status:** complete
 
 ## Goal
 
@@ -103,3 +103,23 @@ owner, activation time, and rollback criteria.
 
 The complete migration, compatibility, backup/restore, staged rollout, observability, failure,
 rollback, and production-readiness checklist is approved for implementation.
+
+## Implementation record
+
+- Worker startup reruns additive audit initialization/reconciliation and creates one bounded native
+  Telegram dispatcher only when the logger is enabled. A separate 30-second cron drains at most 20
+  effects, so download maintenance cadence and job outcomes remain independent.
+- Operational alert admission follows `enabled && alerts_enabled`; accepted submissions retain
+  their independent mirror, operator-attestation, usable-destination, and per-user notice gates.
+- Delivery results update bounded outcome/category counters and aggregate pending, uncertain, and
+  oldest-pending gauges. `/ready` exposes a safe secondary `operator_logger` detail with feature
+  flags and counts but never makes ordinary downloads unready or reveals channel/user IDs.
+- Destination disable/removal/forbidden transitions terminalize only work that has not crossed the
+  external-send boundary. Unreachable work remains retryable, send-start ambiguity remains
+  `UNCERTAIN`, successful history is immutable, and re-enable never replays terminal history.
+- Linux and Windows managed manual backups pause filesystem writers, include configuration,
+  canonical cookies, and the complete SQLite/WAL/SHM state containing logger tables, then restore
+  the previously running services. Downloads/temp remain excluded.
+- `docs/OPERATIONS.md` now owns the staged activation, least-privilege review, metric thresholds,
+  permission-loss/outbox/uncertain/privacy incidents, backup verification, and state-preserving
+  rollback runbooks. No production activation, release, tag, deployment, or audit purge occurred.

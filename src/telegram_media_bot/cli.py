@@ -298,6 +298,9 @@ def _run_static_doctor_checks(
         readable = _cookie_file_readable(cookie)
         print(f"{'OK  ' if readable else 'FAIL'} gallery_dl_cookie_{source}")
         failed = failed or not readable
+    logger_healthy, logger_detail = _logger_doctor_health(settings)
+    print(f"{'OK  ' if logger_healthy else 'FAIL'} operator_logger: {logger_detail}")
+    failed = failed or not logger_healthy
     from telegram_media_bot.infrastructure.analytics.usage_chart_doctor import (
         check_usage_chart_runtime,
     )
@@ -328,6 +331,34 @@ def _run_static_doctor_checks(
             failed = True
             print("FAIL 7-Zip: neither configured executable nor compatible alias was found")
     return failed
+
+
+def _logger_doctor_health(settings: Settings) -> tuple[bool, str]:
+    logger_settings = settings.telegram.logger
+    if not logger_settings.enabled:
+        return True, "disabled"
+    database = settings.database_path()
+    if not database.is_file():
+        return False, "enabled;durable_state=missing"
+    from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
+
+    try:
+        snapshot = SqliteAuditRepository(database).health_snapshot()
+    except Exception:
+        return False, "enabled;durable_state=unavailable"
+    healthy = snapshot.active_destinations > 0
+    detail = (
+        f"enabled;configured={len(logger_settings.channels)};"
+        f"effective={snapshot.effective_destinations};active={snapshot.active_destinations};"
+        f"unreachable={snapshot.unreachable_destinations};"
+        f"forbidden={snapshot.forbidden_destinations};disabled={snapshot.disabled_destinations};"
+        f"pending={snapshot.pending_effects};retryable={snapshot.retryable_effects};"
+        f"uncertain={snapshot.uncertain_effects};terminal={snapshot.terminal_effects};"
+        f"oldest_pending_seconds={snapshot.oldest_pending_age_seconds};"
+        f"alerts={int(logger_settings.alerts_enabled)};"
+        f"mirror={int(logger_settings.submission_mirror_enabled)}"
+    )
+    return healthy, detail
 
 
 def _package_version_health(expected_version: str | None) -> tuple[bool, str]:

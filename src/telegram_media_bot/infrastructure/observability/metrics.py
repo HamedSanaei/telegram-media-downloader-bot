@@ -35,15 +35,19 @@ class MetricsRegistry:
         self._audit_delivery: dict[tuple[str, str], int] = defaultdict(int)
         self._audit_pending = 0
         self._audit_uncertain = 0
+        self._audit_oldest_pending_seconds = 0
 
     def record_audit_delivery(self, *, outcome: str, category: str) -> None:
         with self._lock:
             self._audit_delivery[(_label(outcome), _label(category))] += 1
 
-    def set_audit_outbox(self, *, pending: int, uncertain: int) -> None:
+    def set_audit_outbox(
+        self, *, pending: int, uncertain: int, oldest_pending_seconds: int = 0
+    ) -> None:
         with self._lock:
             self._audit_pending = max(0, pending)
             self._audit_uncertain = max(0, uncertain)
+            self._audit_oldest_pending_seconds = max(0, oldest_pending_seconds)
 
     def record_job(self, *, outcome: str, source: str = "unknown", error: str = "none") -> None:
         labels = (_label(outcome), _label(source), _label(error))
@@ -151,6 +155,7 @@ class MetricsRegistry:
             audit_delivery = dict(self._audit_delivery)
             audit_pending = self._audit_pending
             audit_uncertain = self._audit_uncertain
+            audit_oldest_pending_seconds = self._audit_oldest_pending_seconds
         lines = [
             "# HELP media_bot_jobs_total Completed jobs by outcome, source and error category.",
             "# TYPE media_bot_jobs_total counter",
@@ -234,6 +239,7 @@ class MetricsRegistry:
                 f"media_bot_queue_depth {queue_depth}",
                 f"media_bot_audit_outbox_pending {audit_pending}",
                 f"media_bot_audit_outbox_uncertain {audit_uncertain}",
+                f"media_bot_audit_outbox_oldest_pending_seconds {audit_oldest_pending_seconds}",
             )
         )
         return "\n".join(lines) + "\n"

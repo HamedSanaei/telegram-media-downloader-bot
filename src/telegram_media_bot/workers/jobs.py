@@ -24,6 +24,8 @@ from telegram_media_bot.application.ports.delivery import (
 from telegram_media_bot.application.ports.job_queue import JobQueue
 from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.application.ports.user_repository import UserRepository
+from telegram_media_bot.application.services.audit_outbox import AuditOutboxProcessor
+from telegram_media_bot.application.services.audit_sanitizer import safe_failure_class
 from telegram_media_bot.application.services.audit_service import AuditService
 from telegram_media_bot.application.services.cookie_health_service import (
     CookieHealthAlert,
@@ -108,6 +110,7 @@ from telegram_media_bot.domain.models import (
     StoryDeliveryMode,
 )
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
+from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
 from telegram_media_bot.infrastructure.storage.workspace import (
     cleanup_job_workspace,
     sweep_workspaces,
@@ -1238,6 +1241,45 @@ async def maintenance_job(ctx: dict[str, Any]) -> int:
 
     await logger.ainfo("maintenance_completed", **log_context)
     return total_removed
+
+
+async def audit_dispatch_job(ctx: dict[str, Any]) -> int:
+    """Drain one bounded logger batch without coupling it to download maintenance."""
+    processor = ctx.get("audit_processor")
+    audit_store = ctx.get("audit_store")
+    metrics = ctx.get("metrics")
+    if not isinstance(processor, AuditOutboxProcessor) or not isinstance(
+        audit_store, SqliteAuditRepository
+    ):
+        return 0
+    if not isinstance(metrics, MetricsRegistry):
+        return 0
+    try:
+        completed = await processor.dispatch_batch(limit=20)
+        snapshot = await asyncio.to_thread(audit_store.health_snapshot)
+    except Exception as exc:
+        failure_class = safe_failure_class(exc)
+        metrics.record_audit_delivery(outcome="dispatcher_failed", category="system")
+        await logger.aerror("audit_dispatch_failed", failure_class=failure_class)
+        return 0
+    metrics.set_audit_outbox(
+        pending=snapshot.pending_effects + snapshot.retryable_effects,
+        uncertain=snapshot.uncertain_effects,
+        oldest_pending_seconds=snapshot.oldest_pending_age_seconds,
+    )
+    await logger.ainfo(
+        "audit_dispatch_completed",
+        completed=completed,
+        pending=snapshot.pending_effects,
+        retryable=snapshot.retryable_effects,
+        uncertain=snapshot.uncertain_effects,
+        terminal=snapshot.terminal_effects,
+        oldest_pending_seconds=snapshot.oldest_pending_age_seconds,
+        active_destinations=snapshot.active_destinations,
+        unreachable_destinations=snapshot.unreachable_destinations,
+        forbidden_destinations=snapshot.forbidden_destinations,
+    )
+    return completed
 
 
 async def _handle_controlled_failure(

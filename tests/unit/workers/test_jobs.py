@@ -18,6 +18,7 @@ from aiogram.types import InlineKeyboardMarkup
 from arq import Retry
 
 from telegram_media_bot.application.ports.delivery import DeliveryGateway
+from telegram_media_bot.application.services.audit_outbox import AuditOutboxProcessor
 from telegram_media_bot.application.services.audit_service import AuditService
 from telegram_media_bot.application.services.cookie_health_service import (
     CookieHealthAlert,
@@ -25,7 +26,13 @@ from telegram_media_bot.application.services.cookie_health_service import (
 )
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.audit import AuditCategory, AuditEventType
+from telegram_media_bot.domain.audit import (
+    AuditCategory,
+    AuditDeliveryOutcome,
+    AuditDeliveryResult,
+    AuditEventType,
+    LoggerOutboxItem,
+)
 from telegram_media_bot.domain.cookie_health import (
     CookieHealthState,
     ProviderCookieHealth,
@@ -82,6 +89,15 @@ from telegram_media_bot.workers import jobs as jobs_module
 from telegram_media_bot.workers.jobs import process_download_job, process_inspection_job
 
 LOGGER_CHANNEL = -1001234567890
+
+
+class CapturingAuditDelivery:
+    def __init__(self) -> None:
+        self.items: list[LoggerOutboxItem] = []
+
+    async def deliver(self, item: LoggerOutboxItem) -> AuditDeliveryResult:
+        self.items.append(item)
+        return AuditDeliveryResult(AuditDeliveryOutcome.SUCCEEDED)
 
 
 def _load_audit_events(audit_store: SqliteAuditRepository) -> list[dict[str, object]]:
@@ -1094,6 +1110,10 @@ async def test_terminal_failure_emits_audit_event_without_admin_dm(
     assert events[0]["job_id"] == "opaque-job"
     assert "opaque-job" in str(events[0]["message"])
     assert "sensitive" not in str(events[0]["message"])
+    delivery = CapturingAuditDelivery()
+    assert await AuditOutboxProcessor(audit_store, delivery).dispatch_batch() == 1
+    assert delivery.items[0].destination_chat_id == LOGGER_CHANNEL
+    assert delivery.items[0].event.category is AuditCategory.ERROR
 
 
 def _cookie_alert(
@@ -1135,6 +1155,10 @@ def test_cookie_health_alert_emits_cookie_health_event(tmp_path: Path) -> None:
     assert events[0]["event_type"] == AuditEventType.COOKIE_HEALTH_CHANGED.value
     assert events[0]["provider"] == "instagram"
     assert "Instagram" in str(events[0]["message"])
+    delivery = CapturingAuditDelivery()
+    assert asyncio.run(AuditOutboxProcessor(audit_store, delivery).dispatch_batch()) == 1
+    assert delivery.items[0].destination_chat_id == LOGGER_CHANNEL
+    assert delivery.items[0].event.category is AuditCategory.COOKIE_HEALTH
 
 
 def test_runtime_auth_failure_routes_cookie_health_event(

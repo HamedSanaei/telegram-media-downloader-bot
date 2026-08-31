@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -84,6 +85,59 @@ def test_runtime_destination_enable_disable_and_removal(tmp_path: Path) -> None:
     assert repository.list_destinations() == ()
 
 
+def test_disabling_or_removing_destination_never_replays_old_pending_work(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "state.sqlite3"
+    repository = SqliteAuditRepository(path)
+    repository.initialize()
+    channel = -1001234567890
+    repository.add_runtime_destination(channel)
+    repository.enqueue(_event("before-disable"))
+
+    repository.set_destination_enabled(channel, False)
+
+    assert _state(path, "before-disable", channel) == LoggerOutboxState.FAILED_TERMINAL.value
+    assert repository.claim_pending() == ()
+    repository.set_destination_enabled(channel, True)
+    assert repository.claim_pending() == ()
+
+    repository.enqueue(_event("after-enable"))
+    delivered = repository.claim_pending()[0]
+    assert repository.mark_send_started(delivered)
+    repository.mark_succeeded(delivered)
+    repository.set_destination_enabled(channel, False)
+    repository.set_destination_enabled(channel, True)
+    assert _state(path, "after-enable", channel) == LoggerOutboxState.SUCCEEDED.value
+    assert repository.claim_pending() == ()
+
+    repository.enqueue(_event("before-remove"))
+    assert repository.remove_runtime_destination(channel)
+    assert _state(path, "before-remove", channel) == LoggerOutboxState.FAILED_TERMINAL.value
+    assert repository.claim_pending() == ()
+
+
+def test_forbidden_terminalizes_open_work_while_unreachable_remains_retryable(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "state.sqlite3"
+    repository = SqliteAuditRepository(path)
+    repository.initialize()
+    forbidden, unreachable = -1001234567890, -1001234567891
+    repository.reconcile_config((forbidden, unreachable))
+    repository.enqueue(_event("permission-change"))
+
+    repository.record_probe_health(
+        forbidden, LoggerDestinationHealth.FORBIDDEN, "TelegramForbidden"
+    )
+    repository.record_probe_health(
+        unreachable, LoggerDestinationHealth.UNREACHABLE, "TelegramNetworkError"
+    )
+
+    assert _state(path, "permission-change", forbidden) == LoggerOutboxState.FAILED_TERMINAL.value
+    assert [item.destination_chat_id for item in repository.claim_pending()] == [unreachable]
+
+
 def test_repeated_initialization_upgrades_legacy_database_without_rewriting_rows(
     tmp_path: Path,
 ) -> None:
@@ -104,7 +158,13 @@ def test_repeated_initialization_upgrades_legacy_database_without_rewriting_rows
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }
-    assert {"logger_destinations", "audit_events", "logger_outbox"} <= tables
+    assert {
+        "logger_destinations",
+        "audit_events",
+        "logger_outbox",
+        "audit_submission_groups",
+        "logger_privacy_acknowledgements",
+    } <= tables
     assert repository.list_destinations() == ()
 
 
@@ -144,6 +204,11 @@ class OutcomeDelivery:
         return outcome
 
 
+class CancelledDelivery:
+    async def deliver(self, _item: LoggerOutboxItem) -> AuditDeliveryResult:
+        raise asyncio.CancelledError
+
+
 async def test_per_destination_success_terminal_and_uncertain_are_isolated(
     tmp_path: Path,
 ) -> None:
@@ -167,7 +232,12 @@ async def test_per_destination_success_terminal_and_uncertain_are_isolated(
         }
     )
 
-    completed = await AuditOutboxProcessor(repository, delivery).dispatch_batch()
+    observed: list[tuple[AuditDeliveryOutcome, AuditCategory]] = []
+    completed = await AuditOutboxProcessor(
+        repository,
+        delivery,
+        observer=lambda outcome, category: observed.append((outcome, category)),
+    ).dispatch_batch()
 
     assert completed == 1
     assert _state(path, "event-1", succeeded) == LoggerOutboxState.SUCCEEDED.value
@@ -176,6 +246,11 @@ async def test_per_destination_success_terminal_and_uncertain_are_isolated(
     destinations = {item.chat_id: item for item in repository.list_destinations()}
     assert destinations[forbidden].health is LoggerDestinationHealth.FORBIDDEN
     assert repository.claim_pending() == ()
+    assert set(observed) == {
+        (AuditDeliveryOutcome.SUCCEEDED, AuditCategory.SYSTEM),
+        (AuditDeliveryOutcome.FAILED_TERMINAL, AuditCategory.SYSTEM),
+        (AuditDeliveryOutcome.UNCERTAIN, AuditCategory.SYSTEM),
+    }
 
 
 async def test_typed_retryable_failure_retries_but_generic_exception_never_does(
@@ -240,3 +315,22 @@ async def test_retry_limit_becomes_terminal(tmp_path: Path) -> None:
 
     assert _state(path, "event-1", channel) == LoggerOutboxState.FAILED_TERMINAL.value
     assert repository.health_snapshot().terminal_effects == 1
+
+
+async def test_dispatch_cancellation_leaves_send_started_for_uncertain_recovery(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "state.sqlite3"
+    repository = SqliteAuditRepository(path)
+    repository.initialize()
+    channel = -1001234567890
+    repository.reconcile_config((channel,))
+    repository.enqueue(_event())
+
+    with pytest.raises(asyncio.CancelledError):
+        await AuditOutboxProcessor(repository, CancelledDelivery()).dispatch_batch()
+
+    assert _state(path, "event-1", channel) == LoggerOutboxState.SENDING.value
+    _expire_and_make_due(path)
+    assert repository.recover_expired_leases() == (0, 1)
+    assert _state(path, "event-1", channel) == LoggerOutboxState.UNCERTAIN.value

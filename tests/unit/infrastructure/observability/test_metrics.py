@@ -14,6 +14,8 @@ def test_metrics_render_fixed_prometheus_contract() -> None:
         duration_seconds=0.25,
     )
     metrics.set_queue_depth(2)
+    metrics.record_audit_delivery(outcome="succeeded", category="user_submission")
+    metrics.set_audit_outbox(pending=3, uncertain=1, oldest_pending_seconds=45)
     rendered = metrics.render()
     assert 'outcome="failed",source="bad_label",error="internal"' in rendered
     assert "media_bot_job_duration_seconds_sum 1.500000" in rendered
@@ -24,3 +26,7 @@ def test_metrics_render_fixed_prometheus_contract() -> None:
     assert "media_bot_workspace_deleted_directories_total 1" in rendered
     assert "media_bot_workspace_cleanup_duration_seconds_total 0.250000" in rendered
     assert "media_bot_queue_depth 2" in rendered
+    assert 'outcome="succeeded",category="user_submission"} 1' in rendered
+    assert "media_bot_audit_outbox_pending 3" in rendered
+    assert "media_bot_audit_outbox_uncertain 1" in rendered
+    assert "media_bot_audit_outbox_oldest_pending_seconds 45" in rendered

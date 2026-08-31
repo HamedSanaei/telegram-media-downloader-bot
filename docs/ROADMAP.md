@@ -66,7 +66,7 @@ users before purchasing exists. Production purchasing stays disabled until T024 
 verified. This VIP means a paid bot entitlement; it does not restore the removed Telegram Premium,
 Telethon/MTProto staging-channel, Premium upload queue, or copy-delivery architecture.
 
-## Milestone 5 - Operational Logger and private audit channels — in progress (T026/T029 complete)
+## Milestone 5 - Operational Logger and private audit channels — complete (T026-T032)
 
 - T026 Operator Logger domain and event-routing foundation — complete
 - T027 Durable logger destinations, configuration, and outbox — complete; depends on T026
@@ -74,7 +74,7 @@ Telethon/MTProto staging-channel, Premium upload queue, or copy-delivery archite
 - T029 Operational error and Cookie Health notification migration — complete; depends on T026-T028
 - T030 Durable accepted-submission audit mirror — complete; depends on T026/T027
 - T031 Privacy, retention, access, and secret-exclusion controls — complete; depends on T026-T030
-- T032 End-to-end logger rollout, migration, and operations — planned; depends on T026-T031
+- T032 End-to-end logger rollout, migration, and operations — complete; depends on T026-T031
 
 Dependency graph:
 
@@ -97,16 +97,17 @@ transitions/reminders as typed logger events with no admin-DM fallback. T030 now
 accepted-submission events after durable job creation, resolves bounded album source identities,
 and supplies native `copyMessage`/`copyMessages` delivery. T031 adds the exact Persian notice,
 versioned durable user acknowledgement, explicit operator attestation, indefinite retention, and
-the permanent secret-exclusion boundary. Delivery draining and rollout operations remain planned
-in T032. Alerts and submission
-mirroring will be separately enabled; mirroring also requires the operator privacy attestation and
+the permanent secret-exclusion boundary. T032 wires bounded worker draining, aggregate health and
+metrics, destination lifecycle isolation, consistent backups, and staged rollout/incident/rollback
+runbooks. Alerts and submission mirroring are separately enabled; mirroring also requires the
+operator privacy attestation and
 each user's acknowledgement. Audit content has indefinite retention and no automatic Telegram
 deletion. ADR-036 through ADR-038 are accepted.
 
 ## Milestone 6 - CI performance and developer velocity
 
-- T033 Fast-feedback CI and conditional heavy validation — complete; independent of T015-T032
-  runtime feature work
+- T033 Fast-feedback CI and conditional heavy validation — complete; CI infrastructure remains
+  orthogonal to the now-complete T015-T023 and T025-T032 runtime work
 
 Implemented: a deterministic, unit-testable changed-path classifier, a fast
 `quality` lane for ordinary source/docs changes, conditional heavy lanes

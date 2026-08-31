@@ -327,6 +327,56 @@
       "title": "ImageValidationSection",
       "type": "object"
     },
+    "InboundUpdatesSection": {
+      "additionalProperties": false,
+      "description": "Retention and cleanup of the durable Telegram inbound-update inbox.",
+      "properties": {
+        "effect_pending_stale_minutes": {
+          "default": 10,
+          "maximum": 1440,
+          "minimum": 1,
+          "title": "Effect Pending Stale Minutes",
+          "type": "integer"
+        },
+        "completed_retention_days": {
+          "default": 14,
+          "maximum": 365,
+          "minimum": 1,
+          "title": "Completed Retention Days",
+          "type": "integer"
+        },
+        "terminal_failure_retention_days": {
+          "default": 30,
+          "maximum": 365,
+          "minimum": 1,
+          "title": "Terminal Failure Retention Days",
+          "type": "integer"
+        },
+        "cleanup_batch_size": {
+          "default": 500,
+          "maximum": 5000,
+          "minimum": 1,
+          "title": "Cleanup Batch Size",
+          "type": "integer"
+        },
+        "stuck_after_minutes": {
+          "default": 60,
+          "maximum": 10080,
+          "minimum": 1,
+          "title": "Stuck After Minutes",
+          "type": "integer"
+        },
+        "effect_retention_days": {
+          "default": 30,
+          "maximum": 365,
+          "minimum": 1,
+          "title": "Effect Retention Days",
+          "type": "integer"
+        }
+      },
+      "title": "InboundUpdatesSection",
+      "type": "object"
+    },
     "InstagramSection": {
       "additionalProperties": false,
       "properties": {
@@ -704,6 +754,9 @@
       "properties": {
         "update": {
           "$ref": "#/$defs/UpdateOperationsSection"
+        },
+        "inbound_updates": {
+          "$ref": "#/$defs/InboundUpdatesSection"
         }
       },
       "title": "OperationsSection",
@@ -773,6 +826,92 @@
         }
       },
       "title": "QueueSection",
+      "type": "object"
+    },
+    "RecoverySection": {
+      "additionalProperties": false,
+      "description": "Bounded automatic recovery of explicitly recoverable failed media jobs.",
+      "properties": {
+        "cookie_remediation_enabled": {
+          "default": true,
+          "title": "Cookie Remediation Enabled",
+          "type": "boolean"
+        },
+        "app_fix_recovery_enabled": {
+          "default": true,
+          "title": "App Fix Recovery Enabled",
+          "type": "boolean"
+        },
+        "max_recovery_attempts": {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Max Recovery Attempts",
+          "type": "integer"
+        },
+        "max_recoverable_age_days": {
+          "default": 7,
+          "maximum": 365,
+          "minimum": 1,
+          "title": "Max Recoverable Age Days",
+          "type": "integer"
+        },
+        "notify_on_resume": {
+          "default": true,
+          "title": "Notify On Resume",
+          "type": "boolean"
+        },
+        "remediation_batch_size": {
+          "default": 20,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Remediation Batch Size",
+          "type": "integer"
+        },
+        "startup_recovery_batch_size": {
+          "default": 20,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Startup Recovery Batch Size",
+          "type": "integer"
+        },
+        "reconciliation_batch_size": {
+          "default": 50,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Reconciliation Batch Size",
+          "type": "integer"
+        },
+        "queue_pressure_threshold": {
+          "anyOf": [
+            {
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Queue Pressure Threshold"
+        },
+        "queue_backlog_per_worker_slot": {
+          "default": 4,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Queue Backlog Per Worker Slot",
+          "type": "integer"
+        },
+        "max_recovery_per_user": {
+          "default": 5,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Recovery Per User",
+          "type": "integer"
+        }
+      },
+      "title": "RecoverySection",
       "type": "object"
     },
     "RedisSection": {
@@ -938,6 +1077,48 @@
       "title": "StorageSection",
       "type": "object"
     },
+    "TelegramLoggerSection": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "channels": {
+          "default": [],
+          "items": {
+            "type": "integer"
+          },
+          "title": "Channels",
+          "type": "array"
+        },
+        "alerts_enabled": {
+          "default": false,
+          "title": "Alerts Enabled",
+          "type": "boolean"
+        },
+        "submission_mirror_enabled": {
+          "default": false,
+          "title": "Submission Mirror Enabled",
+          "type": "boolean"
+        },
+        "operator_privacy_attested": {
+          "default": false,
+          "title": "Operator Privacy Attested",
+          "type": "boolean"
+        },
+        "privacy_notice_version": {
+          "default": "logger-v1",
+          "maxLength": 32,
+          "minLength": 1,
+          "title": "Privacy Notice Version",
+          "type": "string"
+        }
+      },
+      "title": "TelegramLoggerSection",
+      "type": "object"
+    },
     "TelegramSection": {
       "additionalProperties": false,
       "properties": {
@@ -1042,6 +1223,9 @@
         "required_channels": {
           "$ref": "#/$defs/RequiredChannelsSection"
         },
+        "logger": {
+          "$ref": "#/$defs/TelegramLoggerSection"
+        },
         "progress_min_interval_seconds": {
           "default": 3.0,
           "maximum": 60.0,
@@ -1118,6 +1302,164 @@
         }
       },
       "title": "UpdateOperationsSection",
+      "type": "object"
+    },
+    "VaultKeyRingSection": {
+      "additionalProperties": false,
+      "description": "Ignored least-privilege key ring for the encrypted Instagram credential vault (T017).\n\nKeys are 32-byte AES-256 keys supplied as 64 hex characters and never leave configuration,\nlogs, SQLite, source, images, or metrics. ``active_key`` is used for new encryptions;\n``retained_keys`` are decrypt-only for rotation. All keys are optional so installs with user\ncredentials disabled start without any key material.",
+      "properties": {
+        "active_key_id": {
+          "default": "",
+          "title": "Active Key Id",
+          "type": "string"
+        },
+        "active_key": {
+          "anyOf": [
+            {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Key"
+        },
+        "retained_keys": {
+          "additionalProperties": {
+            "format": "password",
+            "type": "string",
+            "writeOnly": true
+          },
+          "title": "Retained Keys",
+          "type": "object"
+        }
+      },
+      "title": "VaultKeyRingSection",
+      "type": "object"
+    },
+    "WebCompanionSection": {
+      "additionalProperties": false,
+      "description": "Separate least-privilege browser/callback boundary (T016), disabled by default.\n\nThe main (bot) settings surface additionally carries the bot-side handoff signing key, because\nthe bot mints secure connection links. The companion process uses a purpose-built reduced\nsettings model (``bootstrap.companion.CompanionSettings``) that never maps the signing key and\nnever maps ``telegram``, so its process objects contain no bot token and no signer.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "host": {
+          "default": "127.0.0.1",
+          "title": "Host",
+          "type": "string"
+        },
+        "port": {
+          "default": 8090,
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        },
+        "public_base_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Public Base Url"
+        },
+        "session_max_seconds": {
+          "default": 300,
+          "maximum": 3600,
+          "minimum": 60,
+          "title": "Session Max Seconds",
+          "type": "integer"
+        },
+        "interactive_flow_max_seconds": {
+          "default": 600,
+          "maximum": 1800,
+          "minimum": 60,
+          "title": "Interactive Flow Max Seconds",
+          "type": "integer"
+        },
+        "interactive_flow_max_sessions": {
+          "default": 100,
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Interactive Flow Max Sessions",
+          "type": "integer"
+        },
+        "body_limit_bytes": {
+          "default": 65536,
+          "maximum": 1048576,
+          "minimum": 1024,
+          "title": "Body Limit Bytes",
+          "type": "integer"
+        },
+        "read_timeout_seconds": {
+          "default": 10.0,
+          "maximum": 60.0,
+          "minimum": 1.0,
+          "title": "Read Timeout Seconds",
+          "type": "number"
+        },
+        "rate_limit_per_minute": {
+          "default": 60,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Rate Limit Per Minute",
+          "type": "integer"
+        },
+        "trusted_proxies": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Trusted Proxies",
+          "type": "array"
+        },
+        "handoff_clock_skew_seconds": {
+          "default": 30,
+          "maximum": 300,
+          "minimum": 0,
+          "title": "Handoff Clock Skew Seconds",
+          "type": "integer"
+        },
+        "handoff_verification_key": {
+          "anyOf": [
+            {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Handoff Verification Key"
+        },
+        "handoff_signing_key": {
+          "anyOf": [
+            {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Handoff Signing Key"
+        }
+      },
+      "title": "WebCompanionSection",
       "type": "object"
     },
     "WorkspaceCleanupSection": {
@@ -1321,6 +1663,15 @@
     },
     "cookie_health": {
       "$ref": "#/$defs/CookieHealthSection"
+    },
+    "recovery": {
+      "$ref": "#/$defs/RecoverySection"
+    },
+    "web_companion": {
+      "$ref": "#/$defs/WebCompanionSection"
+    },
+    "vault": {
+      "$ref": "#/$defs/VaultKeyRingSection"
     }
   },
   "required": [

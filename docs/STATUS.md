@@ -116,11 +116,15 @@ cannot be falsely removed through the UI. T029 is complete: terminal operational
 Cookie Health transition/reminder alerts now route as typed `ERROR`/`COOKIE_HEALTH` audit events
 into the durable outbox instead of being broadcast to every `telegram.admin_ids`; with no logger
 or destinations the worker only records structured logs, and logger storage faults can never
-change a user job outcome. T030 accepted-submission mirroring and T031 privacy/retention controls
-are complete; T032 E2E rollout remains planned. Mirroring defaults off and requires explicit
+change a user job outcome. T030 accepted-submission mirroring, T031 privacy/retention controls, and
+T032 E2E rollout/operations are complete. Mirroring defaults off and requires explicit
 operator attestation, the exact Persian privacy notice, a versioned durable acknowledgement from
 each submitting user, and a usable private destination. Retention is indefinite with no automatic
 Telegram purge; media cleanup remains unchanged. ADR-036 through ADR-038 are accepted.
+The worker now drains at most 20 logger effects every 30 seconds, emits bounded aggregate
+outcome/depth/age metrics and safe secondary readiness detail, isolates destination lifecycle
+changes, and preserves `UNCERTAIN` sends. Managed backups and staged activation/incident/rollback
+runbooks cover the complete subsystem; no deployment or feature activation was performed.
 
 T033 implements the fast-feedback CI tiering: a repository-owned deterministic
 changed-path classifier (`scripts/ci_change_policy.py`), a fast `quality` lane for ordinary
@@ -161,10 +165,11 @@ images. Mixed posts download original images with gallery-dl's Instagram video o
 download videos through yt-dlp from the canonical post URL, then reconcile exact counts and merge
 safe source ordinals. Photo/video albums and ordered document/video runs are capped at ten items;
 document images retain the exact validated gallery-dl bytes, filename extension, and format.
-Terminal inspection/download failures and uncertain deliveries now generate a redacted private
-alert for every uniquely configured administrator after retries are exhausted. Cancellation,
-intermediate retries, URLs, user/chat IDs, filenames, paths, and raw exceptions stay outside the
-alert contract, and one unreachable administrator cannot affect other alerts or job cleanup.
+Eligible terminal inspection/download failures and uncertain deliveries now enqueue a redacted
+typed event for each effective private Operator Logger destination after retries are exhausted; no
+automatic administrator-DM broadcast remains. Cancellation, intermediate retries, URLs, filenames,
+paths, and raw exceptions stay outside the alert contract. Each logger destination is isolated and
+cannot affect other destinations, user job outcomes, or cleanup.
 
 Final v1.3.0 Python, architecture, security, package, contract, Compose, and Docker results are
 recorded in `docs/HANDOFF_REPORT.md` after the release-quality run.

@@ -230,14 +230,67 @@ The explicit full-cookie download is the sole exception and is restricted to a c
 administrator in a private bot chat; operators must delete or secure the resulting Telegram
 document according to their credential policy.
 
-Each final inspection/download failure and every `delivery_uncertain` result is also sent privately
-to every unique configured administrator. Intermediate retries, cancellations, and successful jobs
-do not generate alerts. Alerts contain only the opaque job ID, job kind, normalized source,
-terminal status, stable error category, and attempt number. Each administrator must have opened the
-bot's private chat at least once; a blocked/unreachable administrator is counted in a redacted
-worker warning without preventing delivery to other administrators or changing the job outcome.
-Use `/failed` as the durable fallback because alert messages themselves are intentionally not
-stored or replayed.
+Eligible terminal inspection/download failures, `delivery_uncertain`, and Cookie Health transitions
+route to the durable Operator Logger outbox when its alert gate is enabled. They are not broadcast
+to administrator private chats. Alerts contain only the opaque job ID, job kind, normalized source,
+terminal status, stable error category, and attempt number. `/failed` remains the durable job-state
+inspection path; logger delivery failure never changes the user job result.
+
+## Operator Logger rollout and incident runbook
+
+The logger is an optional, secondary subsystem. SQLite/WAL is its durable truth; Redis does not own
+logger delivery. The worker claims at most 20 effects every 30 seconds. A pre-send restart safely
+retries an expired lease, while an expired lease after send start becomes `UNCERTAIN` and is never
+automatically resent. Disabling/removing/forbidding a destination terminalizes work that has not
+crossed the send boundary; successful history and in-flight/uncertain evidence are preserved.
+
+Before any activation, assign a rollout owner and UTC change window, review private-channel
+membership (minimum humans), grant the bot only membership/posting access, and run `tmb backup`.
+The managed backup temporarily stops the bot/worker/Local API writers, captures configuration,
+`.env`, canonical cookies, and the whole `data/state` directory (including the SQLite database and
+any WAL/SHM/logger rows), restores exactly the previously running services, and excludes download
+and temporary workspaces. Protect the archive as credential-bearing material. Run `tmb doctor`,
+`tmb status`, and the internal `/ready` and `/metrics` checks after service restoration.
+
+Activate in this order, restarting after each reviewed configuration change:
+
+1. Keep `telegram.logger.enabled`, `alerts_enabled`, and `submission_mirror_enabled` false; start the
+   old database/configuration once to prove additive initialization and ordinary downloads.
+2. Add/test the private destination from `🧾 کانال‌های لاگر` (or configure `channels`), confirm the
+   probe proves channel type, bot membership, and posting permission, then enable the destination.
+3. Set only `logger.enabled: true`; confirm the bounded dispatcher, safe health detail, and empty
+   outbox gauges without admitting events.
+4. Set `alerts_enabled: true`; verify one controlled terminal operational event and one Cookie
+   Health transition reach the channel without any automatic admin DM.
+5. Review the exact Persian notice and indefinite retention, set `operator_privacy_attested: true`,
+   then set `submission_mirror_enabled: true`. Verify an unacknowledged user sees the notice before
+   acceptance, acknowledgement creates no mirror, and the next accepted submission copies once.
+6. Record the owner, activation time, backup archive, config diff, destination probe, metric
+   baseline, and rollback criteria. T024 remains blocked; no payment/VIP credential event is enabled
+   by this rollout, and release `1.3.7` remains forbidden.
+
+Safe readiness detail is exposed as `operator_logger` with only configured/effective/health counts,
+feature flags, outbox states, and oldest-pending age—never IDs, URLs, captions, usernames, or
+secrets. Metrics are limited to delivery outcome/category and aggregate pending/uncertain/age
+gauges. Recommended initial alerts are: any forbidden destination; logger enabled with zero active
+destinations for 2 minutes; oldest pending age above 300 seconds or pending depth above 20 for 10
+minutes; any `UNCERTAIN` effect; or monotonic terminal-effect growth over 15 minutes.
+
+For permission loss or channel removal, disable the destination first, inspect the aggregate health
+and worker event `audit_dispatch_completed`, repair membership/posting permission, use the admin
+probe, then re-enable. Historical terminal/uncertain work is not replayed; generate a new controlled
+test event. For outbox growth, check Telegram reachability, worker scheduling, disk/SQLite health,
+and the destination probe. For `UNCERTAIN`, inspect the private channel and event identity, record a
+manual resolution, and never reset it to retryable. For a privacy or secret incident, immediately
+turn off both event gates, restrict channel membership, preserve SQLite/log/backup evidence, rotate
+the affected credential outside the bot, and follow the organization's incident process; do not
+delete user messages or durable state as first response.
+
+Rollback sets `submission_mirror_enabled`, `alerts_enabled`, and then `logger.enabled` false and
+restores the matching pre-change configuration. It does not delete destinations, acknowledgements,
+events, outbox rows, or Telegram copies. Audit content and safe metadata remain indefinitely
+retained with no automatic purge; any future manual purge requires its own bounded, idempotent,
+independently retried design and approval.
 
 Weekly and monthly administrator charts are generated entirely in memory with Pillow. The font is
 `telegram_media_bot/assets/fonts/NotoSans-Regular.ttf`, licensed by the adjacent `OFL.txt`, and is
@@ -256,6 +309,8 @@ Recommended starting alerts (tune after measuring normal traffic):
 - queue depth exceeds `2 * queue.max_jobs` for 10 minutes;
 - failure rate exceeds 10% over 15 minutes or regresses by more than 2 percentage points in canary;
 - any `delivery_uncertain` record exists for more than 5 minutes;
+- any Operator Logger destination is forbidden, any logger effect is uncertain, or the oldest
+  pending logger effect exceeds 5 minutes;
 - storage usage exceeds 80%, cleanup reports repeated failures, or no successful job is observed
   during a known-active traffic window.
 

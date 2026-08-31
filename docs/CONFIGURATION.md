@@ -70,6 +70,18 @@ existing required-channel bypass. Their inspection/download activity remains dur
 idempotency but is excluded from public weekly, monthly, and complete usage KPIs. Changing the list
 takes effect when the bot restarts and reloads `config.yaml`.
 
+`telegram.logger` is strict and fully off by default. `enabled` allows the durable dispatcher;
+`alerts_enabled` independently admits terminal operational/Cookie Health events, and
+`submission_mirror_enabled` admits accepted-submission copies only when
+`operator_privacy_attested` is also true. `channels` is a unique list of numeric `-100...` private
+channel IDs and reconciles with runtime destinations as a protected union. The configured
+`privacy_notice_version` is a bounded non-secret identifier: bump it after any material notice
+change so each user must acknowledge the exact Persian notice once again. Submission mirroring also
+requires at least one usable destination and the current user's durable acknowledgement. Unknown
+keys, unsafe versions, duplicate/invalid IDs, or capability flags with `enabled: false` fail strict
+configuration. These flags do not change ordinary download behavior; logger faults close only the
+audit path.
+
 `yt_dlp.proxy_enabled` controls only source inspection/download requests. Supported schemes are
 HTTP, HTTPS, SOCKS4, SOCKS4a, SOCKS5, and SOCKS5h. A legacy configuration that has `proxy` but omits
 `proxy_enabled` remains enabled; explicit `false` always disables it. The value is a secret and is
