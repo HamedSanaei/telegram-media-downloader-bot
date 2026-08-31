@@ -5,7 +5,9 @@ from typing import Protocol
 from telegram_media_bot.domain.audit import (
     AuditDeliveryResult,
     AuditEvent,
+    DestinationProbeResult,
     LoggerDestination,
+    LoggerDestinationHealth,
     LoggerHealthSnapshot,
     LoggerOutboxItem,
 )
@@ -18,6 +20,9 @@ class AuditRepository(Protocol):
     def add_runtime_destination(self, chat_id: int) -> LoggerDestination: ...
     def remove_runtime_destination(self, chat_id: int) -> bool: ...
     def set_destination_enabled(self, chat_id: int, enabled: bool) -> LoggerDestination: ...
+    def record_probe_health(
+        self, chat_id: int, health: LoggerDestinationHealth, failure_class: str | None = None
+    ) -> LoggerDestination | None: ...
     def enqueue(self, event: AuditEvent) -> int: ...
     def recover_expired_leases(self) -> tuple[int, int]: ...
     def claim_pending(self, *, limit: int = 20) -> tuple[LoggerOutboxItem, ...]: ...
@@ -33,4 +38,10 @@ class AuditDeliveryPort(Protocol):
     async def deliver(self, item: LoggerOutboxItem) -> AuditDeliveryResult: ...
 
 
-__all__ = ["AuditDeliveryPort", "AuditRepository"]
+class LoggerDestinationVerifier(Protocol):
+    """Probe a Telegram channel and prove bot posting permission (T028)."""
+
+    async def probe(self, chat_id: int) -> DestinationProbeResult: ...
+
+
+__all__ = ["AuditDeliveryPort", "AuditRepository", "LoggerDestinationVerifier"]

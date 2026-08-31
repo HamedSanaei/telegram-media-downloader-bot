@@ -20,11 +20,21 @@ from aiogram.types import (
 
 from telegram_media_bot.application.ports.cookie_management import CookieManager
 from telegram_media_bot.application.ports.usage_analytics import UsageChartRenderer
+from telegram_media_bot.application.services.audit_destination_admin import (
+    ConfigOwnedLoggerChannelError,
+    InvalidLoggerChannelError,
+    LoggerDestinationAdminService,
+)
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.analytics import UsageReport, UsageReportPeriod
+from telegram_media_bot.domain.audit import (
+    DestinationProbeOutcome,
+    LoggerDestination,
+    LoggerDestinationHealth,
+)
 from telegram_media_bot.domain.cookie_health import CookieHealthState, ProviderCookieHealth
 from telegram_media_bot.domain.cookies import (
     MAX_COOKIE_UPLOAD_BYTES,
@@ -49,16 +59,21 @@ from telegram_media_bot.telegram.admin_menu import (
     ADMIN_COOKIE_UPLOAD_BUTTON,
     ADMIN_DOWNLOAD_BUTTON,
     ADMIN_FULL_REPORT_BUTTON,
+    ADMIN_LOGGER_ADD_BUTTON,
+    ADMIN_LOGGER_BUTTON,
     ADMIN_MANAGEMENT_BUTTONS,
     ADMIN_MONTHLY_REPORT_BUTTON,
     ADMIN_REFRESH_MENU_BUTTON,
     ADMIN_WEEKLY_REPORT_BUTTON,
     AdminCookieState,
     AdminDownloadState,
+    AdminLoggerState,
     build_admin_cookie_health_inline_keyboard,
     build_admin_cookie_health_keyboard,
     build_admin_cookie_keyboard,
     build_admin_download_prompt_keyboard,
+    build_admin_logger_inline_keyboard,
+    build_admin_logger_keyboard,
     build_admin_main_keyboard,
     build_admin_report_inline_keyboard,
 )
@@ -94,6 +109,20 @@ COOKIE_UPLOAD_DOCUMENT_REQUIRED_TEXT = "لطفاً فایل cookies.txt را ب�
 COOKIE_PRIVATE_CHAT_REQUIRED_TEXT = "مدیریت کوکی فقط در گفت‌وگوی خصوصی با ربات مجاز است."
 COOKIE_HEALTH_MENU_TEXT = "🍪 سلامت کوکی‌ها"  # noqa: RUF001
 COOKIE_HEALTH_UNAVAILABLE_TEXT = "سرویس سلامت کوکی در دسترس نیست."
+LOGGER_MENU_TEXT = "🧾 مدیریت کانال‌های لاگر"
+LOGGER_UNAVAILABLE_TEXT = "سرویس لاگر در دسترس نیست."
+LOGGER_DISABLED_TEXT = (
+    "⚠️ لاگر در پیکربندی غیرفعال است؛ کانال‌ها فقط مدیریت می‌شوند و ارسال انجام نمی‌شود."  # noqa: RUF001
+)
+LOGGER_ADD_PROMPT_TEXT = "شناسه عددی کانال را به شکل -100... ارسال کنید."
+LOGGER_INVALID_ID_TEXT = "❌ شناسه نامعتبر است؛ شناسه عددی کانال باید با -100... شروع شود."
+LOGGER_ADDED_TEXT = "✅ کانال لاگر افزوده شد و وضعیت آن بررسی می‌شود."
+LOGGER_REMOVED_TEXT = "🗑️ کانال لاگر حذف شد."
+LOGGER_CONFIG_OWNED_TEXT = "کانال پیکربندی‌شده را نمی‌توان از اینجا حذف کرد."
+LOGGER_NOT_FOUND_TEXT = "کانال لاگر یافت نشد."
+LOGGER_EMPTY_TEXT = "هیچ کانال لاگری ثبت نشده است."
+LOGGER_PRIVATE_CHAT_REQUIRED_TEXT = "مدیریت کانال‌های لاگر فقط در گفت‌وگوی خصوصی با ربات مجاز است."
+LOGGER_TEST_PROGRESS_TEXT = "🔍 در حال آزمایش کانال…"
 COOKIE_HEALTH_CHECK_PROGRESS_TEXT = "🔍 در حال بررسی محلی فایل کوکی‌ها…"  # noqa: RUF001
 COOKIE_HEALTH_CHECK_FAILED_TEXT = "❌ بررسی محلی کوکی‌ها با خطا مواجه شد؛ دوباره تلاش کنید."  # noqa: RUF001
 
@@ -135,6 +164,7 @@ def build_admin_router(
     cookie_manager: CookieManager | None = None,
     cookie_health_service: CookieHealthService | None = None,
     recovery_service: JobRecoveryService | None = None,
+    audit_admin: LoggerDestinationAdminService | None = None,
 ) -> Router:
     router = Router(name="admin")
     reports = AdminReportCoordinator()
@@ -173,6 +203,108 @@ def build_admin_router(
             return
         await state.clear()
         await message.answer(ADMIN_MENU_TEXT, reply_markup=build_admin_main_keyboard())
+
+    @router.message(F.text == ADMIN_LOGGER_BUTTON)
+    async def open_logger_menu(message: Message, state: FSMContext) -> None:
+        if not await _authorize_private_admin_message(
+            message, state, settings, LOGGER_PRIVATE_CHAT_REQUIRED_TEXT
+        ):
+            return
+        await state.clear()
+        if audit_admin is None:
+            await message.answer(LOGGER_UNAVAILABLE_TEXT, reply_markup=build_admin_main_keyboard())
+            return
+        destinations = await asyncio.to_thread(audit_admin.list)
+        await message.answer(
+            _render_logger_destinations(
+                destinations, logger_enabled=settings.telegram.logger.enabled
+            ),
+            reply_markup=build_admin_logger_inline_keyboard(destinations),
+        )
+
+    @router.message(F.text == ADMIN_LOGGER_ADD_BUTTON)
+    async def begin_logger_add(message: Message, state: FSMContext) -> None:
+        if not await _authorize_private_admin_message(
+            message, state, settings, LOGGER_PRIVATE_CHAT_REQUIRED_TEXT
+        ):
+            return
+        if audit_admin is None:
+            await message.answer(LOGGER_UNAVAILABLE_TEXT, reply_markup=build_admin_main_keyboard())
+            return
+        await state.set_state(AdminLoggerState.awaiting_add_chat_id)
+        await message.answer(LOGGER_ADD_PROMPT_TEXT, reply_markup=build_admin_logger_keyboard())
+
+    @router.message(StateFilter(AdminLoggerState.awaiting_add_chat_id))
+    async def receive_logger_chat_id(message: Message, state: FSMContext) -> None:
+        if not await _authorize_private_admin_message(
+            message, state, settings, LOGGER_PRIVATE_CHAT_REQUIRED_TEXT
+        ):
+            return
+        if audit_admin is None:
+            await message.answer(LOGGER_UNAVAILABLE_TEXT, reply_markup=build_admin_main_keyboard())
+            return
+        raw = (message.text or "").strip()
+        try:
+            chat_id = int(raw)
+        except ValueError:
+            await message.answer(LOGGER_INVALID_ID_TEXT, reply_markup=build_admin_logger_keyboard())
+            return
+        try:
+            await asyncio.to_thread(audit_admin.add, chat_id)
+        except InvalidLoggerChannelError:
+            await message.answer(LOGGER_INVALID_ID_TEXT, reply_markup=build_admin_logger_keyboard())
+            return
+        await state.clear()
+        await message.answer(LOGGER_ADDED_TEXT, reply_markup=build_admin_logger_keyboard())
+        await _send_logger_list(
+            message,
+            audit_admin,
+            logger_enabled=settings.telegram.logger.enabled,
+            probe_chat_id=chat_id,
+        )
+
+    @router.callback_query(F.data.startswith("adm:lg:"))
+    async def logger_callback(callback: CallbackQuery) -> None:
+        if not _is_admin_user(callback.from_user.id if callback.from_user else None, settings):
+            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            return
+        if (
+            audit_admin is None
+            or callback.data is None
+            or not isinstance(callback.message, Message)
+        ):
+            await callback.answer(LOGGER_UNAVAILABLE_TEXT, show_alert=True)
+            return
+        parsed = _parse_logger_callback(callback.data)
+        if parsed is None:
+            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            return
+        action, chat_id = parsed
+        if action == "noop":
+            await callback.answer()
+            return
+        if action == "add":
+            await callback.answer(LOGGER_ADD_PROMPT_TEXT)
+            await callback.message.answer(
+                LOGGER_ADD_PROMPT_TEXT, reply_markup=build_admin_logger_keyboard()
+            )
+            return
+        if action in {"test", "enable", "disable", "remove", "confirm", "cancel"}:
+            assert chat_id is not None
+            await _handle_logger_channel_action(
+                callback,
+                audit_admin,
+                logger_enabled=settings.telegram.logger.enabled,
+                action=action,
+                chat_id=chat_id,
+            )
+            return
+        await _send_logger_list(
+            callback.message,
+            audit_admin,
+            logger_enabled=settings.telegram.logger.enabled,
+        )
+        await callback.answer()
 
     @router.message(F.text == ADMIN_COOKIE_MANAGEMENT_BUTTON)
     async def open_cookie_management(message: Message, state: FSMContext) -> None:
@@ -599,17 +731,192 @@ async def _authorize_private_cookie_message(
     state: FSMContext,
     settings: Settings,
 ) -> bool:
+    return await _authorize_private_admin_message(
+        message,
+        state,
+        settings,
+        COOKIE_PRIVATE_CHAT_REQUIRED_TEXT,
+    )
+
+
+async def _authorize_private_admin_message(
+    message: Message,
+    state: FSMContext,
+    settings: Settings,
+    private_required_text: str,
+) -> bool:
     if not await _authorize_message(message, state, settings):
         return False
     if message.chat.type == "private":
         return True
     await state.clear()
-    await message.answer(COOKIE_PRIVATE_CHAT_REQUIRED_TEXT)
+    await message.answer(private_required_text)
     return False
 
 
 def _is_admin_user(user_id: int | None, settings: Settings) -> bool:
     return user_id is not None and user_id in settings.telegram.admin_ids
+
+
+_LOGGER_PROBE_LABELS = {
+    DestinationProbeOutcome.OK: "✅ آزمایش موفق بود",
+    DestinationProbeOutcome.NOT_CHANNEL: "❌ این شناسه کانال نیست",
+    DestinationProbeOutcome.BOT_NOT_MEMBER: "❌ ربات عضو کانال نیست",
+    DestinationProbeOutcome.FORBIDDEN: "❌ ربات اجازه ارسال در کانال را ندارد",
+    DestinationProbeOutcome.UNREACHABLE: "⏳ کانال در دسترس نبود",
+    DestinationProbeOutcome.AMBIGUOUS: "⚠️ نتیجه آزمایش نامشخص است",
+}
+
+
+def _render_logger_destinations(
+    destinations: tuple[LoggerDestination, ...],
+    *,
+    logger_enabled: bool,
+) -> str:
+    header = LOGGER_MENU_TEXT
+    if not logger_enabled:
+        header += f"\n{LOGGER_DISABLED_TEXT}"
+    if not destinations:
+        return f"{header}\n\n{LOGGER_EMPTY_TEXT}"
+    lines = [header, ""]
+    for index, destination in enumerate(destinations, 1):
+        ownership = _logger_ownership_label(destination)
+        state = "فعال" if destination.enabled else "غیرفعال"
+        health = _logger_health_label(destination.health)
+        lines.append(
+            f"{index}. {destination.chat_id}\n"
+            f"   مالکیت: {ownership} · وضعیت: {state} · سلامت: {health}"
+        )
+    return "\n".join(lines)
+
+
+def _logger_ownership_label(destination: LoggerDestination) -> str:
+    from telegram_media_bot.domain.audit import LoggerDestinationSource
+
+    config = LoggerDestinationSource.CONFIG in destination.ownership
+    runtime = LoggerDestinationSource.RUNTIME in destination.ownership
+    if config and runtime:
+        return "پیکربندی + مدیر"
+    if config:
+        return "از پیکربندی"
+    return "مدیر"
+
+
+def _logger_health_label(health: LoggerDestinationHealth) -> str:
+    labels = {
+        LoggerDestinationHealth.ACTIVE: "فعال",
+        LoggerDestinationHealth.UNREACHABLE: "دسترس‌ناپذیر",
+        LoggerDestinationHealth.FORBIDDEN: "ممنوع",
+        LoggerDestinationHealth.DISABLED: "غیرفعال",
+    }
+    return labels[health]
+
+
+def _parse_logger_callback(data: str) -> tuple[str, int | None] | None:
+    prefix = "adm:lg:"
+    if not data.startswith(prefix):
+        return None
+    rest = data[len(prefix) :]
+    if rest in {"noop", "refresh"}:
+        return rest, None
+    if ":" not in rest:
+        return None
+    action, raw_id = rest.rsplit(":", 1)
+    if action not in {"test", "enable", "disable", "remove", "confirm", "cancel"}:
+        return None
+    try:
+        return action, int(raw_id)
+    except ValueError:
+        return None
+
+
+async def _handle_logger_channel_action(
+    callback: CallbackQuery,
+    audit_admin: LoggerDestinationAdminService,
+    *,
+    logger_enabled: bool,
+    action: str,
+    chat_id: int,
+) -> None:
+    message = callback.message
+    assert isinstance(message, Message)
+    if action == "test":
+        await callback.answer(LOGGER_TEST_PROGRESS_TEXT)
+        await _edit_logger_message(message, LOGGER_TEST_PROGRESS_TEXT)
+        destination, result = await audit_admin.probe(chat_id)
+        del destination
+        await _send_logger_list(
+            message,
+            audit_admin,
+            logger_enabled=logger_enabled,
+            status_line=f"{chat_id}: {_LOGGER_PROBE_LABELS[result.outcome]}",
+        )
+        return
+    if action == "enable":
+        await asyncio.to_thread(audit_admin.set_enabled, chat_id, True)
+        await callback.answer()
+    elif action == "disable":
+        await asyncio.to_thread(audit_admin.set_enabled, chat_id, False)
+        await callback.answer()
+    elif action == "confirm":
+        try:
+            removed = await asyncio.to_thread(audit_admin.remove, chat_id)
+        except ConfigOwnedLoggerChannelError:
+            await callback.answer(LOGGER_CONFIG_OWNED_TEXT, show_alert=True)
+            await _send_logger_list(message, audit_admin, logger_enabled=logger_enabled)
+            return
+        await callback.answer(LOGGER_REMOVED_TEXT if removed else LOGGER_NOT_FOUND_TEXT)
+    elif action == "remove":
+        await callback.answer()
+        destinations = await asyncio.to_thread(audit_admin.list)
+        await _edit_logger_message(
+            message,
+            _render_logger_destinations(destinations, logger_enabled=logger_enabled),
+            reply_markup=build_admin_logger_inline_keyboard(destinations, confirm_chat_id=chat_id),
+        )
+        return
+    elif action == "cancel":
+        await callback.answer()
+    else:
+        await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+        return
+    await _send_logger_list(message, audit_admin, logger_enabled=logger_enabled)
+
+
+async def _send_logger_list(
+    message: Message,
+    audit_admin: LoggerDestinationAdminService,
+    *,
+    logger_enabled: bool,
+    status_line: str | None = None,
+    probe_chat_id: int | None = None,
+) -> None:
+    destinations = await asyncio.to_thread(audit_admin.list)
+    text = _render_logger_destinations(destinations, logger_enabled=logger_enabled)
+    if status_line is not None:
+        text = f"{status_line}\n\n{text}"
+    if probe_chat_id is not None:
+        destination, result = await audit_admin.probe(probe_chat_id)
+        del destination
+        text = f"{probe_chat_id}: {_LOGGER_PROBE_LABELS[result.outcome]}\n\n{text}"
+    await _edit_logger_message(
+        message,
+        text,
+        reply_markup=build_admin_logger_inline_keyboard(destinations),
+    )
+
+
+async def _edit_logger_message(
+    message: Message,
+    text: str,
+    *,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    try:
+        await message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc).casefold():
+            return
 
 
 def _callback_period(data: str | None) -> UsageReportPeriod | None:

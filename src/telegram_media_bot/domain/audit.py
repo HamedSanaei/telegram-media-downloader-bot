@@ -60,6 +60,15 @@ class AuditDeliveryOutcome(StrEnum):
     FAILED_TERMINAL = "failed_terminal"
 
 
+class DestinationProbeOutcome(StrEnum):
+    OK = "ok"
+    NOT_CHANNEL = "not_channel"
+    BOT_NOT_MEMBER = "bot_not_member"
+    FORBIDDEN = "forbidden"
+    UNREACHABLE = "unreachable"
+    AMBIGUOUS = "ambiguous"
+
+
 @dataclass(frozen=True, slots=True)
 class TelegramSourceReference:
     chat_id: int
@@ -143,6 +152,12 @@ class AuditDeliveryResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DestinationProbeResult:
+    outcome: DestinationProbeOutcome
+    failure_class: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LoggerHealthSnapshot:
     active_destinations: int
     forbidden_destinations: int
@@ -164,6 +179,8 @@ __all__ = [
     "AuditEvent",
     "AuditEventType",
     "AuditSeverity",
+    "DestinationProbeOutcome",
+    "DestinationProbeResult",
     "LoggerDestination",
     "LoggerDestinationHealth",
     "LoggerDestinationSource",

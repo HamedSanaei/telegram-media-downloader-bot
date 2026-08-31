@@ -145,20 +145,21 @@ T017-T025 and do not exist yet.
 | `telegram/` additions | `/vip`, entitlement-gating, expiry/renewal, audited administrator UX (T023); `/instagram`, `instagram_ux.py`, Persian connection prompts/status/disconnect (implemented) |
 | `workers/` and queue/persistence changes | Carry the explicit operator credential seam while preserving legacy jobs; future safe user snapshots/fallback state remain T020-T022 |
 
-## Milestone 5 ownership (T026/T027 implemented; T028-T032 planned)
+## Milestone 5 ownership (T026/T028 implemented; T029-T032 planned)
 
-The following runtime ownership implements T026/T027.
+The following runtime ownership implements the logger milestone so far.
 
 | Area | Ownership |
 |---|---|
-| `domain/audit.py` | Typed `AuditEvent`, categories, severity, correlation metadata, source-message references, and redaction-safe payloads (implemented T026) |
-| `application/ports/audit.py` | Audit sink, logger destination management, durable outbox, lease, and delivery-effect contracts (implemented T026/T027) |
+| `domain/audit.py` | Typed `AuditEvent`, categories, severity, correlation metadata, source-message references, probe outcomes, and redaction-safe payloads (implemented T026/T028) |
+| `application/ports/audit.py` | Audit sink, logger destination management, durable outbox, lease, delivery-effect, and destination-verifier contracts (implemented T026-T028) |
 | `application/services/audit_service.py`, `audit_sanitizer.py`, `audit_outbox.py` | Event eligibility, centralized fail-closed sanitization, and transport-neutral outbox processing (implemented T026/T027) |
-| `infrastructure/persistence/sqlite_audit.py` | Additive SQLite/WAL logger destinations, outbox, health, leases, and uncertain-delivery records (implemented T027) |
-| `infrastructure/telegram/audit_delivery.py`, `audit_destination_verifier.py` | Native `copyMessage`/`copyMessages`, safe metadata delivery, channel verification, and per-destination error translation (planned T028-T030) |
-| `telegram/admin_menu.py` / `telegram/admin_handlers.py` | Logger-channel management flow, numeric channel validation, test, enable/disable/remove, and health UI (planned T028) |
+| `application/services/audit_destination_admin.py` | Role-authorized destination management: strict channel-ID validation, probe-driven health, enable/disable, config-protected removal (implemented T028) |
+| `infrastructure/persistence/sqlite_audit.py` | Additive SQLite/WAL logger destinations, outbox, health, probe records, leases, and uncertain-delivery records (implemented T027/T028) |
+| `infrastructure/telegram/audit_destination_verifier.py` | Typed channel probe: existence, type, bot membership, posting test, sanitized outcome mapping (implemented T028); `audit_delivery.py` copy/send gateway remains planned T029-T030 |
+| `telegram/admin_menu.py` / `telegram/admin_handlers.py` | Logger-channel management flow, numeric channel validation, test, enable/disable/remove, and health UI (implemented T028) |
 | `workers/settings.py`, `workers/jobs.py` | Asynchronous draining, bounded retry/recovery, Cookie Health and terminal-error routing, with no admin-DM fallback (planned T029/T032; repository init and config reconciliation are wired today) |
-| `docs/` | Completed T026/T027, accepted ADR-036-038, privacy/retention policy, rollout, and operational runbook (T028-T032 rollout docs planned) |
+| `docs/` | Completed T026-T028, accepted ADR-036-038, privacy/retention policy, rollout, and operational runbook (T029-T032 rollout docs planned) |
 
 ## Milestone 6 ownership (implemented)
 

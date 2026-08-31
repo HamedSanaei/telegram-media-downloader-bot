@@ -1,6 +1,6 @@
 # T028 - Administrator logger-channel management UX
 
-**Status:** planned
+**Status:** complete
 
 ## Goal
 
@@ -94,7 +94,27 @@ ID, add/test, confirm health, and monitor destination metrics.
 - A successful test proves bot posting permission before activation.
 - Config/runtime ownership and removal behavior are visible and deterministic.
 
-## Definition of done
+## Implementation summary
 
-The admin UX, callback grammar, validation contract, Persian copy, persistence calls, security
-checks, failure states, and tests are complete enough for implementation without policy decisions.
+- Added `DestinationProbeOutcome`/`DestinationProbeResult` to `domain/audit.py` and a
+  `LoggerDestinationVerifier` protocol in `application/ports/audit.py`.
+- Added `record_probe_health` to `SqliteAuditRepository` so a probe updates only the probed
+  destination's health/failure class.
+- Added `application/services/audit_destination_admin.py`: `LoggerDestinationAdminService` with
+  strict `-100...` validation (`InvalidLoggerChannelError`), probe-driven health recording,
+  enable/disable, list/health snapshot, and removal that refuses to remove config-owned rows
+  (`ConfigOwnedLoggerChannelError`).
+- Added `infrastructure/telegram/audit_destination_verifier.py`: `TelegramAuditDestinationVerifier`
+  maps `get_chat`/`get_chat_member`/`send_message` failures to typed outcomes
+  (ACTIVE / NOT_CHANNEL / BOT_NOT_MEMBER / FORBIDDEN / UNREACHABLE / AMBIGUOUS), sends a fixed
+  sanitized Persian probe message, and best-effort deletes it. No raw exception text is surfaced.
+- Added admin menu button `🧾 کانال‌های لاگر`, a bounded `awaiting_add_chat_id` state, and an
+  inline keyboard showing channel ID, ownership (پیکربندی/مدیر), enabled state, and health with
+  per-row test/enable/disable/remove actions plus a two-step remove confirmation.
+- Every message and callback path reauthorizes against `telegram.admin_ids`; forged callbacks and
+  non-admin continuation attempts fail closed with `ACCESS_DENIED_TEXT`.
+- Wired `audit_admin` through `handlers.build_router` and `bot_app.run_bot` (audit store already
+  initialized there for T027).
+- Tests: `tests/unit/telegram/test_logger_admin.py` (23) and
+  `tests/unit/infrastructure/telegram/test_audit_destination_verifier.py` (11); keyboard button-set
+  test updated for the new menu row. Full non-contract suite 1131 passed, 11 skipped.

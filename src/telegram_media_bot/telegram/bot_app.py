@@ -7,6 +7,9 @@ import structlog
 from aiogram import Dispatcher
 
 from telegram_media_bot.application.services.access_policy import AccessPolicyService
+from telegram_media_bot.application.services.audit_destination_admin import (
+    LoggerDestinationAdminService,
+)
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.durable_update_inbox import DurableUpdateInbox
 from telegram_media_bot.application.services.effect_ledger import EffectLedgerService
@@ -40,6 +43,9 @@ from telegram_media_bot.infrastructure.queue.arq_queue import ArqJobQueue
 from telegram_media_bot.infrastructure.security.redis_rate_limiter import RedisRateLimiter
 from telegram_media_bot.infrastructure.security.telegram_membership import (
     TelegramMembershipChecker,
+)
+from telegram_media_bot.infrastructure.telegram.audit_destination_verifier import (
+    TelegramAuditDestinationVerifier,
 )
 from telegram_media_bot.infrastructure.telegram.local_api import LocalBotApiManager
 from telegram_media_bot.telegram.bot_factory import (
@@ -77,6 +83,9 @@ async def run_bot(settings: Settings) -> None:
         audit_store = SqliteAuditRepository(settings.database_path())
         await asyncio.to_thread(audit_store.initialize)
         await asyncio.to_thread(audit_store.reconcile_config, settings.telegram.logger.channels)
+        audit_admin = LoggerDestinationAdminService(
+            audit_store, TelegramAuditDestinationVerifier(bot)
+        )
         rate_limiter = RedisRateLimiter.create(settings.redis.url)
         if settings.telegram.required_channels.enabled:
             membership_checker = TelegramMembershipChecker.create(
@@ -142,6 +151,7 @@ async def run_bot(settings: Settings) -> None:
                 cookie_health_service=cookie_health_service,
                 effects=effects,
                 connection=build_instagram_connection_service(settings),
+                audit_admin=audit_admin,
             )
         )
         inbox = DurableUpdateInbox(inbox_store)

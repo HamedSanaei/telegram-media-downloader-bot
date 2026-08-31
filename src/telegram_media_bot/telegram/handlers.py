@@ -24,6 +24,9 @@ from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.application.ports.usage_analytics import UsageChartRenderer
 from telegram_media_bot.application.ports.user_repository import UserRepository
 from telegram_media_bot.application.services.access_policy import AccessPolicyService
+from telegram_media_bot.application.services.audit_destination_admin import (
+    LoggerDestinationAdminService,
+)
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.effect_ledger import EffectLedgerService
 from telegram_media_bot.application.services.instagram_connection import InstagramConnectionService
@@ -124,6 +127,7 @@ def build_router(
     cookie_health_service: CookieHealthService | None = None,
     effects: EffectLedgerService | None = None,
     connection: InstagramConnectionService | None = None,
+    audit_admin: LoggerDestinationAdminService | None = None,
 ) -> Router:
     router = Router(name="main")
     router.message.outer_middleware(CorrelationMiddleware())
@@ -1268,6 +1272,7 @@ def build_router(
             chart_renderer=usage_chart_renderer,
             cookie_manager=cookie_manager,
             cookie_health_service=cookie_health_service,
+            audit_admin=audit_admin,
             recovery_service=JobRecoveryService(
                 repository,
                 queue,

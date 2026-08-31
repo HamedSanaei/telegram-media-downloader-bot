@@ -79,7 +79,7 @@ def test_event_requires_utc_and_bounded_safe_classifications() -> None:
         ("payment_callback_signature=sig-value", "sig-value"),
         ("provider_transaction_reference=txn-123", "txn-123"),
         ("proxy_credentials=user:pass", "user:pass"),
-        ("https://proxy-user:proxy-pass@proxy.example", "proxy-pass"),
+        ("https://proxy-user:proxy-pass@proxy.example", "proxy-pass"),  # pragma: allowlist secret
     ],
 )
 def test_sanitizer_redacts_realistic_secret_values(value: str, secret: str) -> None:

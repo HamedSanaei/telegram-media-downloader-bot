@@ -107,10 +107,15 @@ Instagram sessions/cookies, vault keys, payment secrets, callback signatures, pr
 proxy credentials, and raw exceptions while preserving approved numeric user IDs; and a durable
 additive SQLite/WAL per-destination outbox with leases, bounded retry, and `UNCERTAIN` quarantine.
 Config and runtime logger destinations reconcile as a protected union (deduplicated by channel ID;
-runtime removal never disables a config-owned channel). T028-T032 (admin channel UX, alert
-migration, accepted-submission mirroring, privacy/retention controls, and E2E rollout) remain
-planned. Mirroring will default off and require the exact Persian privacy notice acknowledgement.
-Retention is indefinite with no automatic Telegram purge. ADR-036 through ADR-038 are accepted.
+runtime removal never disables a config-owned channel). T028 is complete: the admin menu now
+includes a `🧾 کانال‌های لاگر` flow with add/list/test/enable/disable/remove and health display; a
+typed `LoggerDestinationVerifier` proves channel type, bot membership, and posting permission with
+sanitized test messages before a destination is activated; every message and callback path
+reauthorizes against `telegram.admin_ids`, forged callbacks fail closed, and config-owned channels
+cannot be falsely removed through the UI. T029-T032 (alert migration, accepted-submission
+mirroring, privacy/retention controls, and E2E rollout) remain planned. Mirroring will default off
+and require the exact Persian privacy notice acknowledgement. Retention is indefinite with no
+automatic Telegram purge. ADR-036 through ADR-038 are accepted.
 
 T033 implements the fast-feedback CI tiering: a repository-owned deterministic
 changed-path classifier (`scripts/ci_change_policy.py`), a fast `quality` lane for ordinary

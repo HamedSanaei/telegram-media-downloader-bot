@@ -558,11 +558,11 @@ Telethon/MTProto session, staging-channel, Premium queue, or copy-message delive
 
 ## Milestone 5 architecture: Operator Logger and private audit channels
 
-**Implementation status:** T026/T027 implemented and feature-gated off by default; T028-T032
+**Implementation status:** T026-T028 implemented and feature-gated off by default; T029-T032
 planned. Repository initialization and config-destination reconciliation run at bot and worker
 startup; Telegram delivery draining is not yet wired.
 
-### Flow (T026/T027 implemented; dispatcher planned)
+### Flow (T026/T027 implemented; T028 admin UX implemented; dispatcher planned)
 
 ```text
 accepted Telegram update
@@ -573,7 +573,7 @@ accepted Telegram update
         |
         +--> typed AuditEvent --> SQLite/WAL logger outbox
                                       |
-                                      +--> per-destination dispatcher (planned T028-T032)
+                                      +--> per-destination dispatcher (planned T029-T032)
                                              |
                                              +--> Telegram copy/send gateway (planned)
                                              +--> PENDING / COMPLETED / UNCERTAIN (modeled)
@@ -596,17 +596,20 @@ delivery uncertainty.
 - `infrastructure/persistence/sqlite_audit.py`: additive SQLite/WAL destination, outbox, lease,
   health, and delivery-effect repository. SQLite/WAL is durable truth; Redis only wakes work
   (implemented).
-- `infrastructure/telegram/` additions: native `copyMessage`/`copyMessages` and safe metadata
-  delivery; one destination failure isolated from all others (planned T028-T030).
+- `infrastructure/telegram/audit_destination_verifier.py`: typed channel probe proving existence,
+  channel type, bot membership, and posting permission with a sanitized test message; no raw
+  Telegram exceptions surface (implemented T028). Native `copyMessage`/`copyMessages` delivery
+  remains planned T029-T030.
 - `telegram/admin_menu.py` and `admin_handlers.py`: role-authorized logger-channel management;
-  callbacks reauthorized and validated at execution time (planned T028).
+  callbacks reauthorized and validated at execution time (implemented T028).
 - `workers/settings.py`: asynchronous outbox draining and bounded reconciliation; it never
   enumerates `telegram.admin_ids` as a fallback (planned T029/T032; repository init and reconcile
   are wired today).
 
 Configured destinations and runtime-created destinations reconcile as a deduplicated union by
-numeric `chat_id`. Config-managed rows cannot be removed through the runtime API (a planned UI must
-preserve this). Destination health is `ACTIVE`, `UNREACHABLE`, `FORBIDDEN`, or `DISABLED`; removal
+numeric `chat_id`. Config-managed rows cannot be removed through the runtime API or the T028 admin
+UI (both preserve this). Destination health is `ACTIVE`, `UNREACHABLE`, `FORBIDDEN`, or `DISABLED`;
+removal
 or permission loss affects only that destination.
 
 ### Audit content and privacy boundary

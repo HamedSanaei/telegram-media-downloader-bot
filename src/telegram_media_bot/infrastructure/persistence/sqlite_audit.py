@@ -186,6 +186,28 @@ class SqliteAuditRepository:
         assert row is not None
         return _destination(row)
 
+    def record_probe_health(
+        self,
+        chat_id: int,
+        health: LoggerDestinationHealth,
+        failure_class: str | None = None,
+    ) -> LoggerDestination | None:
+        """Record the outcome of an operator probe for one destination (T028)."""
+        now = _now()
+        with self._connect() as connection:
+            changed = connection.execute(
+                """UPDATE logger_destinations SET health=?,last_failure_class=?,updated_at=?
+                WHERE chat_id=? AND (config_owned=1 OR runtime_owned=1)""",
+                (health.value, _failure(failure_class), now, chat_id),
+            ).rowcount
+            if not changed:
+                return None
+            row = connection.execute(
+                "SELECT * FROM logger_destinations WHERE chat_id=?", (chat_id,)
+            ).fetchone()
+        assert row is not None
+        return _destination(row)
+
     def enqueue(self, event: AuditEvent) -> int:
         if sanitize_audit_message(event.message) != event.message:
             raise ValueError("audit event must be sanitized before persistence")
