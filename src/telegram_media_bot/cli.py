@@ -49,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
     worker = subparsers.add_parser("worker", help="Run ARQ download worker")
     worker.add_argument("--config", type=Path, default=None)
 
+    companion = subparsers.add_parser(
+        "companion", help="Run the optional secure web companion (T016)"
+    )
+    companion.add_argument("--config", type=Path, default=None)
+
     config_check = subparsers.add_parser("config-check", help="Validate configuration")
     config_check.add_argument("--config", type=Path, default=None)
     config_check.add_argument(
@@ -150,6 +155,24 @@ def main() -> None:
             from telegram_media_bot.workers.settings import WorkerSettings
 
             run_worker(WorkerSettings)
+        elif args.command == "companion":
+            from aiohttp import web
+
+            from telegram_media_bot.bootstrap.companion import (
+                build_companion_app,
+                load_companion_settings,
+            )
+
+            companion_settings = load_companion_settings(args.config)
+            if not companion_settings.enabled:
+                raise SystemExit("Companion is disabled in configuration.")
+            application = build_companion_app(companion_settings)
+            web.run_app(
+                application,
+                host=companion_settings.host,
+                port=companion_settings.port,
+                access_log=None,
+            )
         elif args.command == "config-check":
             settings = load_settings(args.config, require_token=False)
             _run_config_check(

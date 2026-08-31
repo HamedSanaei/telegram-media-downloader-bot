@@ -541,7 +541,7 @@ Telethon/MTProto uploader, staging channel, Premium queue, or `copyMessage` deli
 
 ## ADR-035: One least-privilege web companion separates account links and payment callbacks
 
-**Status:** proposed
+**Status:** accepted
 
 Use a separate, optional `aiohttp.web` companion process for browser-based Instagram connection and
 machine payment callbacks. Reuse the existing dependency, but give the process only its database
@@ -560,6 +560,17 @@ result; a browser redirect may display status but never activates an entitlement
 proxy rules, body/time limits, non-permissive CORS, secret-redacted access logs, and bounded labels
 are mandatory. The companion remains disabled until its threat model, deployment, and security
 tests are complete.
+
+**Implemented (T016) as the disabled optional boundary:** bot-signed Ed25519 handoff claims
+(purpose, owner, nonce, issued time, five-minute expiry) delivered in the URL fragment and
+POST-exchanged into a Secure/HttpOnly/SameSite browser session with synchronizer CSRF. Each
+SHA-256 nonce hash is consumed exactly once in additive SQLite/WAL. Instagram browser routes and
+machine payment-callback routes have independent request handling/middleware; with no provider
+adapter registered the payment callback route fails closed (`404`, never a confirmation). A
+reduced `CompanionSettings` maps no Telegram token and no signing key, so the process cannot read
+the bot token. Restrictive CSP/no-referrer/x-frame headers, trusted-proxy rules, and body/
+time/rate limits are enforced; all tests are network-free and deterministic. No Instagram login or
+payment gateway is implemented.
 
 ## ADR-036: Typed audit events use a durable, isolated logger outbox
 

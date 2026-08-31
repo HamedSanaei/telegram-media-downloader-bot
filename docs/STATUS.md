@@ -163,6 +163,27 @@ deleting rows, free users need no subscription row, and Redis is never economic 
 protected job keeps its durable snapshot after expiry while automatically created child jobs
 inherit it; later user callbacks reauthorize. No version/tag/release/deployment was created.
 
+## Secure companion boundary (T016)
+
+ADR-035 is accepted and the optional disabled least-privilege companion web boundary is
+implemented in the working tree: `domain/web_companion.py` (purpose-bound claims, verification
+outcomes, browser/CSRF tokens, bounded flow state, Instagram-connect/payment views),
+`application/ports/companion.py` (signer/verifier/nonce-repository/flow/registry/processor
+contracts), `application/services/handoff.py` (`HandoffLinkService` minting and
+`CompanionHandoffService` exactly-once exchange), `infrastructure/security/handoff.py` (Ed25519
+over `cryptography`), `infrastructure/persistence/sqlite_handoff.py` (additive WAL SHA-256 nonce
+store), `infrastructure/web_companion/app.py` (`aiohttp.web` with separate Instagram browser and
+payment-machine routes, Secure/HttpOnly/SameSite cookie, synchronizer CSRF, restrictive
+CSP/no-referrer/x-frame headers, trusted-proxy/body/time/rate limits), and
+`bootstrap/companion.py` (a reduced `CompanionSettings` that maps no bot token and no signing key,
+plus a deterministic `build_companion_app`). `bootstrap/config.py` gains a strict
+`web_companion` section, `cli.py` exposes the `companion` command, and `config.example.yaml`
+documents it. With no provider adapter registered the payment-callback route fails closed
+(`404`), browser redirects cannot confirm anything, and the T016 tests are deterministic and
+network-free. T017+ will add the encrypted vault, connection flow, and credential routing on top
+without touching the boundary. No Instagram login, payment gateway, subscription activation, or
+release/tag/deployment was introduced.
+
 ## Implemented production controls
 
 - Python 3.14.5, committed `uv.lock`, immutable Docker build, non-root/read-only app containers, and

@@ -541,6 +541,70 @@ class RecoverySection(StrictModel):
         return max(1, queue_max_jobs * self.queue_backlog_per_worker_slot)
 
 
+class WebCompanionSection(StrictModel):
+    """Separate least-privilege browser/callback boundary (T016), disabled by default.
+
+    The main (bot) settings surface additionally carries the bot-side handoff signing key, because
+    the bot mints secure connection links. The companion process uses a purpose-built reduced
+    settings model (``bootstrap.companion.CompanionSettings``) that never maps the signing key and
+    never maps ``telegram``, so its process objects contain no bot token and no signer.
+    """
+
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = Field(default=8090, ge=1, le=65535)
+    #: Browser session lifetime for one completed connection exchange.
+    session_max_seconds: int = Field(default=300, ge=60, le=3600)
+    #: Bounded in-memory interactive login/2FA flow lifetime.
+    interactive_flow_max_seconds: int = Field(default=600, ge=60, le=1800)
+    #: Hard cap on concurrent in-memory interactive flows.
+    interactive_flow_max_sessions: int = Field(default=100, ge=1, le=10000)
+    #: Maximum accepted request-body size in bytes.
+    body_limit_bytes: int = Field(default=65536, ge=1024, le=1048576)
+    #: Per-request processing cap; clients must complete within this deadline.
+    read_timeout_seconds: float = Field(default=10.0, ge=1.0, le=60.0)
+    #: Bound on requests per minute per client IP (bounded, not exported as a metric label).
+    rate_limit_per_minute: int = Field(default=60, ge=1, le=100000)
+    #: Explicitly trusted reverse-proxy client addresses; others are never trusted for forwarded.
+    trusted_proxies: tuple[str, ...] = ()
+    #: Acceptable clock-skew window for Ed25519 handoff claims.
+    handoff_clock_skew_seconds: int = Field(default=30, ge=0, le=300)
+    #: PEM PKCS8 Ed25519 public key the companion uses to verify handoff signatures.
+    handoff_verification_key: SecretStr | None = None
+    #: Encoded Ed25519 private key the bot uses to sign handoff claims (bot surface only).
+    handoff_signing_key: SecretStr | None = None
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def validate_trusted_proxies(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        normalized: list[str] = []
+        for entry in values:
+            value = entry.strip()
+            if not value:
+                continue
+            _validate_ip_or_cidr(value)
+            normalized.append(value)
+        return tuple(normalized)
+
+    @model_validator(mode="after")
+    def validate_enabled_material(self) -> WebCompanionSection:
+        if self.enabled and self.handoff_verification_key is None:
+            raise ValueError(
+                "web_companion.handoff_verification_key is required when the companion is enabled"
+            )
+        return self
+
+    def verification_key_bytes(self) -> bytes | None:
+        if self.handoff_verification_key is None:
+            return None
+        return self.handoff_verification_key.get_secret_value().encode("utf-8")
+
+    def signing_key_bytes(self) -> bytes | None:
+        if self.handoff_signing_key is None:
+            return None
+        return self.handoff_signing_key.get_secret_value().encode("utf-8")
+
+
 class Settings(StrictModel):
     app: AppSection
     telegram: TelegramSection
@@ -557,6 +621,7 @@ class Settings(StrictModel):
     operations: OperationsSection = Field(default_factory=OperationsSection)
     cookie_health: CookieHealthSection = Field(default_factory=CookieHealthSection)
     recovery: RecoverySection = Field(default_factory=RecoverySection)
+    web_companion: WebCompanionSection = Field(default_factory=WebCompanionSection)
 
     @model_validator(mode="after")
     def validate_cookie_file_identity(self) -> Settings:
@@ -633,6 +698,26 @@ class Settings(StrictModel):
             local_api.migration.state_file.expanduser().resolve().parent.mkdir(
                 parents=True, exist_ok=True
             )
+
+
+def _validate_ip_or_cidr(value: str) -> None:
+    from ipaddress import (
+        AddressValueError,
+        NetmaskValueError,
+        ip_address,
+        ip_network,
+    )
+
+    if "/" in value:
+        try:
+            ip_network(value, strict=False)
+        except (AddressValueError, NetmaskValueError, ValueError) as exc:
+            raise ValueError(f"Invalid IP/CIDR value: {value}") from exc
+        return
+    try:
+        ip_address(value)
+    except (AddressValueError, ValueError) as exc:
+        raise ValueError(f"Invalid IP address value: {value}") from exc
 
 
 def default_config_path() -> Path:

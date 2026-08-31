@@ -103,8 +103,8 @@ def _validate_license(content: bytes) -> None:
 def _validate_gallery_assets(notice_content: bytes, license_content: bytes) -> None:
     notice = notice_content.decode("utf-8")
     license_text = license_content.decode("utf-8")
-    if not all(marker in notice for marker in ("gallery-dl", "1.32.8", "GPL-2.0")):
-        raise SystemExit("Bundled gallery-dl notice has unexpected content")
+    if not all(marker in notice for marker in ("gallery-dl", "1.32.8", "GPL-2.0", "cryptography")):
+        raise SystemExit("Bundled third-party notice has unexpected content")
     if "GNU GENERAL PUBLIC LICENSE" not in license_text or "Version 2" not in license_text:
         raise SystemExit("Bundled gallery-dl license is not GPL version 2")
 
@@ -133,6 +133,7 @@ assert font.is_file() and len(font.read_bytes()) > 0
 assert license_file.is_file() and "SIL OPEN FONT LICENSE" in license_file.read_text(encoding="utf-8")
 notice_text = gallery_notice.read_text(encoding="utf-8")
 assert "gallery-dl" in notice_text and "1.32.8" in notice_text and "GPL-2.0" in notice_text
+assert "cryptography" in notice_text
 assert "GNU GENERAL PUBLIC LICENSE" in gallery_license.read_text(encoding="utf-8")
 validate_chart_font()
 print("Clean wheel font resource smoke passed")

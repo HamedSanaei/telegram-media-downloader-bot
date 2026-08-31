@@ -1,6 +1,6 @@
 # T016 - Secure companion web and callback boundary
 
-**Status:** planned
+**Status:** implemented
 
 ## Goal
 
@@ -112,3 +112,37 @@ explicit threat-model review before ADR-035 moves from proposed to accepted.
 
 ADR-035 is resolved, the disabled least-privilege boundary and security tests exist as justified,
 and no login, provider, subscription activation, or public endpoint is enabled.
+
+## Implementation notes
+
+ADR-035 is accepted. The optional companion boundary and its composition are disabled by default:
+
+- `domain/web_companion.py` — purpose-bound `HandoffClaim`, verification outcomes, browser
+  session/CSRF tokens, bounded in-memory flow state, Instagram-connect stage view and payment
+  callback outcome.
+- `application/ports/companion.py` — `HandoffSigner`, `HandoffVerifier`, `HandoffNonceRepository`,
+  `InteractiveFlowStore`, `ProviderCallbackVerifier`/`registry`, `InstagramConnectFlow`, and
+  `PaymentCallbackProcessor` contracts.
+- `application/services/handoff.py` — bot link minting (`HandoffLinkService`) and companion
+  exactly-once exchange (`CompanionHandoffService`) with nonce consumption.
+- `infrastructure/security/handoff.py` — Ed25519 signer/verifier over `cryptography`. The
+  final 4 padding bits of the last base64url character are canonical padding and do not change
+  the decoded bytes; signature verification is constant-time and rejects real byte/payload
+  tampering deterministically.
+- `infrastructure/persistence/sqlite_handoff.py` — additive WAL `handoff_nonce_consumptions`
+  table keyed by SHA-256 nonce digest; raw nonces never durable.
+- `infrastructure/web_companion/app.py` — `aiohttp.web` application with separate
+  `/instagram/connect/*` browser and `/payment/callback/{provider}` machine routes, Secure/
+  HttpOnly/SameSite session cookie, synchronizer CSRF, restrictive CSP/no-referrer/x-frame
+  headers, trusted-proxy handling, body/time/rate limits, and no permissive CORS.
+- `bootstrap/companion.py` — reduced least-privilege `CompanionSettings` that maps no bot token
+  and no signing key, plus a deterministic `build_companion_app`. A disabled connection flow and
+  an empty provider registry mean no browser action or payment callback can grant anything.
+- `bootstrap/config.py` adds a strict `web_companion` section; `cli.py` exposes the `companion`
+  command. `config.example.yaml` documents the section.
+
+Acceptance: the companion builds and starts with no bot token; handoff tokens never reach access
+logs or headers; browser redirects cannot confirm a payment (the payment route returns `404` when
+no provider adapter is registered); Instagram and payment request models/middleware are isolated
+in one process. All tests are deterministic and network-free; `cryptography>=46,<47` supplies the
+Ed25519 implementation and its third-party notice is bundled and CI-asserted.

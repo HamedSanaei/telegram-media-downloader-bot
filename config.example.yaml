@@ -215,3 +215,25 @@ cookie_health:
 operations:
   update:
     prune_old_project_images_after_success: true
+
+# Optional least-privilege companion web boundary (T016). Disabled by default; no production
+# Instagram login or payment gateway is enabled until later tasks. When enabled, the companion
+# process reads ONLY these keys (never telegram.bot_token and never handoff_signing_key).
+#
+# Generate an Ed25519 keypair (e.g. with the bundled runtime) and place:
+#   - the PUBLIC key PEM here for the companion to verify signed connection links;
+#   - the encoded PRIVATE key here for the BOT to sign those links.
+web_companion:
+  enabled: false
+  host: 127.0.0.1
+  port: 8090
+  session_max_seconds: 300
+  interactive_flow_max_seconds: 600
+  interactive_flow_max_sessions: 100
+  body_limit_bytes: 65536
+  read_timeout_seconds: 10.0
+  rate_limit_per_minute: 60
+  trusted_proxies: []
+  handoff_clock_skew_seconds: 30
+  handoff_verification_key: null
+  handoff_signing_key: null

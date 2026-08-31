@@ -103,7 +103,7 @@
   terminal-failure administrator alerts, and cleanup;
 - `telegram/handlers.py`: owner validation, admin controls, and safe enqueue ordering.
 
-## Milestone 4 ownership (T014/T015 implemented; the rest still planned)
+## Milestone 4 ownership (T014/T015/T016 implemented; the rest still planned)
 
 T014's entitlement foundation is implemented (`domain/subscriptions.py`,
 `application/services/entitlements.py`, `application/ports/subscriptions.py`,
@@ -111,22 +111,32 @@ T014's entitlement foundation is implemented (`domain/subscriptions.py`,
 `JobRecord`). T015's provider-neutral billing foundation is also implemented
 (`domain/payments.py`, `application/ports/payments.py`, `application/services/billing.py`,
 `infrastructure/persistence/sqlite_payments.py`, and the additive `payment_orders` /
-`payment_attempts` / unique `provider_transaction_claims` tables). The remaining areas
-(Instagram credentials, account linking, VIP Telegram UX, credential-dependent routing, and the
-first real payment gateway) remain planned for T016-T025 and do not exist yet.
+`payment_attempts` / unique `provider_transaction_claims` tables). T016's optional disabled web
+companion is implemented (`domain/web_companion.py`, `application/ports/companion.py`,
+`application/services/handoff.py`, `infrastructure/security/handoff.py`,
+`infrastructure/persistence/sqlite_handoff.py`, `infrastructure/web_companion/app.py`, and
+`bootstrap/companion.py`). The remaining areas (Instagram credentials/Vault, account linking, VIP
+Telegram UX, credential-dependent routing, and the first real payment gateway) remain planned for
+T017-T025 and do not exist yet.
 
 | Area | Ownership |
 |---|---|
 | `domain/payments.py` | Provider-neutral orders, attempts, statuses, provider identifiers, transaction references, and immutable amount/plan snapshots (implemented) |
 | `domain/instagram_credentials.py` | Credential state/kind/policy, access scope, safe references, generations, leases, envelopes, and typed credential failures (planned) |
 | `application/ports/payments.py` | Payment repository and project-owned payment-gateway requests/results (implemented) |
+| `domain/web_companion.py` | Purpose-bound handoff claims, verification outcomes, browser/CSRF tokens, bounded flow state, Instagram-connect and payment views (implemented) |
+| `application/ports/companion.py` | Companion handoff signer/verifier/nonce-repository, provider-callback registry, Instagram flow, and payment processor contracts (implemented) |
+| `application/services/handoff.py` | Bot link minting and companion exactly-once handoff exchange (implemented) |
+| `infrastructure/security/handoff.py` | Ed25519 signer/verifier over `cryptography` (implemented) |
+| `infrastructure/web_companion/app.py` | Separate `aiohttp.web` Instagram-browser and payment-callback routes with CSRF/cookies/headers/limits/trusted-proxy isolation (implemented) |
+| `bootstrap/companion.py` | Reduced least-privilege `CompanionSettings` (no bot token/signer) and deterministic `build_companion_app` (implemented) |
 | `application/ports/instagram_credentials.py` | Owner-bound encrypted-credential repository, resolver, lease, and ephemeral materialization contracts (planned) |
 | `application/services/billing.py` | Order lifecycle, verified-result confirmation, idempotent atomic refund/reversal, and reconciliation queries without provider-name branching (implemented) |
 | `application/services/credential_resolution.py` | Credential policy matrix, public-only fallback eligibility, private user-only enforcement, and one-switch accounting |
-| `infrastructure/persistence/` additions | Additive SQLite repositories for payments (implemented: `sqlite_payments.py`), plus planned encrypted credentials, sanitized events, single-use handoff nonces, and leases |
+| `infrastructure/persistence/` additions | Additive SQLite repositories for payments (implemented: `sqlite_payments.py`) and single-use handoff nonces (implemented: `sqlite_handoff.py`), plus planned encrypted credentials, sanitized events, and leases |
 | `infrastructure/credentials/` | AES-256-GCM envelope/key-ring adapter and job-scoped restrictive Netscape materialization |
 | `infrastructure/payment/<provider>/` | First provider adapter selected by composition; intentionally blocked in T024 until a provider is chosen |
-| proposed companion web package/process | Separate least-privilege `aiohttp.web` account-link and payment-callback boundary without the Telegram bot token |
+| companion web package/process | Separate least-privilege `aiohttp.web` account-link and payment-callback boundary without the Telegram bot token (implemented, disabled by default) |
 | `infrastructure/ytdlp/`, `infrastructure/gallerydl/`, and media router changes | Consume explicit ephemeral credential context while remaining unaware of VIP/subscription policy |
 | `telegram/` additions | `/vip`, account-link, entitlement-gating, expiry/renewal, reconnect, disconnect, and audited administrator UX |
 | `workers/` and queue/persistence changes | Carry safe entitlement/credential snapshots, retain bounded fallback state, lease credentials, and clean plaintext on every terminal/recovery path |
