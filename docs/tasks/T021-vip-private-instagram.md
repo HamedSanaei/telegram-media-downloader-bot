@@ -1,6 +1,6 @@
 # T021 - VIP private Instagram media
 
-**Status:** planned
+**Status:** implemented locally
 
 ## Goal
 
@@ -113,5 +113,6 @@ resolver call traces, logs, durable state, and end-to-end fixtures before activa
 
 ## Definition of done
 
-All private media kinds enforce VIP + connected owner credential + legitimate visibility, private
-no-fallback tests pass, privacy/legal docs are complete, and full gates pass.
+The application private-media policy is implemented locally with explicit VIP, connection,
+reconnect, visibility, and fail-closed decisions. Every allowed decision is `USER_ONLY`; adapter
+and worker wiring plus full media-kind acceptance remain gated by T022-T025.

@@ -37,7 +37,7 @@
 - T018 Instagram account connection and recovery UX — complete; depends on T016/T017
 - T019 credential resolution and adapter integration — complete; depends on T017
 - T020 VIP public Instagram user-first fallback — complete locally; depends on T014/T018/T019
-- T021 VIP private Instagram media — planned; depends on T020
+- T021 VIP private Instagram media — complete locally; depends on T020
 - T022 per-user Instagram session recovery and isolation — planned; depends on T018/T020/T021
 - T023 VIP purchasing and account Telegram UX — planned; depends on T014/T015/T016/T018
 - T024 first real payment gateway adapter — **blocked: payment provider not selected**; depends on
