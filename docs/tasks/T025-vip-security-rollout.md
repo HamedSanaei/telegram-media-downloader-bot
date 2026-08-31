@@ -1,6 +1,6 @@
 # T025 - VIP security, migration, operations, and end-to-end rollout
 
-**Status:** planned; production billing activation blocked by T024
+**Status:** implemented locally; production billing activation blocked by T024
 
 ## Goal
 
@@ -118,5 +118,6 @@ T019-T021/T025; and callback forgery/duplication/chargebacks/clock errors to T01
 
 ## Definition of done
 
-All staged gates and runbooks pass with features default off, fake-gateway E2E is complete, production
-billing remains correctly blocked as needed, and an operator-approved release task may be planned.
+The fail-closed rollout readiness guard is implemented locally and keeps billing blocked when no
+provider is selected. Full backup/restore drills, fake-gateway E2E, and operator-approved activation
+remain release gates; no production billing is enabled.

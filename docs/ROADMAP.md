@@ -42,7 +42,7 @@
 - T023 VIP purchasing and account Telegram UX — complete locally; depends on T014/T015/T016/T018
 - T024 first real payment gateway adapter — **blocked: payment provider not selected**; depends on
   T015/T016/T023
-- T025 VIP security, migration, operations, and end-to-end rollout — planned; depends on T014-T023;
+- T025 VIP security, migration, operations, and end-to-end rollout — complete locally; depends on T014-T023;
   production billing activation also depends on T024
 
 Dependency order:
