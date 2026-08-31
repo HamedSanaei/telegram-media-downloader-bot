@@ -6,6 +6,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import NewType
 
+from telegram_media_bot.domain.credential_resolution import (
+    ContentAccessScope,
+    CredentialAttemptPhase,
+    CredentialPolicy,
+)
 from telegram_media_bot.domain.subscriptions import EntitlementSnapshot
 
 JobId = NewType("JobId", str)
@@ -480,6 +485,12 @@ class JobRecord:
     #: legacy jobs. Contains only capability, acceptance time, authorized expiry, and grant/plan
     #: references — never a payment or credential secret.
     entitlement_snapshot: EntitlementSnapshot | None = None
+    credential_policy: CredentialPolicy | None = None
+    content_access_scope: ContentAccessScope = ContentAccessScope.UNKNOWN
+    user_credential_generation: int | None = None
+    operator_credential_generation: int | None = None
+    credential_attempt_phase: CredentialAttemptPhase = CredentialAttemptPhase.NOT_STARTED
+    fallback_used: bool = False
 
 
 @dataclass(frozen=True, slots=True)

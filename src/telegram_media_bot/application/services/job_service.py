@@ -6,6 +6,11 @@ from datetime import UTC, datetime
 
 from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
+from telegram_media_bot.domain.credential_resolution import (
+    ContentAccessScope,
+    CredentialAttemptPhase,
+    CredentialPolicy,
+)
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DownloadMode,
@@ -87,6 +92,12 @@ class JobService:
         image_delivery_mode: ImageDeliveryMode | None = None,
         story_delivery_mode: StoryDeliveryMode | None = None,
         entitlement_snapshot: EntitlementSnapshot | None = None,
+        credential_policy: CredentialPolicy | None = None,
+        content_access_scope: ContentAccessScope = ContentAccessScope.UNKNOWN,
+        user_credential_generation: int | None = None,
+        operator_credential_generation: int | None = None,
+        credential_attempt_phase: CredentialAttemptPhase = CredentialAttemptPhase.NOT_STARTED,
+        fallback_used: bool = False,
     ) -> tuple[JobRecord, bool]:
         container_policy = normalize_container_policy(mode, container_policy)
         return self._create(
@@ -102,6 +113,12 @@ class JobService:
             image_delivery_mode=image_delivery_mode,
             story_delivery_mode=story_delivery_mode,
             entitlement_snapshot=entitlement_snapshot,
+            credential_policy=credential_policy,
+            content_access_scope=content_access_scope,
+            user_credential_generation=user_credential_generation,
+            operator_credential_generation=operator_credential_generation,
+            credential_attempt_phase=credential_attempt_phase,
+            fallback_used=fallback_used,
         )
 
     def _create(
@@ -119,6 +136,12 @@ class JobService:
         image_delivery_mode: ImageDeliveryMode | None = None,
         story_delivery_mode: StoryDeliveryMode | None = None,
         entitlement_snapshot: EntitlementSnapshot | None = None,
+        credential_policy: CredentialPolicy | None = None,
+        content_access_scope: ContentAccessScope = ContentAccessScope.UNKNOWN,
+        user_credential_generation: int | None = None,
+        operator_credential_generation: int | None = None,
+        credential_attempt_phase: CredentialAttemptPhase = CredentialAttemptPhase.NOT_STARTED,
+        fallback_used: bool = False,
     ) -> tuple[JobRecord, bool]:
         intent = canonicalize_media_url(url)
         url = intent.canonical_url
@@ -156,6 +179,12 @@ class JobService:
             story_delivery_mode=story_delivery_mode,
             url_classification=intent.instagram_kind,
             entitlement_snapshot=entitlement_snapshot,
+            credential_policy=credential_policy,
+            content_access_scope=content_access_scope,
+            user_credential_generation=user_credential_generation,
+            operator_credential_generation=operator_credential_generation,
+            credential_attempt_phase=credential_attempt_phase,
+            fallback_used=fallback_used,
         )
         persisted = self._repository.create_job(candidate)
         return persisted, persisted.job_id == candidate.job_id

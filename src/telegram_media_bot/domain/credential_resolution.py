@@ -38,6 +38,16 @@ class ContentAccessScope(StrEnum):
     UNKNOWN = "unknown"
 
 
+class CredentialAttemptPhase(StrEnum):
+    """Durable phase of the bounded public-fallback state machine."""
+
+    NOT_STARTED = "not_started"
+    USER_ATTEMPT = "user_attempt"
+    OPERATOR_ATTEMPT = "operator_attempt"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class CredentialResolutionCategory(StrEnum):
     """Stable, typed credential routing failures (never matched by exception-string text)."""
 
@@ -152,6 +162,7 @@ def operator_ig_records_verifier(records: tuple[str, ...], *, key: bytes | None)
 
 __all__ = [
     "ContentAccessScope",
+    "CredentialAttemptPhase",
     "CredentialContext",
     "CredentialKind",
     "CredentialPolicy",

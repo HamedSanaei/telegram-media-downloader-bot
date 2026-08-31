@@ -10,6 +10,11 @@ from typing import Any
 
 from telegram_media_bot.application.ports.job_repository import JobRepository
 from telegram_media_bot.domain.cookies import CookieService
+from telegram_media_bot.domain.credential_resolution import (
+    ContentAccessScope,
+    CredentialAttemptPhase,
+    CredentialPolicy,
+)
 from telegram_media_bot.domain.errors import (
     JobCancelledError,
     JobNotFoundError,
@@ -260,6 +265,19 @@ class SqliteJobRepository(JobRepository):
                 "INTEGER NOT NULL DEFAULT 0",
             )
             _ensure_column(connection, "jobs", "entitlement_snapshot_json", "TEXT")
+            _ensure_column(connection, "jobs", "credential_policy", "TEXT")
+            _ensure_column(
+                connection, "jobs", "content_access_scope", "TEXT NOT NULL DEFAULT 'unknown'"
+            )
+            _ensure_column(connection, "jobs", "user_credential_generation", "INTEGER")
+            _ensure_column(connection, "jobs", "operator_credential_generation", "INTEGER")
+            _ensure_column(
+                connection,
+                "jobs",
+                "credential_attempt_phase",
+                "TEXT NOT NULL DEFAULT 'not_started'",
+            )
+            _ensure_column(connection, "jobs", "fallback_used", "INTEGER NOT NULL DEFAULT 0")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS jobs_recoverability_idx "
                 "ON jobs(recoverability_class, status, updated_at)"
@@ -457,10 +475,12 @@ class SqliteJobRepository(JobRepository):
                     delivery_file_unique_id, attempt, url_classification,
                     story_delivery_mode, recoverability_class, recovery_attempt_count,
                     last_recovery_version, failed_app_version, last_recovery_attempt_at,
-                    recovery_notification_sent, entitlement_snapshot_json
+                    recovery_notification_sent, entitlement_snapshot_json,
+                    credential_policy, content_access_scope, user_credential_generation,
+                    operator_credential_generation, credential_attempt_phase, fallback_used
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 _job_values(record),
@@ -1443,6 +1463,26 @@ def _job_from_row(row: sqlite3.Row) -> JobRecord:
             if row["entitlement_snapshot_json"]
             else None
         ),
+        credential_policy=(
+            CredentialPolicy(str(row["credential_policy"])) if row["credential_policy"] else None
+        ),
+        content_access_scope=ContentAccessScope(
+            str(row["content_access_scope"] or ContentAccessScope.UNKNOWN.value)
+        ),
+        user_credential_generation=(
+            int(row["user_credential_generation"])
+            if row["user_credential_generation"] is not None
+            else None
+        ),
+        operator_credential_generation=(
+            int(row["operator_credential_generation"])
+            if row["operator_credential_generation"] is not None
+            else None
+        ),
+        credential_attempt_phase=CredentialAttemptPhase(
+            str(row["credential_attempt_phase"] or CredentialAttemptPhase.NOT_STARTED.value)
+        ),
+        fallback_used=bool(row["fallback_used"]),
     )
 
 
@@ -1488,6 +1528,12 @@ def _job_values(record: JobRecord) -> tuple[Any, ...]:
         )
         if record.entitlement_snapshot
         else None,
+        record.credential_policy.value if record.credential_policy else None,
+        record.content_access_scope.value,
+        record.user_credential_generation,
+        record.operator_credential_generation,
+        record.credential_attempt_phase.value,
+        int(record.fallback_used),
     )
 
 

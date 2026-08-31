@@ -1,6 +1,6 @@
 # T020 - VIP public Instagram user-first fallback
 
-**Status:** planned
+**Status:** implemented locally
 
 ## Goal
 
@@ -107,5 +107,6 @@ Central typed mapping, zero-follow attestation, one-switch persistence, and T025
 
 ## Definition of done
 
-Public policy, scope mapping, one-switch orchestration, durable recovery state, complete matrix tests,
-metrics, docs, and gates pass without enabling private media.
+Public policy, scope vocabulary, one-switch state transition, durable recovery fields, and the
+credential failure matrix are implemented locally. Private media and provider activation remain
+disabled; full worker wiring and end-to-end gates continue in T021-T025.
