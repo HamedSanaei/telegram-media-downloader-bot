@@ -1,6 +1,6 @@
 # T017 - Encrypted per-user Instagram credential vault
 
-**Status:** planned
+**Status:** implemented
 
 ## Goal
 
@@ -114,3 +114,39 @@ exercise private backups, rotation, recovery, and incident revocation.
 
 ADR-033, typed vault/lease contracts, additive persistence, encryption/materialization adapters,
 security tests, key operations, and full repository gates pass without routing media through them.
+
+## Implementation notes
+
+ADR-033 is accepted. The owner-bound encrypted vault and its lifecycle/boundary are implemented in
+the working tree without routing media through them:
+
+- `domain/instagram_credentials.py` — `InstagramCredential`, the five lifecycle states, monotonic
+  per-owner `generation`, versioned `CredentialEnvelope` (base64 JSON), sanitized `CredentialEvent`
+  and `CredentialLease`, plus `aad_for` binding provider/credential/owner/generation.
+- `application/ports/instagram_credentials.py` — `VaultKeyStore`, `EnvelopeCryptor`,
+  `InstagramCredentialRepository`, and `CredentialMaterializer` contracts.
+- `infrastructure/credentials/envelope.py` — AES-256-GCM via `cryptography` with a random 96-bit
+  nonce per encryption and bound associated data; `InvalidTag`/`ValueError` map to a typed
+  `CredentialDecryptError`.
+- `infrastructure/credentials/key_ring.py` — `VaultKeyRing` (one active + decrypt-only keys) and
+  the application-facing `CredentialCryptor` that looks up keys by envelope key ID and fails
+  closed on a missing key.
+- `infrastructure/credentials/materializer.py` — `RestrictedCookieMaterializer` acquires an
+  atomic expiring lease, decrypts late, writes `cookies.txt` inside the exact job workspace with
+  mode `0600`, and removes the file and releases the lease on every exit path.
+- `infrastructure/persistence/sqlite_instagram_credentials.py` — additive WAL tables for
+  credentials (one active row per owner, unique on `(owner, provider)`), sanitized 90-day events,
+  and expiring leases; ciphertext lives only as a bounded base64 envelope string and is never
+  searched or logged.
+- `application/services/credential_vault.py` — `CredentialVault` lifecycle: connect/re-connect
+  (generation++), expiry/challenge markers, disconnect/revoke (immediate ciphertext erase), and
+  admin key-rotation re-encryption; plaintext never crosses this layer.
+- `bootstrap/config.py` gains a strict `vault` key-ring section; `config.example.yaml` documents
+  it with no keys configured (disabled).
+
+Tests cover round-trip, nonce uniqueness, associated-data tamper, corrupt tag, unknown/missing
+key, state transitions, cross-user isolation, single-lease contention, generation mismatch,
+expiry/challenge/revoke/disconnect blocks, cleanup on success/error/cancel, rotation/mixed-key
+recovery, restrictive POSIX permissions, and workspace containment. No password, 2FA code, raw
+cookie value, nonce, or key ID is durable or logged. Media routing, public fallback, and private
+downloads remain not implemented (T019-T021).

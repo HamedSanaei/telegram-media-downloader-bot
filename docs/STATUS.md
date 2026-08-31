@@ -184,6 +184,22 @@ network-free. T017+ will add the encrypted vault, connection flow, and credentia
 without touching the boundary. No Instagram login, payment gateway, subscription activation, or
 release/tag/deployment was introduced.
 
+## Encrypted Instagram credential vault (T017)
+
+ADR-033 is accepted and the owner-bound encrypted vault is implemented in the working tree
+without routing media through it: `domain/instagram_credentials.py` (five lifecycle states,
+monotonic generation, versioned `CredentialEnvelope`, events, leases, `aad_for`),
+`application/ports/instagram_credentials.py`, `infrastructure/credentials/` (AES-256-GCM envelope
+with random 96-bit nonce, key ring with active + decrypt-only rotation keys, `CredentialCryptor`,
+and the `RestrictedCookieMaterializer` writing mode-`0600` Netscape bytes inside the exact job
+workspace with guaranteed cleanup), `infrastructure/persistence/sqlite_instagram_credentials.py`
+(additive WAL credential/event/lease tables, one active row per owner), and
+`application/services/credential_vault.py` (`CredentialVault` connect/re-connect/expiry/challenge/
+disconnect/revoke/key-rotation). Disconnect/revoke erases ciphertext immediately; events retain 90
+days; leases expire and release; a single atomic lease prevents concurrent use. No password, 2FA
+value, raw cookie, nonce, or key is durable or logged. Tests cover tamper/wrong-owner/
+wrong-generation/key-rotation/isolation/concurrency/permission containment.
+
 ## Implemented production controls
 
 - Python 3.14.5, committed `uv.lock`, immutable Docker build, non-root/read-only app containers, and

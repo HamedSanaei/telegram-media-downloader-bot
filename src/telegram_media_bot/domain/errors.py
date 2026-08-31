@@ -359,3 +359,55 @@ class ProviderNotRegisteredError(PaymentError):
 
 class CheckoutUnavailableError(PaymentError):
     """The provider could not create an external checkout (safe, non-economic)."""
+
+
+class CredentialError(MediaBotError):
+    """Base class for controlled owner-bound Instagram credential failures (T017+)."""
+
+
+class CredentialNotFoundError(CredentialError):
+    """No credential row exists for the owner (or it has no ciphertext)."""
+
+
+class CredentialWrongOwnerError(CredentialError):
+    """A caller attempted to access another user's credential."""
+
+
+class CredentialGenerationMismatchError(CredentialError):
+    """The requested generation does not match the current row generation."""
+
+
+class CredentialRevokedError(CredentialError):
+    """The credential was revoked and is no longer usable."""
+
+
+class CredentialDisconnectedError(CredentialError):
+    """The credential is disconnected and holds no ciphertext."""
+
+
+class CredentialExpiredError(CredentialError):
+    """The credential session expired and requires re-login."""
+
+
+class CredentialChallengeRequiredError(CredentialError):
+    """Instagram requires a checkpoint/2FA challenge before the session is usable."""
+
+
+class CredentialLeaseBusyError(CredentialError):
+    """Another job currently holds the expiring lease for this credential/generation."""
+
+
+class CredentialLeaseNotFoundError(CredentialError):
+    """The supplied lease is not held/active."""
+
+
+class CredentialDecryptError(CredentialError):
+    """Ciphertext could not be authenticated/decrypted for this owner/generation/key."""
+
+
+class CredentialKeyMissingError(CredentialError):
+    """The envelope's key ID is not in the available key ring (key rotation gap)."""
+
+
+class CredentialMaterializationError(CredentialError):
+    """Local plaintext materialization into the job workspace failed."""

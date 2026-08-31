@@ -103,7 +103,7 @@
   terminal-failure administrator alerts, and cleanup;
 - `telegram/handlers.py`: owner validation, admin controls, and safe enqueue ordering.
 
-## Milestone 4 ownership (T014/T015/T016 implemented; the rest still planned)
+## Milestone 4 ownership (T014/T015/T016/T017 implemented; the rest still planned)
 
 T014's entitlement foundation is implemented (`domain/subscriptions.py`,
 `application/services/entitlements.py`, `application/ports/subscriptions.py`,
@@ -122,7 +122,7 @@ T017-T025 and do not exist yet.
 | Area | Ownership |
 |---|---|
 | `domain/payments.py` | Provider-neutral orders, attempts, statuses, provider identifiers, transaction references, and immutable amount/plan snapshots (implemented) |
-| `domain/instagram_credentials.py` | Credential state/kind/policy, access scope, safe references, generations, leases, envelopes, and typed credential failures (planned) |
+| `domain/instagram_credentials.py` | Credential state, monotonic generation, versioned envelope, sanitized events/leases, associated-data binding, and typed lifecycle semantics (implemented) |
 | `application/ports/payments.py` | Payment repository and project-owned payment-gateway requests/results (implemented) |
 | `domain/web_companion.py` | Purpose-bound handoff claims, verification outcomes, browser/CSRF tokens, bounded flow state, Instagram-connect and payment views (implemented) |
 | `application/ports/companion.py` | Companion handoff signer/verifier/nonce-repository, provider-callback registry, Instagram flow, and payment processor contracts (implemented) |
@@ -130,11 +130,12 @@ T017-T025 and do not exist yet.
 | `infrastructure/security/handoff.py` | Ed25519 signer/verifier over `cryptography` (implemented) |
 | `infrastructure/web_companion/app.py` | Separate `aiohttp.web` Instagram-browser and payment-callback routes with CSRF/cookies/headers/limits/trusted-proxy isolation (implemented) |
 | `bootstrap/companion.py` | Reduced least-privilege `CompanionSettings` (no bot token/signer) and deterministic `build_companion_app` (implemented) |
-| `application/ports/instagram_credentials.py` | Owner-bound encrypted-credential repository, resolver, lease, and ephemeral materialization contracts (planned) |
+| `application/ports/instagram_credentials.py` | Owner-bound encrypted-credential repository, key store/cryptor, lease, and ephemeral materialization contracts (implemented) |
 | `application/services/billing.py` | Order lifecycle, verified-result confirmation, idempotent atomic refund/reversal, and reconciliation queries without provider-name branching (implemented) |
 | `application/services/credential_resolution.py` | Credential policy matrix, public-only fallback eligibility, private user-only enforcement, and one-switch accounting |
-| `infrastructure/persistence/` additions | Additive SQLite repositories for payments (implemented: `sqlite_payments.py`) and single-use handoff nonces (implemented: `sqlite_handoff.py`), plus planned encrypted credentials, sanitized events, and leases |
-| `infrastructure/credentials/` | AES-256-GCM envelope/key-ring adapter and job-scoped restrictive Netscape materialization |
+| `application/services/credential_vault.py` | `CredentialVault` connect/re-connect (generation++), expiry/challenge markers, disconnect/revoke erase, and admin key-rotation re-encryption (implemented) |
+| `infrastructure/persistence/` additions | Additive SQLite repositories for payments (`sqlite_payments.py`), single-use handoff nonces (`sqlite_handoff.py`), and encrypted credentials/events/leases (`sqlite_instagram_credentials.py`), all implemented |
+| `infrastructure/credentials/` | AES-256-GCM envelope/key-ring adapter, `CredentialCryptor`, and job-scoped restrictive Netscape materializer (implemented) |
 | `infrastructure/payment/<provider>/` | First provider adapter selected by composition; intentionally blocked in T024 until a provider is chosen |
 | companion web package/process | Separate least-privilege `aiohttp.web` account-link and payment-callback boundary without the Telegram bot token (implemented, disabled by default) |
 | `infrastructure/ytdlp/`, `infrastructure/gallerydl/`, and media router changes | Consume explicit ephemeral credential context while remaining unaware of VIP/subscription policy |

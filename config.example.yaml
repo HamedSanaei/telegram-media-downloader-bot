@@ -237,3 +237,12 @@ web_companion:
   handoff_clock_skew_seconds: 30
   handoff_verification_key: null
   handoff_signing_key: null
+
+# Encrypted per-user Instagram credential vault (T017). Optional and disabled with no keys.
+# Each key is 32 bytes (64 hex characters). active_key encrypts new sessions; retained_keys are
+# decrypt-only for rotation. Keys remain in local ignored configuration and never enter SQLite,
+# logs, image, source, or metrics.
+vault:
+  active_key_id: ""
+  active_key: null
+  retained_keys: {}

@@ -486,7 +486,7 @@ remains. Provider selection remains a composition concern rather than a business
 
 ## ADR-033: Per-user Instagram sessions use an encrypted owner-bound vault
 
-**Status:** proposed
+**Status:** accepted
 
 Instagram passwords and 2FA/checkpoint codes are transient web-flow input and are never durable.
 The resulting session is stored in a dedicated owner-bound vault using AES-256-GCM, a random 96-bit
@@ -505,6 +505,14 @@ writes a Netscape file inside the exact job workspace with restrictive permissio
 explicit ephemeral engine credential, and removes it on success, failure, cancellation, timeout,
 and cleanup. Jobs/Redis may store safe references and policy only—never cookies, ciphertext,
 passwords, codes, headers, usernames, or persistent plaintext paths.
+
+**Implemented (T017) without routing media:** additive WAL credential/event/lease tables, one
+active row per owner, AES-256-GCM envelopes with random 96-bit nonces bound to
+provider/credential/owner/generation, a single atomic expiring lease, an admin-keyed rotation
+path (decrypt-only previous keys) with re-encryption under the active key, and a context-managed
+restricted Netscape materializer that cleans up on every exit path. Disconnect/revoke erases
+ciphertext immediately while keeping sanitized 90-day events. No plaintext, key, nonce, password,
+or 2FA value is durable or logged.
 
 ## ADR-034: Public operator credentials never authorize private Instagram media
 

@@ -605,6 +605,41 @@ class WebCompanionSection(StrictModel):
         return self.handoff_signing_key.get_secret_value().encode("utf-8")
 
 
+class VaultKeyRingSection(StrictModel):
+    """Ignored least-privilege key ring for the encrypted Instagram credential vault (T017).
+
+    Keys are 32-byte AES-256 keys supplied as 64 hex characters and never leave configuration,
+    logs, SQLite, source, images, or metrics. ``active_key`` is used for new encryptions;
+    ``retained_keys`` are decrypt-only for rotation. All keys are optional so installs with user
+    credentials disabled start without any key material.
+    """
+
+    active_key_id: str = ""
+    active_key: SecretStr | None = None
+    retained_keys: dict[str, SecretStr] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_ring(self) -> VaultKeyRingSection:
+        entries: list[tuple[str, SecretStr]] = []
+        if self.active_key is not None:
+            if not self.active_key_id:
+                raise ValueError("vault.active_key_id is required when vault.active_key is set")
+            entries.append((self.active_key_id, self.active_key))
+        for key_id, value in self.retained_keys.items():
+            if not key_id.strip():
+                raise ValueError("vault.retained_keys keys must be non-empty")
+            entries.append((key_id, value))
+        ids = [key_id for key_id, _ in entries]
+        if len(ids) != len(set(ids)):
+            raise ValueError("vault key IDs must be unique")
+        for key_id, value in entries:
+            _validate_aes256_hex(key_id, value.get_secret_value())
+        return self
+
+    def has_keys(self) -> bool:
+        return self.active_key is not None
+
+
 class Settings(StrictModel):
     app: AppSection
     telegram: TelegramSection
@@ -622,6 +657,7 @@ class Settings(StrictModel):
     cookie_health: CookieHealthSection = Field(default_factory=CookieHealthSection)
     recovery: RecoverySection = Field(default_factory=RecoverySection)
     web_companion: WebCompanionSection = Field(default_factory=WebCompanionSection)
+    vault: VaultKeyRingSection = Field(default_factory=VaultKeyRingSection)
 
     @model_validator(mode="after")
     def validate_cookie_file_identity(self) -> Settings:
@@ -698,6 +734,12 @@ class Settings(StrictModel):
             local_api.migration.state_file.expanduser().resolve().parent.mkdir(
                 parents=True, exist_ok=True
             )
+
+
+def _validate_aes256_hex(key_id: str, value: str) -> None:
+    cleaned = value.strip()
+    if len(cleaned) != 64 or any(char not in "0123456789abcdefABCDEF" for char in cleaned):
+        raise ValueError(f"vault key {key_id!r} must be 32 bytes as 64 hex characters")
 
 
 def _validate_ip_or_cidr(value: str) -> None:
