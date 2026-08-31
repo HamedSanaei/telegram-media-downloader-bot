@@ -104,7 +104,10 @@ T027 are complete: a typed audit event domain (`domain/audit.py`) with categorie
 correlation metadata, approved numeric Telegram user IDs, and source-message references; a central
 fail-closed sanitizer that redacts bot tokens, authorization headers, passwords, 2FA codes,
 Instagram sessions/cookies, vault keys, payment secrets, callback signatures, provider references,
-proxy credentials, and raw exceptions while preserving approved numeric user IDs; and a durable
+proxy credentials, and raw exceptions while preserving approved numeric user IDs. The T026
+boundary also rejects event/category mismatches, non-numeric user identities, untyped source
+references, and accepted-submission events without a source; header, quoted-assignment, and
+whitespace-bearing credential regressions are covered. T027 provides a durable
 additive SQLite/WAL per-destination outbox with leases, bounded retry, and `UNCERTAIN` quarantine.
 Config and runtime logger destinations reconcile as a protected union (deduplicated by channel ID;
 runtime removal never disables a config-owned channel). T028 is complete: the admin menu now

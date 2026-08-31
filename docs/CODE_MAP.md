@@ -151,9 +151,9 @@ The following runtime ownership implements the completed logger milestone.
 
 | Area | Ownership |
 |---|---|
-| `domain/audit.py` | Typed `AuditEvent`, categories, severity, correlation metadata, source-message references, probe outcomes, and redaction-safe payloads (implemented T026/T028/T030) |
+| `domain/audit.py` | Typed `AuditEvent`, category/type invariants, numeric user-ID validation, required submission source-message references, probe outcomes, and redaction-safe payloads (implemented T026/T028/T030) |
 | `application/ports/audit.py` | Audit sink, logger destination management, durable outbox, lease, delivery-effect, and destination-verifier contracts (implemented T026-T028) |
-| `application/services/audit_service.py`, `audit_sanitizer.py`, `audit_outbox.py` | Event eligibility, centralized fail-closed sanitization, and transport-neutral outbox processing (implemented T026/T027) |
+| `application/services/audit_service.py`, `audit_sanitizer.py`, `audit_outbox.py` | Event eligibility, centralized fail-closed whole-value/header sanitization, and transport-neutral outbox processing (implemented T026/T027) |
 | `application/services/audit_destination_admin.py` | Role-authorized destination management: strict channel-ID validation, probe-driven health, enable/disable, config-protected removal (implemented T028) |
 | `infrastructure/persistence/sqlite_audit.py` | Additive SQLite/WAL logger destinations, outbox, health, probe records, leases, and uncertain-delivery records (implemented T027/T028) |
 | `infrastructure/telegram/audit_destination_verifier.py` | Typed channel probe: existence, type, bot membership, posting test, sanitized outcome mapping (implemented T028) |

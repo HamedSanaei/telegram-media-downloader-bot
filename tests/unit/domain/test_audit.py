@@ -57,11 +57,40 @@ def test_typed_event_keeps_approved_numeric_user_id_and_safe_source_reference() 
     assert event.source == source
 
 
+@pytest.mark.parametrize("telegram_user_id", ["42", 42.0, True, 0, -42])
+def test_event_rejects_non_numeric_or_non_user_telegram_ids(telegram_user_id: object) -> None:
+    with pytest.raises(ValueError, match="positive numeric user ID"):
+        _event(telegram_user_id=telegram_user_id)
+
+
+def test_event_type_and_category_must_match() -> None:
+    with pytest.raises(ValueError, match="type and category do not match"):
+        _event(
+            event_type=AuditEventType.TERMINAL_OPERATIONAL_ERROR,
+            category=AuditCategory.SYSTEM,
+        )
+
+
+def test_submission_event_requires_typed_source_reference() -> None:
+    with pytest.raises(ValueError, match="require a source reference"):
+        _event(
+            event_type=AuditEventType.USER_SUBMISSION_RECEIVED,
+            category=AuditCategory.USER_SUBMISSION,
+            source=None,
+        )
+
+
 def test_event_requires_utc_and_bounded_safe_classifications() -> None:
     with pytest.raises(ValueError, match="must be UTC"):
         _event(occurred_at=datetime(2026, 8, 31, 12, 30))
     with pytest.raises(ValueError, match="safe classification"):
         _event(provider="https://instagram.com/user")
+
+
+@pytest.mark.parametrize("identity", ["_urlsafe-job", "-urlsafe-job", "+urlsafe-job"])
+def test_event_accepts_project_generated_urlsafe_identities(identity: str) -> None:
+    event = _event(event_id=identity, correlation_id=identity, job_id=identity)
+    assert event.event_id == identity
 
 
 @pytest.mark.parametrize(
@@ -84,6 +113,13 @@ def test_event_requires_utc_and_bounded_safe_classifications() -> None:
         ("proxy_password=proxy-pass", "proxy-pass"),
         ("proxy_credentials=user:pass", "user:pass"),
         ("https://proxy-user:proxy-pass@proxy.example", "proxy-pass"),  # pragma: allowlist secret
+        ("Cookie: sessionid=first-secret; csrftoken=second-secret", "second-secret"),
+        ("Set-Cookie: sessionid=cookie-secret; Path=/; HttpOnly", "cookie-secret"),
+        ("password: correct horse battery staple", "correct horse battery staple"),
+        ('{"password": "quoted-secret"}', "quoted-secret"),
+        ("sessionid=session-secret", "session-secret"),
+        ("Instagram session: long session secret", "long session secret"),
+        ("Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
     ],
 )
 def test_sanitizer_redacts_realistic_secret_values(value: str, secret: str) -> None:
@@ -106,6 +142,7 @@ def test_sanitizer_does_not_over_reject_safe_operational_words(value: str) -> No
         'Traceback (most recent call last):\n  File "secret.py"',
         r"secret path C:\Users\operator\vault.key",
         ".instagram.com\tTRUE\t/\tTRUE\t1893456000\tsessionid\tsecret",
+        ".instagram.com\tTRUE\t/\tTRUE\t1893456000\tsessionid\tsecret\r\n",
     ],
 )
 def test_sanitizer_rejects_unsafe_structures(value: object) -> None:
@@ -119,6 +156,13 @@ def test_event_serialization_is_stable_and_round_trips() -> None:
     second = serialize_event(event)
     assert first == second
     assert deserialize_event(first) == event
+
+
+def test_sanitizer_is_idempotent_for_persistence_boundary() -> None:
+    sanitized = sanitize_audit_message(
+        'Cookie: sessionid=secret; password="correct horse battery staple"'
+    )
+    assert sanitize_audit_message(sanitized) == sanitized
 
 
 @pytest.mark.parametrize(

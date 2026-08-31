@@ -38,16 +38,18 @@ class SqliteAuditRepository:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self._path, timeout=30, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
+        connection: sqlite3.Connection | None = None
         try:
+            connection = sqlite3.connect(self._path, timeout=30, isolation_level=None)
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 30000")
             yield connection
         except sqlite3.Error as exc:
             raise PersistenceError("logger durable state operation failed") from exc
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
     def initialize(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

@@ -7,8 +7,11 @@
 Implemented in `domain/audit.py`, `application/ports/audit.py`, `audit_service.py`, and
 `audit_sanitizer.py`. Events use typed categories/severity/UTC identities and approved numeric
 Telegram user IDs. Central sanitization fails closed on credentials, headers, payment/session
-material, paths, and raw tracebacks. Business emitters know no destination IDs. Unit regression
-tests cover typed metadata and the complete secret-exclusion boundary.
+material, paths, and raw tracebacks, including complete Cookie/Set-Cookie headers, quoted
+assignments, and whitespace-bearing values. Runtime validation rejects event/category mismatches,
+non-numeric user identities, untyped source references, and submission events without a source.
+Business emitters know no destination IDs. Unit regression tests cover typed metadata and the
+complete secret-exclusion boundary.
 
 ## Goal
 

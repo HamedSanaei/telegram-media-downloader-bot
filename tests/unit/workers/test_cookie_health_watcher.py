@@ -74,7 +74,7 @@ def test_worker_startup_and_cron_have_no_cookie_health_probe_path() -> None:
         and call.args
         and isinstance(call.args[0], ast.Name)
     ]
-    assert cron_functions == ["maintenance_job"]
+    assert cron_functions == ["maintenance_job", "audit_dispatch_job"]
 
 
 def test_more_than_45_minutes_of_static_refreshes_have_no_network_dependency() -> None:
