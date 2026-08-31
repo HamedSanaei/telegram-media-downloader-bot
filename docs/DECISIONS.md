@@ -634,7 +634,10 @@ permanently pending. Development/PR runs cancel superseded work for the same ref
 uses a separate non-destructive concurrency policy.
 
 Docker image/runtime correctness and the historical privileged updater/rollback matrix are separate
-conditional lanes. Installer Linux/Windows, dependency/package, and plugin SDK checks activate from
+conditional lanes; `updater-integration` builds and loads the same `telegram-media-downloader-bot:ci`
+image from the shared GHA cache itself before its matrix, because it is independently triggerable
+(`updater` can be true while `docker` is false) and must not depend on a build from another lane.
+Installer Linux/Windows, dependency/package, and plugin SDK checks activate from
 their owned paths; full/manual/nightly validation forces all lanes. The tag-only publication
 workflow remains independently full and fail-closed, retaining tag/package/release-policy checks,
 published-image smokes, updater compatibility, reproducible archives, and release ordering.

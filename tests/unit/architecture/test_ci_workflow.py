@@ -165,6 +165,24 @@ def test_updater_integration_retains_local_api_readiness_scenario() -> None:
     assert "test_local_api_readiness.sh" in runs
 
 
+def test_updater_integration_builds_and_loads_the_runtime_image() -> None:
+    """The updater matrix needs the locally-loaded `telegram-media-downloader-bot:ci` image.
+
+    Before T033 this came from the combined `docker` job; after the split the updater lane runs as an
+    independent job (it can be required while `docker` is false), so it must build+load its own tag
+    from the shared GHA cache before executing the matrix. Assert this so a fresh-runner "No such
+    image" regression stays impossible.
+    """
+    data = _ci()
+    steps = data["jobs"]["updater-integration"]["steps"]
+    build_steps = [step for step in steps if step.get("uses", "") == "docker/build-push-action@v6"]
+    assert build_steps, "updater-integration must build/load telegram-media-downloader-bot:ci"
+    with_ = build_steps[0]["with"]
+    assert with_["load"] is True
+    assert "telegram-media-downloader-bot:ci" in with_.get("tags", "")
+    assert "telegram-media-downloader-bot-amd64" in with_.get("cache-from", "")
+
+
 def test_no_workflow_publishes_on_push_except_release_tags() -> None:
     data = yaml.safe_load(PUBLISH.read_text(encoding="utf-8"))
     triggers = data.get("on") or data.get(True)
