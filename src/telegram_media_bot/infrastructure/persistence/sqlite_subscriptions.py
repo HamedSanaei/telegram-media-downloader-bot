@@ -388,3 +388,105 @@ def _load_datetime(value: str) -> datetime:
 
 def _now_text() -> str:
     return _dump_datetime(datetime.now(UTC))
+
+
+# --------------------------------------------------------------------------- #
+# Connection-scoped helpers for the T015 atomic billing transaction
+# --------------------------------------------------------------------------- #
+#
+# T015 confirmation/refund must update payment rows AND create/reverse an entitlement grant AND
+# rewrite the subscription projection in ONE ``BEGIN IMMEDIATE`` transaction. These helpers operate
+# on a caller-supplied open ``sqlite3.Connection`` (the payment repository's transaction) so T014's
+# recomputation rules stay authoritative and are not duplicated in the billing layer.
+
+
+def load_grants_on_connection(
+    connection: sqlite3.Connection,
+    user_id: int,
+) -> tuple[EntitlementGrant, ...]:
+    rows = connection.execute(
+        "SELECT * FROM entitlement_grants WHERE user_id = ? ORDER BY confirmed_at ASC",
+        (user_id,),
+    ).fetchall()
+    return tuple(_grant_from_row(row) for row in rows)
+
+
+def load_all_grants_on_connection(
+    connection: sqlite3.Connection,
+) -> tuple[EntitlementGrant, ...]:
+    rows = connection.execute(
+        "SELECT * FROM entitlement_grants ORDER BY confirmed_at ASC"
+    ).fetchall()
+    return tuple(_grant_from_row(row) for row in rows)
+
+
+def insert_grant_on_connection(
+    connection: sqlite3.Connection,
+    grant: EntitlementGrant,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO entitlement_grants (
+            grant_id, user_id, plan_id, duration_months, confirmed_at,
+            source_type, source_reference, created_at, reversed_at, reversal_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(grant.grant_id),
+            grant.user_id,
+            str(grant.plan_id),
+            grant.duration_months,
+            _dump_datetime(grant.confirmed_at),
+            grant.source_type,
+            grant.source_reference,
+            _dump_datetime(grant.created_at),
+            None,
+            None,
+        ),
+    )
+
+
+def recompute_subscription_on_connection(
+    connection: sqlite3.Connection,
+    *,
+    user_id: int,
+    now: datetime,
+) -> Subscription:
+    """Recompute and persist the subscription projection from all stored grants.
+
+    Uses T014's calendar-month recomputation rules and always returns the derived projection (a
+    user with no valid paid time simply has an authorized window of ``None`` on their retained
+    account row).
+    """
+    grants = load_grants_on_connection(connection, user_id)
+    from telegram_media_bot.domain.subscriptions import compute_authorized_until
+
+    authorized_until = compute_authorized_until(grants)
+    subscription = Subscription(
+        user_id=user_id,
+        authorized_until=authorized_until,
+        cancelled_at=None,
+        updated_at=now,
+    )
+    # Persist the derived projection. The account row, once it exists, is retained for audit; a
+    # user with no grants and no paid time simply has an empty authorized window. (Free users who
+    # were never granted anything still have no subscription row created here: a paid flow only
+    # reaches this path after a grant insert.)
+    _save_subscription(connection, subscription)
+    return subscription
+
+
+def mark_grant_reversed_on_connection(
+    connection: sqlite3.Connection,
+    grant_id: GrantId,
+    *,
+    reason: str,
+    reversed_at: datetime,
+) -> int:
+    """Mark one grant reversed without deleting its row; returns the number of rows changed."""
+    cursor = connection.execute(
+        "UPDATE entitlement_grants SET reversed_at = ?, reversal_reason = ? "
+        "WHERE grant_id = ? AND reversed_at IS NULL",
+        (_dump_datetime(reversed_at), reason, str(grant_id)),
+    )
+    return cursor.rowcount

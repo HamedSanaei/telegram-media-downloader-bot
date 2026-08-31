@@ -446,8 +446,9 @@ new availability and trust dependency in disaster-recovery tooling.
 ## ADR-032: Durable VIP entitlement is a typed, ledger-based bot capability
 
 **Status:** accepted for the T014 entitlement foundation (plans, grants, subscription projection,
-UTC calendar arithmetic, reversal recomputation, and job snapshots). The payment-confirmation
-decision paragraphs at the end of this record remain **proposed** and wait for T015.
+UTC calendar arithmetic, reversal recomputation, and job snapshots) and for the T015 provider-neutral
+billing/payment-confirmation decisions implemented below. Future real-gateway integration (T024),
+the secure companion web/callback boundary (T016), and VIP Telegram UX (T023) remain **proposed**.
 
 The product calls the feature VIP, but domain/application code uses typed subscription,
 entitlement, capability, plan, and grant models. Telegram's `UserProfile.is_premium` is unrelated
@@ -472,13 +473,16 @@ child jobs inherit that snapshot. A later user callback or new URL is a new prot
 must reauthorize. Credential revocation (T017+) remains a separate authority and can still stop an
 accepted credential-dependent job.
 
-**Proposed (T015): payment confirmation does not grant a second extension.**
+**Implemented (T015): payment confirmation does not grant a second extension.**
 
 A provider adapter cryptographically verifies its callback before returning a project-owned result.
 One SQLite `BEGIN IMMEDIATE` transaction validates order/amount/currency/status, claims the unique
-`(provider, provider_transaction_reference)`, confirms the order, and inserts exactly one grant.
-Duplicate, concurrent, replayed, redirect-only, or uncertain confirmation cannot grant a second
-extension. Provider selection remains a composition concern rather than a business-code branch.
+`(provider, provider_transaction_reference)` via the `provider_transaction_claims` table, confirms
+the order, updates attempts, and inserts exactly one grant in the same transaction. Duplicate,
+concurrent, replayed, redirect-only, or uncertain confirmation cannot grant a second extension.
+Refund/reversal is also one atomic transaction that marks the payment's grant reversed and
+recomputes the chain from remaining grants, ending access immediately when no valid paid time
+remains. Provider selection remains a composition concern rather than a business-code branch.
 
 ## ADR-033: Per-user Instagram sessions use an encrypted owner-bound vault
 

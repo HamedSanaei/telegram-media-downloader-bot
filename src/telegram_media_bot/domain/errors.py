@@ -297,3 +297,65 @@ class DuplicateEntitlementGrantError(EntitlementDeniedError):
 
 class EntitlementGrantNotFoundError(MediaBotError):
     """The referenced grant does not exist or was already purged externally."""
+
+
+class PaymentError(MediaBotError):
+    """Base class for controlled billing/payment failures."""
+
+
+class PaymentOrderNotFoundError(PaymentError):
+    """The referenced payment order does not exist."""
+
+
+class PaymentOrderExpiredError(PaymentError):
+    """The payment order is past its deterministic UTC expiry."""
+
+
+class PaymentAmountMismatchError(PaymentError):
+    """Provider-verified amount disagrees with the order snapshot; fails closed."""
+
+
+class PaymentCurrencyMismatchError(PaymentError):
+    """Provider-verified currency disagrees with the order snapshot; fails closed."""
+
+
+class PaymentProviderMismatchError(PaymentError):
+    """Provider-verified provider identity disagrees with the order's provider."""
+
+
+class PaymentOrderMismatchError(PaymentError):
+    """Provider-verified order reference/mapping disagrees with the expected order."""
+
+
+class PaymentTransactionNotClaimedError(PaymentError):
+    """The expected provider transaction was not previously claimed/persisted."""
+
+
+class PaymentTransactionReplayError(PaymentError):
+    """The same provider transaction was already processed economically."""
+
+
+class PaymentAlreadyConfirmedError(PaymentError):
+    """The payment order is already in a paid/confirmed state."""
+
+
+class PaymentAlreadyRefundedError(PaymentError):
+    """The payment was already refunded/reversed."""
+
+
+class InvalidPaymentTransitionError(PaymentError):
+    """A payment order state transition is not allowed."""
+
+
+class PaymentBackendError(PaymentError):
+    """The payment backend is unavailable; billing FAILS CLOSED (never grants)."""
+
+    retryable = True
+
+
+class ProviderNotRegisteredError(PaymentError):
+    """No gateway adapter is registered for the requested provider."""
+
+
+class CheckoutUnavailableError(PaymentError):
+    """The provider could not create an external checkout (safe, non-economic)."""

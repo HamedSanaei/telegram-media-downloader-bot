@@ -31,7 +31,7 @@
 ## Milestone 4 - Accounts, VIP subscriptions, billing, and authenticated Instagram access — future
 
 - T014 VIP entitlement and subscription domain — complete
-- T015 provider-neutral billing and payment foundation — planned; depends on T014
+- T015 provider-neutral billing and payment foundation — complete
 - T016 secure companion web and callback boundary — planned
 - T017 encrypted per-user Instagram credential vault — planned; depends on T016
 - T018 Instagram account connection and recovery UX — planned; depends on T016/T017

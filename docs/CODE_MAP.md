@@ -103,24 +103,27 @@
   terminal-failure administrator alerts, and cleanup;
 - `telegram/handlers.py`: owner validation, admin controls, and safe enqueue ordering.
 
-## Proposed Milestone 4 ownership (T015+; entitlement foundation implemented)
+## Milestone 4 ownership (T014/T015 implemented; the rest still planned)
 
-T014's entitlement foundation is implemented (see the Durable/VIP rows in the main table above:
-`domain/subscriptions.py`, `application/services/entitlements.py`,
-`application/ports/subscriptions.py`, `infrastructure/persistence/sqlite_subscriptions.py`, and
-the nullable `entitlement_snapshot` on `JobRecord`). The following remain a plan for T015-T025 only
-and do not exist yet: payments, Instagram credentials, account linking, VIP Telegram UX, and
-credential-dependent routing.
+T014's entitlement foundation is implemented (`domain/subscriptions.py`,
+`application/services/entitlements.py`, `application/ports/subscriptions.py`,
+`infrastructure/persistence/sqlite_subscriptions.py`, and the nullable `entitlement_snapshot` on
+`JobRecord`). T015's provider-neutral billing foundation is also implemented
+(`domain/payments.py`, `application/ports/payments.py`, `application/services/billing.py`,
+`infrastructure/persistence/sqlite_payments.py`, and the additive `payment_orders` /
+`payment_attempts` / unique `provider_transaction_claims` tables). The remaining areas
+(Instagram credentials, account linking, VIP Telegram UX, credential-dependent routing, and the
+first real payment gateway) remain planned for T016-T025 and do not exist yet.
 
-| Proposed area | Planned ownership |
+| Area | Ownership |
 |---|---|
-| `domain/payments.py` | Provider-neutral orders, attempts, statuses, provider identifiers, transaction references, and immutable amount/plan snapshots |
-| `domain/instagram_credentials.py` | Credential state/kind/policy, access scope, safe references, generations, leases, envelopes, and typed credential failures |
-| `application/ports/payments.py` | Payment repository and project-owned payment-gateway requests/results |
-| `application/ports/instagram_credentials.py` | Owner-bound encrypted-credential repository, resolver, lease, and ephemeral materialization contracts |
-| `application/services/billing.py` | Order lifecycle, callback verification orchestration, idempotent confirmation, and refund/reversal handling without provider-name branching |
+| `domain/payments.py` | Provider-neutral orders, attempts, statuses, provider identifiers, transaction references, and immutable amount/plan snapshots (implemented) |
+| `domain/instagram_credentials.py` | Credential state/kind/policy, access scope, safe references, generations, leases, envelopes, and typed credential failures (planned) |
+| `application/ports/payments.py` | Payment repository and project-owned payment-gateway requests/results (implemented) |
+| `application/ports/instagram_credentials.py` | Owner-bound encrypted-credential repository, resolver, lease, and ephemeral materialization contracts (planned) |
+| `application/services/billing.py` | Order lifecycle, verified-result confirmation, idempotent atomic refund/reversal, and reconciliation queries without provider-name branching (implemented) |
 | `application/services/credential_resolution.py` | Credential policy matrix, public-only fallback eligibility, private user-only enforcement, and one-switch accounting |
-| `infrastructure/persistence/` additions | Additive SQLite repositories for payments, encrypted credentials, sanitized events, single-use handoff nonces, and leases (subscription tables already exist from T014) |
+| `infrastructure/persistence/` additions | Additive SQLite repositories for payments (implemented: `sqlite_payments.py`), plus planned encrypted credentials, sanitized events, single-use handoff nonces, and leases |
 | `infrastructure/credentials/` | AES-256-GCM envelope/key-ring adapter and job-scoped restrictive Netscape materialization |
 | `infrastructure/payment/<provider>/` | First provider adapter selected by composition; intentionally blocked in T024 until a provider is chosen |
 | proposed companion web package/process | Separate least-privilege `aiohttp.web` account-link and payment-callback boundary without the Telegram bot token |

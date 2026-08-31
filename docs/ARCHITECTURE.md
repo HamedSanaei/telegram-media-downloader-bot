@@ -424,9 +424,12 @@ arbitrary documentation size ceiling.
 ## Milestone 4 architecture: VIP and authenticated Instagram
 
 **Status:** the T014 entitlement foundation (plans, subscription projection, immutable grants,
-UTC calendar arithmetic, reversal recomputation, and job authorization snapshots) is **implemented**.
-Payments, Instagram credential vault, account-link/payment companion, VIP Telegram UX, and routing
-changes all remain **planned** (T015+); nothing below that is unimplemented should be read as live.
+UTC calendar arithmetic, reversal recomputation, and job authorization snapshots) and the T015
+provider-neutral billing/payment foundation (typed orders/attempts, the gateway/persistence ports,
+the additive WAL payment store, and the atomic confirmation/refund transactions) are
+**implemented**. Instagram credential vault, account-link/payment companion, VIP Telegram UX, the
+first real payment gateway, and routing changes all remain **planned** (T016+); nothing below that
+is unimplemented should be read as live.
 
 ### Planned system view
 
@@ -486,9 +489,12 @@ credential revoke/disconnect (T017+) remains an entirely separate authority.
 
 ### Planned economic state beyond T014
 
-Payment orders, attempts, and unique provider transaction references are still planned (T015).
-Payment confirmation will use one immediate transaction for verification, order transition, unique
-transaction claim, and grant insertion.
+T015 implements a provider-neutral billing foundation: payment orders, attempts, and unique
+provider transaction references (`payment_orders`, `payment_attempts`,
+`provider_transaction_claims`). Confirmation and refund each use one immediate transaction for
+verification, order transition, unique transaction claim, entitlement grant change, and
+subscription recomputation. No real gateway/callback route is wired yet; only the deterministic
+test fake exists behind the provider-neutral port.
 
 ### Planned credential boundary and policy
 

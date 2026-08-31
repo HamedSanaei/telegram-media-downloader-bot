@@ -1,6 +1,6 @@
 # T015 - Provider-neutral billing and payment foundation
 
-**Status:** planned
+**Status:** implemented
 
 ## Goal
 

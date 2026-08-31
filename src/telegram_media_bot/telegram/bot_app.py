@@ -26,6 +26,7 @@ from telegram_media_bot.infrastructure.persistence.sqlite_effects import SqliteE
 from telegram_media_bot.infrastructure.persistence.sqlite_inbound_updates import (
     SqliteInboundUpdateRepository,
 )
+from telegram_media_bot.infrastructure.persistence.sqlite_payments import SqlitePaymentRepository
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.persistence.sqlite_subscriptions import (
     SqliteSubscriptionRepository,
@@ -69,6 +70,8 @@ async def run_bot(settings: Settings) -> None:
         repository.initialize()
         subscription_store = SqliteSubscriptionRepository(settings.database_path())
         await asyncio.to_thread(subscription_store.initialize)
+        payment_store = SqlitePaymentRepository(settings.database_path())
+        await asyncio.to_thread(payment_store.initialize)
         rate_limiter = RedisRateLimiter.create(settings.redis.url)
         if settings.telegram.required_channels.enabled:
             membership_checker = TelegramMembershipChecker.create(

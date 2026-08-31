@@ -74,13 +74,24 @@ detailed documentation remain authoritative. Six validated subsystem Skill trees
 fallback and deterministic CI guard cover environments without Graphify. Runtime behavior is
 unchanged.
 
-Milestone 4 planning decomposes future VIP subscriptions, provider-neutral billing, encrypted
-per-user Instagram credentials, authenticated public/private routing, secure account linking, and
-rollout work into T014-T025. ADR-032 through ADR-035 are proposed, not accepted. T024 is blocked
-until a real payment provider is selected, so production purchasing remains blocked. This is a
-documentation-only plan: it changes no Python behavior, database schema, migration, dependency,
-Compose service, configuration model, package version, tag, release, or deployment, and it does
-not restore the removed Telegram Premium/Telethon/MTProto architecture from ADR-013.
+Milestone 4 decomposes future VIP subscriptions, provider-neutral billing, encrypted per-user
+Instagram credentials, authenticated public/private routing, secure account linking, and rollout
+work into T014-T025. ADR-032's entitlement foundation (T014) and provider-neutral
+payment-confirmation decisions (T015) are accepted; ADR-033 through ADR-035 remain proposed. T024
+is blocked until a real payment provider is selected, so production purchasing remains blocked.
+
+T015 implements the provider-neutral billing foundation in the working tree: typed payment
+domain models (`domain/payments.py`), a gateway/persistence port set
+(`application/ports/payments.py`), a deterministic test-only fake gateway, an additive WAL SQLite
+payment store (`payment_orders`, `payment_attempts`, and unique
+`provider_transaction_claims`), and the `BillingService` (`application/services/billing.py`).
+Order creation snapshots commercial facts (plan, duration, capabilities, amount, currency) so a
+later price change never alters an existing order. Confirmation and refund each run in one
+`BEGIN IMMEDIATE` transaction that also creates/reverses exactly one T014 entitlement grant and
+recomputes the subscription from remaining grants. Redirect-only and uncertain/timeout provider
+states never activate VIP, duplicate/concurrent/replayed callbacks never grant twice, and no real
+gateway, pricing, callback route, or card/credential storage is introduced. T014 entitlement
+authority, grant, and recomputation semantics are reused, not duplicated.
 
 Milestone 5 planning decomposes a future Operator Logger and private Telegram audit-channel
 subsystem into T026-T032. The plan covers typed events, config/runtime destination reconciliation,

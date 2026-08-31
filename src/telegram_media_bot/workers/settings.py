@@ -46,6 +46,7 @@ from telegram_media_bot.infrastructure.persistence.sqlite_effects import SqliteE
 from telegram_media_bot.infrastructure.persistence.sqlite_inbound_updates import (
     SqliteInboundUpdateRepository,
 )
+from telegram_media_bot.infrastructure.persistence.sqlite_payments import SqlitePaymentRepository
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.persistence.sqlite_subscriptions import (
     SqliteSubscriptionRepository,
@@ -92,6 +93,8 @@ async def startup(ctx: dict[str, Any]) -> None:
         await asyncio.to_thread(repository.initialize)
         subscription_store = SqliteSubscriptionRepository(settings.database_path())
         await asyncio.to_thread(subscription_store.initialize)
+        payment_store = SqlitePaymentRepository(settings.database_path())
+        await asyncio.to_thread(payment_store.initialize)
         inbound_store = SqliteInboundUpdateRepository(settings.database_path())
         await asyncio.to_thread(inbound_store.initialize)
         effect_store = SqliteEffectLedger(settings.database_path())
