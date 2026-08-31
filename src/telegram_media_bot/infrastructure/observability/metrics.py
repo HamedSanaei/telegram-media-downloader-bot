@@ -32,6 +32,18 @@ class MetricsRegistry:
         self._recovery_effective_threshold = 0
         self._recovery_outstanding_queue_depth = 0
         self._recovery_available_headroom = 0
+        self._audit_delivery: dict[tuple[str, str], int] = defaultdict(int)
+        self._audit_pending = 0
+        self._audit_uncertain = 0
+
+    def record_audit_delivery(self, *, outcome: str, category: str) -> None:
+        with self._lock:
+            self._audit_delivery[(_label(outcome), _label(category))] += 1
+
+    def set_audit_outbox(self, *, pending: int, uncertain: int) -> None:
+        with self._lock:
+            self._audit_pending = max(0, pending)
+            self._audit_uncertain = max(0, uncertain)
 
     def record_job(self, *, outcome: str, source: str = "unknown", error: str = "none") -> None:
         labels = (_label(outcome), _label(source), _label(error))
@@ -136,6 +148,9 @@ class MetricsRegistry:
             recovery_effective_threshold = self._recovery_effective_threshold
             recovery_outstanding_queue_depth = self._recovery_outstanding_queue_depth
             recovery_available_headroom = self._recovery_available_headroom
+            audit_delivery = dict(self._audit_delivery)
+            audit_pending = self._audit_pending
+            audit_uncertain = self._audit_uncertain
         lines = [
             "# HELP media_bot_jobs_total Completed jobs by outcome, source and error category.",
             "# TYPE media_bot_jobs_total counter",
@@ -143,6 +158,16 @@ class MetricsRegistry:
         for (outcome, source, error), value in sorted(jobs.items()):
             lines.append(
                 f'media_bot_jobs_total{{outcome="{outcome}",source="{source}",error="{error}"}} {value}'
+            )
+        lines.extend(
+            (
+                "# HELP media_bot_audit_delivery_total Logger deliveries by bounded outcome and category.",
+                "# TYPE media_bot_audit_delivery_total counter",
+            )
+        )
+        for (outcome, category), value in sorted(audit_delivery.items()):
+            lines.append(
+                f'media_bot_audit_delivery_total{{outcome="{outcome}",category="{category}"}} {value}'
             )
         lines.extend(
             (
@@ -207,6 +232,8 @@ class MetricsRegistry:
                 "# HELP media_bot_queue_depth Current ARQ queue depth.",
                 "# TYPE media_bot_queue_depth gauge",
                 f"media_bot_queue_depth {queue_depth}",
+                f"media_bot_audit_outbox_pending {audit_pending}",
+                f"media_bot_audit_outbox_uncertain {audit_uncertain}",
             )
         )
         return "\n".join(lines) + "\n"

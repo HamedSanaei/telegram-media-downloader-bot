@@ -145,21 +145,20 @@ T017-T025 and do not exist yet.
 | `telegram/` additions | `/vip`, entitlement-gating, expiry/renewal, audited administrator UX (T023); `/instagram`, `instagram_ux.py`, Persian connection prompts/status/disconnect (implemented) |
 | `workers/` and queue/persistence changes | Carry the explicit operator credential seam while preserving legacy jobs; future safe user snapshots/fallback state remain T020-T022 |
 
-## Proposed Milestone 5 ownership (not implemented)
+## Milestone 5 ownership (T026/T027 implemented; T028-T032 planned)
 
-The following is an ownership plan for T026-T032 only. These modules, tables, ports, and dispatchers
-do not exist in the current application.
+The following runtime ownership implements T026/T027.
 
-| Proposed area | Planned ownership |
+| Area | Ownership |
 |---|---|
-| `domain/audit.py` | Typed `AuditEvent`, categories, severity, correlation metadata, source-message references, and redaction-safe payloads |
-| `application/ports/audit.py` | Audit sink, logger destination management, durable outbox, lease, and Telegram delivery-effect contracts |
-| `application/services/audit.py` | Event eligibility, sanitization, fan-out, no-admin-fallback behavior, and bounded aggregate metrics |
-| `infrastructure/persistence/` additions | Additive SQLite/WAL logger destinations, outbox, health, leases, and uncertain-delivery records |
-| `infrastructure/telegram/` additions | Native `copyMessage`/`copyMessages`, safe metadata delivery, and per-destination error translation |
-| `telegram/admin_menu.py` / `telegram/admin_handlers.py` additions | `🧾 کانال‌های لاگر` management flow, numeric channel validation, test, enable/disable/remove, and health UI |
-| `workers/` or logger dispatcher | Asynchronous outbox draining, bounded retry/reconciliation, and restart-safe isolation from user jobs |
-| `docs/` task/ADR/spec additions | T026-T032, proposed ADR-036-038, privacy notice, retention, rollout, and operational runbooks |
+| `domain/audit.py` | Typed `AuditEvent`, categories, severity, correlation metadata, source-message references, and redaction-safe payloads (implemented T026) |
+| `application/ports/audit.py` | Audit sink, logger destination management, durable outbox, lease, and delivery-effect contracts (implemented T026/T027) |
+| `application/services/audit_service.py`, `audit_sanitizer.py`, `audit_outbox.py` | Event eligibility, centralized fail-closed sanitization, and transport-neutral outbox processing (implemented T026/T027) |
+| `infrastructure/persistence/sqlite_audit.py` | Additive SQLite/WAL logger destinations, outbox, health, leases, and uncertain-delivery records (implemented T027) |
+| `infrastructure/telegram/audit_delivery.py`, `audit_destination_verifier.py` | Native `copyMessage`/`copyMessages`, safe metadata delivery, channel verification, and per-destination error translation (planned T028-T030) |
+| `telegram/admin_menu.py` / `telegram/admin_handlers.py` | Logger-channel management flow, numeric channel validation, test, enable/disable/remove, and health UI (planned T028) |
+| `workers/settings.py`, `workers/jobs.py` | Asynchronous draining, bounded retry/recovery, Cookie Health and terminal-error routing, with no admin-DM fallback (planned T029/T032; repository init and config reconciliation are wired today) |
+| `docs/` | Completed T026/T027, accepted ADR-036-038, privacy/retention policy, rollout, and operational runbook (T028-T032 rollout docs planned) |
 
 ## Milestone 6 ownership (implemented)
 

@@ -40,6 +40,7 @@ from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
 from telegram_media_bot.infrastructure.media_engine_router import RoutedMediaEngine
 from telegram_media_bot.infrastructure.observability.health_server import HealthServer
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
+from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
 from telegram_media_bot.infrastructure.persistence.sqlite_cookie_health import (
     SqliteCookieHealthRepository,
 )
@@ -96,6 +97,9 @@ async def startup(ctx: dict[str, Any]) -> None:
         await asyncio.to_thread(subscription_store.initialize)
         payment_store = SqlitePaymentRepository(settings.database_path())
         await asyncio.to_thread(payment_store.initialize)
+        audit_store = SqliteAuditRepository(settings.database_path())
+        await asyncio.to_thread(audit_store.initialize)
+        await asyncio.to_thread(audit_store.reconcile_config, settings.telegram.logger.channels)
         inbound_store = SqliteInboundUpdateRepository(settings.database_path())
         await asyncio.to_thread(inbound_store.initialize)
         effect_store = SqliteEffectLedger(settings.database_path())

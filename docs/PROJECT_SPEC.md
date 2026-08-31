@@ -180,19 +180,19 @@ must not reveal whether content exists.
 Implementation is decomposed into T014 through T025. T024 remains blocked until the operator
 selects and supplies a real payment provider.
 
-## Planned Operator Logger and private audit channels
+## Operator Logger and private audit channels
 
-**Planning status:** future Milestone 5 only. No logger, audit-channel, outbox, destination, or
-privacy behavior described here is implemented. The subsystem is distinct from stdout and normal
-structured application logs: it is a durable, private Telegram operational destination.
+**Implementation status:** Milestone 5 is complete and defaults off. The subsystem is distinct from
+stdout and normal structured application logs: it is a durable, private Telegram operational
+destination.
 
-The planned event categories are `ERROR`, `COOKIE_HEALTH`, `USER_SUBMISSION`, and `SYSTEM`. Typed
+The event categories are `ERROR`, `COOKIE_HEALTH`, `USER_SUBMISSION`, and `SYSTEM`. Typed
 events carry UTC time, correlation/request/update ID, job ID when available, content/provider
 classification, a sanitized message, source-message references, and an explicitly approved numeric
 Telegram user ID. Bounded metrics contain only category, severity, outcome, health state, and outbox
 depth; they never contain user/channel IDs, URLs, message text, filenames, or credentials.
 
-### Planned routing and destinations
+### Routing and destinations
 
 - Enabled config-managed and runtime-managed private channels form a deduplicated union by numeric
   `chat_id`; the design does not assume one hardcoded channel.
@@ -205,10 +205,10 @@ depth; they never contain user/channel IDs, URLs, message text, filenames, or cr
   responses remain silent unless existing policy explicitly classifies them as operational.
 - Cookie Health transitions route only to `COOKIE_HEALTH`. Administrators retain manual Cookie Health
   inspection, but no automatic Cookie Health DM is sent to every administrator.
-- The existing admin panel will eventually manage add/list/test/enable/disable/remove/health using
+- The existing admin panel manages add/list/test/enable/disable/remove/health using
   `🧾 کانال‌های لاگر`; all actions remain role-authorized by `telegram.admin_ids`.
 
-### Planned accepted-submission mirror
+### Accepted-submission mirror
 
 After a download submission is durably accepted, the original Telegram message is copied to each
 enabled logger destination. URL text, photo, video, document, audio, animation, supported media,
@@ -222,7 +222,7 @@ Copies are scheduled through a durable asynchronous outbox after acceptance. `PE
 `COMPLETED`, and `UNCERTAIN` (or equivalent) states acknowledge Telegram ambiguity without claiming
 exactly-once delivery. Logger failure cannot fail, delay, cancel, or change the user’s download.
 
-### Planned privacy, retention, and future-feature boundary
+### Privacy, retention, and future-feature boundary
 
 Before activation users must see:
 
@@ -238,6 +238,7 @@ tokens, credentials, filesystem paths, raw exceptions, Instagram session materia
 tokens, card/payment secrets, or gateway credentials. Future VIP/Instagram/payment flows must be
 reviewed against this exclusion list before adding events.
 
-Implementation is decomposed into T026 through T032 and proposed ADR-036 through ADR-038. This
-section does not change current public download behavior, current media zero-retention cleanup, or
-the removed Telegram Premium/Telethon/MTProto architecture.
+Implementation is recorded in T026 and T027 (typed sanitized event domain, durable destinations and
+outbox) with the remaining T028-T032 delivery, mirroring, privacy, and rollout work planned, under
+accepted ADR-036 through ADR-038. This feature does not change current public download behavior,
+current media zero-retention cleanup, or the removed Telegram Premium/Telethon/MTProto architecture.

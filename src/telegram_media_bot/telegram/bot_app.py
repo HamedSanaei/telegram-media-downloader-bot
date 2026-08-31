@@ -20,6 +20,7 @@ from telegram_media_bot.infrastructure.cookies.health import (
     NetscapeStaticCookieChecker,
 )
 from telegram_media_bot.infrastructure.cookies.manager import NetscapeCookieManager
+from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
 from telegram_media_bot.infrastructure.persistence.sqlite_cookie_health import (
     SqliteCookieHealthRepository,
 )
@@ -73,6 +74,9 @@ async def run_bot(settings: Settings) -> None:
         await asyncio.to_thread(subscription_store.initialize)
         payment_store = SqlitePaymentRepository(settings.database_path())
         await asyncio.to_thread(payment_store.initialize)
+        audit_store = SqliteAuditRepository(settings.database_path())
+        await asyncio.to_thread(audit_store.initialize)
+        await asyncio.to_thread(audit_store.reconcile_config, settings.telegram.logger.channels)
         rate_limiter = RedisRateLimiter.create(settings.redis.url)
         if settings.telegram.required_channels.enabled:
             membership_checker = TelegramMembershipChecker.create(

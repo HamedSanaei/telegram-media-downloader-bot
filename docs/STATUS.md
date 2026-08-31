@@ -86,7 +86,7 @@ boundaries, and keyed operator Instagram attestation bound to sorted Instagram c
 Attestation requires explicit verified identity plus a zero-follow count; no public fallback or
 private authorization is enabled yet. Existing operator-cookie behavior remains the default.
 
-T015 implements the provider-neutral billing foundation in the working tree: typed payment
+T015 implements the provider-neutral billing foundation: typed payment
 domain models (`domain/payments.py`), a gateway/persistence port set
 (`application/ports/payments.py`), a deterministic test-only fake gateway, an additive WAL SQLite
 payment store (`payment_orders`, `payment_attempts`, and unique
@@ -99,15 +99,20 @@ states never activate VIP, duplicate/concurrent/replayed callbacks never grant t
 gateway, pricing, callback route, or card/credential storage is introduced. T014 entitlement
 authority, grant, and recomputation semantics are reused, not duplicated.
 
-Milestone 5 planning decomposes a future Operator Logger and private Telegram audit-channel
-subsystem into T026-T032. The plan covers typed events, config/runtime destination reconciliation,
-durable asynchronous outbox delivery, admin channel UX, migration of operational error/Cookie Health
-alerts, accepted-submission mirroring, privacy notice, indefinite retention, secret exclusion, and
-end-to-end rollout. ADR-036 through ADR-038 are proposed, not accepted. This is documentation-only:
-no Python behavior, schema, migration, dependency, Compose service, configuration model, package
-version, tag, release, deployment, or history changed.
+Milestone 5 implements the Operator Logger and private Telegram audit-channel subsystem. T026 and
+T027 are complete: a typed audit event domain (`domain/audit.py`) with categories, severity,
+correlation metadata, approved numeric Telegram user IDs, and source-message references; a central
+fail-closed sanitizer that redacts bot tokens, authorization headers, passwords, 2FA codes,
+Instagram sessions/cookies, vault keys, payment secrets, callback signatures, provider references,
+proxy credentials, and raw exceptions while preserving approved numeric user IDs; and a durable
+additive SQLite/WAL per-destination outbox with leases, bounded retry, and `UNCERTAIN` quarantine.
+Config and runtime logger destinations reconcile as a protected union (deduplicated by channel ID;
+runtime removal never disables a config-owned channel). T028-T032 (admin channel UX, alert
+migration, accepted-submission mirroring, privacy/retention controls, and E2E rollout) remain
+planned. Mirroring will default off and require the exact Persian privacy notice acknowledgement.
+Retention is indefinite with no automatic Telegram purge. ADR-036 through ADR-038 are accepted.
 
-T033 implements the fast-feedback CI tiering in the working tree: a repository-owned deterministic
+T033 implements the fast-feedback CI tiering: a repository-owned deterministic
 changed-path classifier (`scripts/ci_change_policy.py`), a fast `quality` lane for ordinary
 source/documentation changes, conditional heavy lanes (dependency/package/plugin-sdk/
 docker-runtime/updater-integration/installer-linux/installer-windows), and an always-evaluated
@@ -172,7 +177,7 @@ inherit it; later user callbacks reauthorize. No version/tag/release/deployment 
 ## Secure companion boundary (T016)
 
 ADR-035 is accepted and the optional disabled least-privilege companion web boundary is
-implemented in the working tree: `domain/web_companion.py` (purpose-bound claims, verification
+implemented: `domain/web_companion.py` (purpose-bound claims, verification
 outcomes, browser/CSRF tokens, bounded flow state, Instagram-connect/payment views),
 `application/ports/companion.py` (signer/verifier/nonce-repository/flow/registry/processor
 contracts), `application/services/handoff.py` (`HandoffLinkService` minting and
@@ -192,7 +197,7 @@ release/tag/deployment was introduced.
 
 ## Encrypted Instagram credential vault (T017)
 
-ADR-033 is accepted and the owner-bound encrypted vault is implemented in the working tree
+ADR-033 is accepted and the owner-bound encrypted vault is implemented
 without routing media through it: `domain/instagram_credentials.py` (five lifecycle states,
 monotonic generation, versioned `CredentialEnvelope`, events, leases, `aad_for`),
 `application/ports/instagram_credentials.py`, `infrastructure/credentials/` (AES-256-GCM envelope
@@ -208,7 +213,7 @@ wrong-generation/key-rotation/isolation/concurrency/permission containment.
 
 ## Instagram account connection (T018)
 
-The secure Instagram connection surface is implemented in the working tree with no media-policy
+The secure Instagram connection surface is implemented with no media-policy
 change: `domain/instagram_connection.py` (login result + safe failure categories),
 `application/ports/instagram_login.py` (replaceable `InstagramSessionAcquirer`),
 `application/services/instagram_connection.py` (`InstagramConnectionService` mints Ed25519-signed

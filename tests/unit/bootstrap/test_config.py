@@ -24,6 +24,37 @@ def test_example_configuration_is_valid() -> None:
     assert settings.media.workspace.cleanup_on_timeout
     assert settings.operations.update.prune_old_project_images_after_success
     assert "CHANGE_ME" not in repr(settings.telegram.bot_token)
+    assert not settings.telegram.logger.enabled
+    assert not settings.telegram.logger.alerts_enabled
+    assert not settings.telegram.logger.submission_mirror_enabled
+
+
+def test_legacy_configuration_defaults_logger_fully_off() -> None:
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw["telegram"].pop("logger")
+
+    settings = Settings.model_validate(raw)
+
+    assert settings.telegram.logger.channels == ()
+    assert not settings.telegram.logger.enabled
+
+
+def test_logger_channel_does_not_implicitly_enable_mirroring() -> None:
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw["telegram"]["logger"]["channels"] = [-1001234567890]
+
+    settings = Settings.model_validate(raw)
+
+    assert not settings.telegram.logger.submission_mirror_enabled
+
+
+@pytest.mark.parametrize("chat_id", [-123, 1001234567890])
+def test_logger_destinations_require_numeric_channel_ids(chat_id: int) -> None:
+    raw = yaml.safe_load(Path("config.example.yaml").read_text(encoding="utf-8"))
+    raw["telegram"]["logger"]["channels"] = [chat_id]
+
+    with pytest.raises(ValidationError, match="numeric -100"):
+        Settings.model_validate(raw)
 
 
 def test_v1_0_0_configuration_remains_valid_without_manual_rewrite() -> None:

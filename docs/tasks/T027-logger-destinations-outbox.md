@@ -1,6 +1,14 @@
 # T027 - Durable logger destinations, configuration, and outbox
 
-**Status:** planned
+**Status:** complete
+
+## Implementation record
+
+`sqlite_audit.py` owns additive WAL tables for config/runtime destinations, audit events, isolated
+outbox effects, leases, health, and privacy acknowledgements. Ownership reconciles as a deduplicated
+union; historical rows remain for indefinite audit integrity. Delivery is isolated per destination,
+retries stop after six attempts, ambiguous outcomes enter `UNCERTAIN`, and expired leases recover
+after restart. Strict logger configuration defaults every capability off.
 
 ## Goal
 
@@ -18,7 +26,7 @@ deterministic reconciliation.
 - T026.
 - SQLite/WAL, `SqliteJobRepository`, `SqliteEffectLedger`, durable inbox, queue recovery, and
   existing metrics.
-- ADR-007, ADR-008, ADR-017, ADR-023, and proposed ADR-037.
+- ADR-007, ADR-008, ADR-017, ADR-023, and accepted ADR-037.
 
 ## Scope
 
@@ -34,9 +42,9 @@ deterministic reconciliation.
 
 ## Non-goals
 
-- No schema or migration is implemented in this planning commit.
 - No hardcoded single-channel setting or provider-name branching.
 - No exactly-once Telegram guarantee.
+- No Telegram transport implementation yet (delivery draining is T028-T032).
 
 ## Architecture
 

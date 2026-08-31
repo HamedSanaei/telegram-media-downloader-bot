@@ -49,6 +49,12 @@ telegram:
       - chat_id: -1001234567890
         title: "کانال اصلی"
         join_url: "https://t.me/CHANGE_ME"
+  # Operator Logger is disabled by default. Configuring channels does not enable alerts or mirrors.
+  logger:
+    enabled: false
+    channels: []
+    alerts_enabled: false
+    submission_mirror_enabled: false
   progress_min_interval_seconds: 3.0
   progress_min_percent_delta: 5.0
 

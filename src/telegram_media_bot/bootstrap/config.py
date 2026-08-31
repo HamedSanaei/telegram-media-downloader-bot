@@ -115,6 +115,21 @@ class RequiredChannelsSection(StrictModel):
         return self
 
 
+class TelegramLoggerSection(StrictModel):
+    enabled: bool = False
+    channels: tuple[int, ...] = ()
+    alerts_enabled: bool = False
+    submission_mirror_enabled: bool = False
+
+    @model_validator(mode="after")
+    def validate_logger(self) -> TelegramLoggerSection:
+        if len(self.channels) != len(set(self.channels)):
+            raise ValueError("telegram.logger.channels must be unique")
+        if any(chat_id > -1000000000000 for chat_id in self.channels):
+            raise ValueError("telegram.logger.channels must use numeric -100... channel IDs")
+        return self
+
+
 class TelegramSection(StrictModel):
     bot_token: SecretStr
     admin_ids: tuple[int, ...] = ()
@@ -131,6 +146,7 @@ class TelegramSection(StrictModel):
     local_api_is_local: bool = False
     local_bot_api: LocalBotApiSection = Field(default_factory=LocalBotApiSection)
     required_channels: RequiredChannelsSection = Field(default_factory=RequiredChannelsSection)
+    logger: TelegramLoggerSection = Field(default_factory=TelegramLoggerSection)
     progress_min_interval_seconds: float = Field(default=3.0, ge=1.0, le=60.0)
     progress_min_percent_delta: float = Field(default=5.0, ge=1.0, le=100.0)
 

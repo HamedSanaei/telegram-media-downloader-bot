@@ -556,12 +556,13 @@ audit/credential tables and restores configuration readable by the prior strict 
 This architecture is unrelated to and must not resurrect ADR-013's removed Telegram Premium,
 Telethon/MTProto session, staging-channel, Premium queue, or copy-message delivery path.
 
-## Planned Milestone 5 architecture: Operator Logger and private audit channels
+## Milestone 5 architecture: Operator Logger and private audit channels
 
-**Planning status:** future documentation only. No logger process, event model, destination table,
-outbox, handler, or configuration field exists yet.
+**Implementation status:** T026/T027 implemented and feature-gated off by default; T028-T032
+planned. Repository initialization and config-destination reconciliation run at bot and worker
+startup; Telegram delivery draining is not yet wired.
 
-### Planned flow
+### Flow (T026/T027 implemented; dispatcher planned)
 
 ```text
 accepted Telegram update
@@ -572,58 +573,64 @@ accepted Telegram update
         |
         +--> typed AuditEvent --> SQLite/WAL logger outbox
                                       |
-                                      +--> per-destination dispatcher
+                                      +--> per-destination dispatcher (planned T028-T032)
                                              |
-                                             +--> Telegram copy/send gateway
-                                             +--> PENDING / COMPLETED / UNCERTAIN
+                                             +--> Telegram copy/send gateway (planned)
+                                             +--> PENDING / COMPLETED / UNCERTAIN (modeled)
 ```
 
-Terminal worker failures and persisted Cookie Health transitions emit typed events after their
-existing durable state changes. The dispatcher owns fan-out, bounded retry, leases, and destination
-health. It never changes job status, cancellation precedence, cleanup, or delivery uncertainty.
+Terminal worker failures and persisted Cookie Health transitions will emit typed events after their
+existing durable state changes (planned T029). The planned dispatcher owns fan-out, bounded retry,
+leases, and destination health. It never changes job status, cancellation precedence, cleanup, or
+delivery uncertainty.
 
-### Planned ownership and boundaries
+### Ownership and boundaries (T026/T027)
 
 - `domain/audit.py`: framework-free categories, severities, event identity, safe metadata, and
-  source-message references.
-- `application/ports/audit.py`: `AuditSink`, logger/destination management, and dispatcher ports.
-- `application/services/audit.py`: eligibility, sanitization, correlation, fan-out, and aggregate
-  metrics; no Telegram or provider-name branching.
-- `infrastructure/persistence/` additions: additive SQLite/WAL destination, outbox, lease, and
-  delivery-effect repositories. SQLite/WAL is durable truth; Redis only wakes work.
+  source-message references (implemented).
+- `application/ports/audit.py`: audit repository, destination management, durable outbox, lease,
+  and Telegram delivery-effect contracts (implemented).
+- `application/services/audit_service.py`, `audit_sanitizer.py`, `audit_outbox.py`: eligibility,
+  centralized fail-closed sanitization, correlation, and transport-neutral outbox processing; no
+  destination IDs in business policy (implemented).
+- `infrastructure/persistence/sqlite_audit.py`: additive SQLite/WAL destination, outbox, lease,
+  health, and delivery-effect repository. SQLite/WAL is durable truth; Redis only wakes work
+  (implemented).
 - `infrastructure/telegram/` additions: native `copyMessage`/`copyMessages` and safe metadata
-  delivery; one destination failure is isolated from all others.
+  delivery; one destination failure isolated from all others (planned T028-T030).
 - `telegram/admin_menu.py` and `admin_handlers.py`: role-authorized logger-channel management;
-  callbacks are reauthorized and validated at execution time.
-- `workers/` or a dedicated dispatcher: asynchronous outbox draining and bounded reconciliation;
-  it never enumerates `telegram.admin_ids` as a fallback.
+  callbacks reauthorized and validated at execution time (planned T028).
+- `workers/settings.py`: asynchronous outbox draining and bounded reconciliation; it never
+  enumerates `telegram.admin_ids` as a fallback (planned T029/T032; repository init and reconcile
+  are wired today).
 
 Configured destinations and runtime-created destinations reconcile as a deduplicated union by
-numeric `chat_id`. Config-managed rows cannot be removed through the UI. Destination health is
-`ACTIVE`, `UNREACHABLE`, `FORBIDDEN`, or `DISABLED`; removal or permission loss affects only that
-destination.
+numeric `chat_id`. Config-managed rows cannot be removed through the runtime API (a planned UI must
+preserve this). Destination health is `ACTIVE`, `UNREACHABLE`, `FORBIDDEN`, or `DISABLED`; removal
+or permission loss affects only that destination.
 
-### Planned audit content and privacy boundary
+### Audit content and privacy boundary
 
 `ERROR`, `COOKIE_HEALTH`, `USER_SUBMISSION`, and `SYSTEM` events carry UTC timestamp, correlation/
 request/update ID, job ID when known, content/provider classification, sanitized message, source
-message references, and the explicitly selected numeric Telegram user ID. URLs and original media
-are private audit-channel content, not structured logs or metrics. Cookies, passwords, 2FA,
-authorization headers, bot tokens, filesystem paths, raw exceptions, Instagram sessions, payment
-secrets, and signed login tokens are prohibited everywhere outside their owning future flow.
+message references, and the explicitly selected numeric Telegram user ID. The central sanitizer
+redacts cookies, passwords, 2FA, authorization headers, bot tokens, filesystem paths, raw
+exceptions, Instagram sessions, payment secrets, and signed login tokens while preserving approved
+numeric user IDs.
 
-Accepted download submissions are copied only after durable acceptance. Native Telegram copy
-operations preserve original media, captions, and album ordering; media groups receive one logical
-submission identity. Control interactions are excluded. The original message is not edited or
-deleted. A privacy notice gates activation, and audit copies/safe metadata are retained indefinitely
-by the first implementation; no automatic Telegram deletion is introduced.
+Accepted download submissions will be copied only after durable acceptance (planned T030). Native
+Telegram copy operations preserve original media, captions, and album ordering; media groups receive
+one logical submission identity. Control interactions are excluded. The original message is not
+edited or deleted. A privacy notice will gate activation, and audit copies/safe metadata are
+retained indefinitely by the first implementation; no automatic Telegram deletion is introduced.
 
-### Planned reliability and rollout
+### Reliability and rollout
 
 The outbox records work before normal processing continues. Telegram ambiguity is represented as
-`UNCERTAIN` (or equivalent quarantine), not an automatic duplicate. Dispatcher retries are bounded,
-per-destination, and restart-safe. With no usable destination, the system emits only structured
-application logs plus bounded health/metric signals.
+`UNCERTAIN` (or equivalent quarantine), never an automatic duplicate; uncertain sends are never
+auto-resent. Planned dispatcher retries are bounded, per-destination, and restart-safe. With no
+usable destination, the system emits only structured application logs plus bounded health/metric
+signals.
 
 Rollout is additive and feature-gated: initialize dormant state, validate private channels and
 permissions, enable operational alerts, show the privacy notice, then enable accepted-submission

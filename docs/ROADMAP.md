@@ -36,13 +36,13 @@
 - T017 encrypted per-user Instagram credential vault — complete; depends on T016
 - T018 Instagram account connection and recovery UX — complete; depends on T016/T017
 - T019 credential resolution and adapter integration — complete; depends on T017
-- T020 VIP public Instagram user-first fallback — complete locally; depends on T014/T018/T019
-- T021 VIP private Instagram media — complete locally; depends on T020
-- T022 per-user Instagram session recovery and isolation — complete locally; depends on T018/T020/T021
-- T023 VIP purchasing and account Telegram UX — complete locally; depends on T014/T015/T016/T018
+- T020 VIP public Instagram user-first fallback — complete; depends on T014/T018/T019
+- T021 VIP private Instagram media — complete; depends on T020
+- T022 per-user Instagram session recovery and isolation — complete; depends on T018/T020/T021
+- T023 VIP purchasing and account Telegram UX — complete; depends on T014/T015/T016/T018
 - T024 first real payment gateway adapter — **blocked: payment provider not selected**; depends on
   T015/T016/T023
-- T025 VIP security, migration, operations, and end-to-end rollout — complete locally; depends on T014-T023;
+- T025 VIP security, migration, operations, and end-to-end rollout — complete; depends on T014-T023;
   production billing activation also depends on T024
 
 Dependency order:
@@ -66,10 +66,10 @@ users before purchasing exists. Production purchasing stays disabled until T024 
 verified. This VIP means a paid bot entitlement; it does not restore the removed Telegram Premium,
 Telethon/MTProto staging-channel, Premium upload queue, or copy-delivery architecture.
 
-## Milestone 5 - Operational Logger and private audit channels — future
+## Milestone 5 - Operational Logger and private audit channels — in progress (T026/T027 complete)
 
-- T026 Operator Logger domain and event-routing foundation — planned
-- T027 Durable logger destinations, configuration, and outbox — planned; depends on T026
+- T026 Operator Logger domain and event-routing foundation — complete
+- T027 Durable logger destinations, configuration, and outbox — complete; depends on T026
 - T028 Administrator logger-channel management UX — planned; depends on T026/T027
 - T029 Operational error and Cookie Health notification migration — planned; depends on T026-T028
 - T030 Durable accepted-submission audit mirror — planned; depends on T026/T027
@@ -88,20 +88,23 @@ T026 Logger domain/events
                         └──> T032 E2E rollout/operations
 ```
 
-The milestone is documentation-only planning. It introduces no runtime behavior, schema,
-migration, dependency, Compose service, configuration-model field, version, release, tag, or
-deployment. Logger activation is gated by explicit enablement, valid config/runtime destinations,
-and the Persian privacy notice. Audit content is planned for indefinite retention; no automatic
-Telegram deletion is planned. Proposed ADR-036 through ADR-038 are not accepted decisions.
+T026/T027 are implemented with additive SQLite/WAL state and defaults fully off: a typed,
+centrally sanitized audit event domain and a durable per-destination outbox with leases, bounded
+retry, `UNCERTAIN` quarantine, and config/runtime destination reconciliation. Delivery draining,
+admin channel UX, alert migration, submission mirroring, and rollout operations remain planned in
+T028-T032. Alerts and submission mirroring will be separately enabled; mirroring also requires the
+operator privacy attestation and each user's acknowledgement. Audit content has indefinite
+retention and no automatic Telegram deletion. ADR-036 through ADR-038 are accepted.
 
 ## Milestone 6 - CI performance and developer velocity
 
 - T033 Fast-feedback CI and conditional heavy validation — complete; independent of T015-T032
   runtime feature work
 
-Implemented in the working tree: a deterministic, unit-testable changed-path classifier, a fast
+Implemented: a deterministic, unit-testable changed-path classifier, a fast
 `quality` lane for ordinary source/docs changes, conditional heavy lanes
 (dependency/package/plugin-sdk/docker-runtime/updater-integration/installer-linux/installer-windows),
 stable `change-detection` / `final-ci-gate` checks, fail-conservative fallback for any unclassifiable
 or unknown change, safe same-ref development concurrency, and preserved tag-only publication
-safety. None of T015-T032 runtime work is started.
+safety. T015-T023 and T025-T032 runtime work is complete; T024 remains blocked pending provider
+selection.
