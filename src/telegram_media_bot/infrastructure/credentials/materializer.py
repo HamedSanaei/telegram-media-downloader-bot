@@ -13,7 +13,11 @@ from telegram_media_bot.domain.errors import (
     CredentialMaterializationError,
     CredentialNotFoundError,
 )
-from telegram_media_bot.domain.instagram_credentials import CREDENTIAL_PROVIDER, aad_for
+from telegram_media_bot.domain.instagram_credentials import (
+    CREDENTIAL_PROVIDER,
+    InstagramCredentialState,
+    aad_for,
+)
 from telegram_media_bot.infrastructure.credentials.key_ring import CredentialCryptor
 from telegram_media_bot.infrastructure.persistence.sqlite_instagram_credentials import (
     SqliteInstagramCredentialRepository,
@@ -44,10 +48,38 @@ class RestrictedCookieMaterializer:
         self._lease_ttl_seconds = lease_ttl_seconds
 
     @contextmanager
-    def open(self, *, owner_user_id: int, workspace: Path) -> Iterator[Path]:
+    def open(
+        self,
+        *,
+        owner_user_id: int,
+        workspace: Path,
+        expected_generation: int | None = None,
+    ) -> Iterator[Path]:
         credential = self._repository.get_credential_for_owner(owner_user_id)
         if credential is None:
             raise CredentialNotFoundError("no credential exists for the owner")
+        if expected_generation is not None and credential.generation != expected_generation:
+            from telegram_media_bot.domain.errors import CredentialGenerationMismatchError
+
+            raise CredentialGenerationMismatchError(
+                "credential generation changed before materialization"
+            )
+        if credential.state is InstagramCredentialState.REVOKED:
+            from telegram_media_bot.domain.errors import CredentialRevokedError
+
+            raise CredentialRevokedError("credential is revoked")
+        if credential.state is InstagramCredentialState.DISCONNECTED:
+            from telegram_media_bot.domain.errors import CredentialDisconnectedError
+
+            raise CredentialDisconnectedError("credential is disconnected")
+        if credential.state is InstagramCredentialState.EXPIRED:
+            from telegram_media_bot.domain.errors import CredentialExpiredError
+
+            raise CredentialExpiredError("credential session is expired")
+        if credential.state is InstagramCredentialState.CHALLENGE_REQUIRED:
+            from telegram_media_bot.domain.errors import CredentialChallengeRequiredError
+
+            raise CredentialChallengeRequiredError("credential requires a challenge")
         now = datetime.now(UTC)
         lease = self._repository.acquire_lease(
             owner_user_id=owner_user_id,

@@ -19,6 +19,7 @@ from telegram_media_bot.application.services.url_canonicalization import (
     canonicalize_media_url,
 )
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.errors import (
     DownloadFailedError,
     JobCancelledError,
@@ -105,12 +106,22 @@ class YtDlpEngine:
         )
         self._transcode_gate = TranscodeGate(settings.media.transcode.max_concurrent)
 
-    def inspect(self, url: str) -> MediaInfo:
+    def inspect(
+        self,
+        url: str,
+        *,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
+    ) -> MediaInfo:
         intent = canonicalize_media_url(url)
         if intent.youtube_video_id is not None:
             logger.info("youtube_url_canonicalized", **intent.log_fields)
         try:
-            options = self._options.inspect_options(single_video=intent.single_video_forced)
+            options = self._options.inspect_options(
+                single_video=intent.single_video_forced,
+                credential=credential,
+                cookie_file=cookie_file,
+            )
             try:
                 with YoutubeDL(options) as ydl:
                     raw = ydl.extract_info(intent.canonical_url, download=False)
@@ -154,6 +165,8 @@ class YtDlpEngine:
         *,
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> DownloadResult:
         intent = canonicalize_media_url(request.url)
         if intent.youtube_video_id is not None:
@@ -209,6 +222,8 @@ class YtDlpEngine:
                 progress_hook=progress_hook,
                 postprocessor_hook=postprocessor_hook,
                 match_filter=self._match_filter,
+                credential=credential,
+                cookie_file=cookie_file,
             )
             with YoutubeDL(options) as ydl:
                 base_selector = ydl.format_selector
@@ -444,6 +459,8 @@ class YtDlpEngine:
         expected_video_indices: tuple[int, ...],
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> DownloadResult:
         """Resolve raw carousel entries, then strictly download the expected video children."""
         expected_indices = self._validate_instagram_video_expectations(
@@ -455,6 +472,8 @@ class YtDlpEngine:
             expected_parent_media_id=expected_parent_media_id,
             expected_total_slots=expected_total_slots,
             expected_video_indices=expected_indices,
+            credential=credential,
+            cookie_file=cookie_file,
         )
         artifacts: list[DownloadArtifact] = []
         durations: list[int] = []
@@ -476,6 +495,8 @@ class YtDlpEngine:
                 child_request,
                 progress=progress,
                 is_cancelled=is_cancelled,
+                credential=credential,
+                cookie_file=cookie_file,
             )
             child_artifacts = result.delivery_artifacts
             if (
@@ -529,10 +550,16 @@ class YtDlpEngine:
         expected_parent_media_id: str,
         expected_total_slots: int,
         expected_video_indices: tuple[int, ...],
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> _InstagramVideoPlan:
         intent = canonicalize_media_url(url)
         try:
-            options = self._options.inspect_options(single_video=False)
+            options = self._options.inspect_options(
+                single_video=False,
+                credential=credential,
+                cookie_file=cookie_file,
+            )
             # This path deliberately inspects the extractor's raw playlist. Processing the
             # entries would ask yt-dlp to treat Instagram photo children as videos.
             try:

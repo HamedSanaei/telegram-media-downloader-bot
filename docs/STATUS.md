@@ -76,9 +76,15 @@ unchanged.
 
 Milestone 4 decomposes future VIP subscriptions, provider-neutral billing, encrypted per-user
 Instagram credentials, authenticated public/private routing, secure account linking, and rollout
-work into T014-T025. ADR-032's entitlement foundation (T014) and provider-neutral
-payment-confirmation decisions (T015) are accepted; ADR-033 through ADR-035 remain proposed. T024
-is blocked until a real payment provider is selected, so production purchasing remains blocked.
+work into T014-T025. T014-T019 are implemented locally; ADR-032 through ADR-035 are accepted for
+those foundations. T020-T023 and T025 remain planned, while T024 is blocked until a real payment
+provider is selected, so production purchasing remains blocked.
+
+T019 adds typed `CredentialContext`/`ResolvedCredential` values, owner/generation/state enforcement
+before user-session materialization, explicit propagation through gallery-dl/yt-dlp/router/worker
+boundaries, and keyed operator Instagram attestation bound to sorted Instagram cookie records.
+Attestation requires explicit verified identity plus a zero-follow count; no public fallback or
+private authorization is enabled yet. Existing operator-cookie behavior remains the default.
 
 T015 implements the provider-neutral billing foundation in the working tree: typed payment
 domain models (`domain/payments.py`), a gateway/persistence port set

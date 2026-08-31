@@ -13,6 +13,7 @@ from telegram_media_bot.application.ports.download_engine import (
     ProgressSink,
 )
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
+from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.errors import (
     GalleryDlOutputChangedError,
     GalleryDlUnsupportedUrlError,
@@ -42,10 +43,16 @@ class RoutedMediaEngine(DownloadEngine):
         self._gallery = gallery
         self._ytdlp = ytdlp
 
-    def inspect(self, url: str) -> MediaInfo:
+    def inspect(
+        self,
+        url: str,
+        *,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
+    ) -> MediaInfo:
         url = canonicalize_media_url(url).canonical_url
         try:
-            return self._gallery.inspect(url)
+            return self._gallery.inspect(url, credential=credential, cookie_file=cookie_file)
         except GalleryDlUnsupportedUrlError as exc:
             if self._gallery.is_gallery_social_url(url):
                 raise
@@ -56,7 +63,7 @@ class RoutedMediaEngine(DownloadEngine):
                 reason=type(exc).__name__,
             )
             try:
-                return self._ytdlp.inspect(url)
+                return self._ytdlp.inspect(url, credential=credential, cookie_file=cookie_file)
             except Exception as ytdlp_exc:
                 _attach_fallback(ytdlp_exc, ("gallery-dl", "yt-dlp"), type(exc).__name__)
                 raise
@@ -67,14 +74,23 @@ class RoutedMediaEngine(DownloadEngine):
         *,
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> DownloadResult:
         if not self._gallery.owns_mode(request.mode):
             return self._ytdlp.download(
                 request,
                 progress=progress,
                 is_cancelled=is_cancelled,
+                credential=credential,
+                cookie_file=cookie_file,
             )
-        info = self._gallery.inspect(request.url, max_assets=request.max_assets)
+        info = self._gallery.inspect(
+            request.url,
+            max_assets=request.max_assets,
+            credential=credential,
+            cookie_file=cookie_file,
+        )
         if request.mode in COLLECTION_MODES:
             # Bulk Stories/Highlights stay gallery-dl-owned end to end: gallery-dl is the
             # primary engine and its native ordering is preserved.
@@ -83,6 +99,8 @@ class RoutedMediaEngine(DownloadEngine):
                 info,
                 progress=progress,
                 is_cancelled=is_cancelled,
+                credential=credential,
+                cookie_file=cookie_file,
             )
         images = tuple(asset for asset in info.assets if asset.kind is MediaKind.IMAGE)
         videos = tuple(asset for asset in info.assets if asset.kind is MediaKind.VIDEO)
@@ -92,6 +110,8 @@ class RoutedMediaEngine(DownloadEngine):
                 info,
                 progress=progress,
                 is_cancelled=is_cancelled,
+                credential=credential,
+                cookie_file=cookie_file,
             )
         if request.mode is DownloadMode.VIDEOS_ONLY:
             return self._download_instagram_videos(
@@ -100,6 +120,8 @@ class RoutedMediaEngine(DownloadEngine):
                 videos=videos,
                 progress=progress,
                 is_cancelled=is_cancelled,
+                credential=credential,
+                cookie_file=cookie_file,
             )
         if request.mode is not DownloadMode.ALL_ORIGINAL_MEDIA:
             return self._gallery.download_inspected(
@@ -107,6 +129,8 @@ class RoutedMediaEngine(DownloadEngine):
                 info,
                 progress=progress,
                 is_cancelled=is_cancelled,
+                credential=credential,
+                cookie_file=cookie_file,
             )
         return self._download_instagram_mixed(
             request,
@@ -115,6 +139,8 @@ class RoutedMediaEngine(DownloadEngine):
             videos=videos,
             progress=progress,
             is_cancelled=is_cancelled,
+            credential=credential,
+            cookie_file=cookie_file,
         )
 
     def _download_instagram_videos(
@@ -125,6 +151,8 @@ class RoutedMediaEngine(DownloadEngine):
         videos: tuple[MediaAsset, ...],
         progress: ProgressSink | None,
         is_cancelled: CancellationCheck | None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> DownloadResult:
         video_directory = request.output_directory / "videos"
         video_temp_directory = (
@@ -148,6 +176,8 @@ class RoutedMediaEngine(DownloadEngine):
                 expected_video_indices=tuple(asset.index for asset in videos),
                 progress=progress,
                 is_cancelled=is_cancelled,
+                credential=credential,
+                cookie_file=cookie_file,
             )
             downloaded_videos = result.delivery_artifacts
             if (
@@ -173,6 +203,8 @@ class RoutedMediaEngine(DownloadEngine):
         videos: tuple[MediaAsset, ...],
         progress: ProgressSink | None,
         is_cancelled: CancellationCheck | None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> DownloadResult:
         image_assets = tuple(asset for asset in info.assets if asset.kind is MediaKind.IMAGE)
         video_assets = tuple(asset for asset in info.assets if asset.kind is MediaKind.VIDEO)
@@ -190,6 +222,8 @@ class RoutedMediaEngine(DownloadEngine):
                 videos=video_assets,
                 progress=progress,
                 is_cancelled=is_cancelled,
+                credential=credential,
+                cookie_file=cookie_file,
             )
             image_result = self._gallery.download_inspected(
                 replace(
@@ -200,6 +234,8 @@ class RoutedMediaEngine(DownloadEngine):
                 ),
                 info,
                 is_cancelled=is_cancelled,
+                credential=credential,
+                cookie_file=cookie_file,
             )
             downloaded_images = image_result.delivery_artifacts
             downloaded_videos = video_result.delivery_artifacts

@@ -49,6 +49,7 @@ from telegram_media_bot.domain.cookie_health import (
     CookieHealthState,
 )
 from telegram_media_bot.domain.cookies import CookieService
+from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
     BatchDeliveryFailedError,
@@ -186,7 +187,11 @@ async def process_inspection_job(
         if repository.is_cancel_requested(job_id):
             raise JobCancelledError("Inspection was cancelled")
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
-        info = await asyncio.to_thread(service.inspect, url)
+        credential = cast(ResolvedCredential | None, ctx.get("credential_context"))
+        if credential is None:
+            info = await asyncio.to_thread(service.inspect, url)
+        else:
+            info = await asyncio.to_thread(service.inspect, url, credential=credential)
         await asyncio.to_thread(
             repository.transition, job_id, JobStatus.RUNNING, source=info.source, attempt=attempt
         )
@@ -797,6 +802,9 @@ async def process_download_job(
                 container_policy=selected_policy,
                 native_video_codec=selected_native_video_codec,
             )
+        credential = cast(ResolvedCredential | None, ctx.get("credential_context"))
+        if credential is not None:
+            common_download_arguments["credential"] = credential
         download_task = asyncio.create_task(
             asyncio.to_thread(service.download, **common_download_arguments)
         )

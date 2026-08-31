@@ -411,3 +411,23 @@ class CredentialKeyMissingError(CredentialError):
 
 class CredentialMaterializationError(CredentialError):
     """Local plaintext materialization into the job workspace failed."""
+
+
+class CredentialResolutionError(MediaBotError):
+    """Base class for controlled credential-resolution failures (T019+)."""
+
+
+class CredentialUnavailableError(CredentialResolutionError):
+    """No usable credential can currently be resolved for the requested policy."""
+
+
+class OperatorAttestationError(MediaBotError):
+    """Base class for public-only operator attestation failures (ADR-034, T019+)."""
+
+
+class OperatorUnattestedError(OperatorAttestationError):
+    """The operator Instagram account has not been attested as public-only, or attestation is invalid."""
+
+
+class OperatorAttestationStaleError(OperatorAttestationError):
+    """The Instagram cookie records changed after attestation; attestation no longer applies."""

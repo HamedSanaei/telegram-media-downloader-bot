@@ -10,6 +10,7 @@ from telegram_media_bot.application.ports.download_engine import (
 )
 from telegram_media_bot.application.ports.url_validator import UrlValidator
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
+from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
     InvalidUrlError,
@@ -62,11 +63,26 @@ class DownloadService:
         self._instagram_max_stories = instagram_max_stories
         self._instagram_max_highlight_items = instagram_max_highlight_items
 
-    def inspect(self, url: str) -> MediaInfo:
+    def inspect(
+        self,
+        url: str,
+        *,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
+    ) -> MediaInfo:
+        """Inspect one URL; ``cookie_file`` is the explicit per-attempt credential context."""
         normalized_url = canonicalize_media_url(self.validate_url(url)).canonical_url
         if self._url_validator is not None:
             normalized_url = self._url_validator.validate(normalized_url)
-        info = self._engine.inspect(normalized_url)
+        if credential is not None and cookie_file is not None:
+            raise ValueError("credential and cookie_file cannot both be supplied")
+        if credential is not None:
+            info = self._engine.inspect(normalized_url, credential=credential)
+        elif cookie_file is not None:
+            info = self._engine.inspect(normalized_url, cookie_file=cookie_file)
+        else:
+            # Preserve compatibility with simple test/fake engines during the staged migration.
+            info = self._engine.inspect(normalized_url)
         self._validate_source(info.source)
         if self._url_validator is not None:
             self._url_validator.validate(info.webpage_url)
@@ -88,8 +104,10 @@ class DownloadService:
         image_delivery_mode: ImageDeliveryMode | None = None,
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> DownloadResult:
-        info = self.inspect(url)
+        info = self.inspect(url, credential=credential, cookie_file=cookie_file)
         collection = mode in COLLECTION_MODES
         request = DownloadRequest(
             job_id=job_id,
@@ -112,11 +130,26 @@ class DownloadService:
             else None,
         )
         try:
-            result = self._engine.download(
-                request,
-                progress=progress,
-                is_cancelled=is_cancelled,
-            )
+            if credential is not None:
+                result = self._engine.download(
+                    request,
+                    progress=progress,
+                    is_cancelled=is_cancelled,
+                    credential=credential,
+                )
+            elif cookie_file is not None:
+                result = self._engine.download(
+                    request,
+                    progress=progress,
+                    is_cancelled=is_cancelled,
+                    cookie_file=cookie_file,
+                )
+            else:
+                result = self._engine.download(
+                    request,
+                    progress=progress,
+                    is_cancelled=is_cancelled,
+                )
         except MediaBotError as exc:
             # Once the inspection above resolved the provider, a later failure inside the
             # engine must never leave the durable job record without source attribution.

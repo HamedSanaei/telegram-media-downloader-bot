@@ -516,7 +516,7 @@ or 2FA value is durable or logged.
 
 ## ADR-034: Public operator credentials never authorize private Instagram media
 
-**Status:** proposed
+**Status:** accepted
 
 The existing canonical cookie file remains the operator credential, but authenticated-user routing
 requires its Instagram account to be dedicated and verified as following zero accounts. An
@@ -546,6 +546,14 @@ Instagram privacy controls.
 
 This paid-bot VIP design does not restore ADR-013's removed Telegram Premium user session,
 Telethon/MTProto uploader, staging channel, Premium queue, or `copyMessage` delivery.
+
+**Implemented (T019) for the credential boundary:** typed credential contexts are propagated through
+the application engine port, router, gallery-dl command builder, yt-dlp options, mixed-media child
+resolution, and production worker seam. The operator attestation store uses a keyed, sorted digest
+of only Instagram cookie records and refuses attestation unless an explicit operator validation
+proves identity and a zero-follow count. User materialization enforces owner, generation, lifecycle
+state, lease, workspace, and cleanup checks. No public fallback or private authorization is enabled
+by this task.
 
 ## ADR-035: One least-privilege web companion separates account links and payment callbacks
 

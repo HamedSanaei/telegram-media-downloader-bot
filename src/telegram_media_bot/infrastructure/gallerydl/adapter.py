@@ -19,6 +19,7 @@ from telegram_media_bot.application.ports.download_engine import (
 )
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
     DownloadFailedError,
@@ -102,9 +103,18 @@ class GalleryDlEngine:
     def is_gallery_social_url(url: str) -> bool:
         return is_gallery_social_url(url)
 
-    def inspect(self, url: str, *, max_assets: int | None = None) -> MediaInfo:
+    def inspect(
+        self,
+        url: str,
+        *,
+        max_assets: int | None = None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
+    ) -> MediaInfo:
         canonical = canonicalize_media_url(url).canonical_url
-        provider, args = self._commands.inspection(canonical)
+        provider, args = self._commands.inspection(
+            canonical, credential=credential, cookie_file=cookie_file
+        )
         if not self._settings.gallery_dl.enabled:
             raise GalleryDlUnavailableError("gallery-dl is disabled")
         started = monotonic()
@@ -159,13 +169,22 @@ class GalleryDlEngine:
         *,
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> DownloadResult:
-        info = self.inspect(request.url, max_assets=request.max_assets)
+        info = self.inspect(
+            request.url,
+            max_assets=request.max_assets,
+            credential=credential,
+            cookie_file=cookie_file,
+        )
         return self.download_inspected(
             request,
             info,
             progress=progress,
             is_cancelled=is_cancelled,
+            credential=credential,
+            cookie_file=cookie_file,
         )
 
     def download_inspected(
@@ -175,6 +194,8 @@ class GalleryDlEngine:
         *,
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> DownloadResult:
         del progress
         if request.mode not in _GALLERY_MODES:
@@ -212,6 +233,8 @@ class GalleryDlEngine:
             request.url,
             workspace,
             images_only=images_only,
+            credential=credential,
+            cookie_file=cookie_file,
         )
         try:
             with self._process_slot(is_cancelled):

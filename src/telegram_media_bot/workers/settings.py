@@ -21,6 +21,7 @@ from telegram_media_bot.application.services.cookie_health_service import Cookie
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
 from telegram_media_bot.bootstrap.config import Settings, load_settings
+from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.models import (
     ComponentHealth,
     HealthReport,
@@ -165,6 +166,9 @@ async def startup(ctx: dict[str, Any]) -> None:
             bot_username=identity.username or "telegram_media_bot",
             bot_identity_available=True,
             cookie_health_service=cookie_health_service,
+            # The current public path remains operator-backed; this explicit project-owned
+            # context is the seam used by later authenticated routing tasks.
+            credential_context=ResolvedCredential.operator_public(),
         )
         cutoff = datetime.now(UTC)
         recovered = await asyncio.to_thread(repository.reconcile_abandoned, cutoff)

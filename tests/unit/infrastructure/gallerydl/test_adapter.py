@@ -11,6 +11,7 @@ from PIL import Image
 
 from telegram_media_bot.application.ports.download_engine import InstagramVideoDownloadEngine
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
     GalleryDlAuthenticationRequiredError,
@@ -228,6 +229,46 @@ def test_canonical_cookie_is_shared_with_every_gallery_provider(
     ):
         args = commands.inspection(url)[1]
         assert args[args.index("--cookies") + 1] == str(canonical)
+
+
+def test_per_attempt_cookie_file_overrides_canonical(settings: Settings, tmp_path: Path) -> None:
+    canonical = tmp_path / "canonical.txt"
+    per_attempt = tmp_path / "user-session.txt"
+    commands = GalleryDlCommandBuilder(settings.gallery_dl, canonical)
+
+    _provider, args = commands.inspection(
+        "https://instagram.com/p/abc123/", cookie_file=str(per_attempt)
+    )
+    assert args[args.index("--cookies") + 1] == str(per_attempt)
+
+    _provider, download_args = commands.download(
+        "https://instagram.com/p/abc123/",
+        tmp_path / "out",
+        cookie_file=str(per_attempt),
+    )
+    assert download_args[download_args.index("--cookies") + 1] == str(per_attempt)
+
+    probe_args = commands.inspect_url(
+        "instagram", "https://instagram.com/p/abc123/", cookie_file=str(per_attempt)
+    )
+    assert probe_args[probe_args.index("--cookies") + 1] == str(per_attempt)
+
+
+def test_no_per_attempt_cookie_falls_back_to_canonical(settings: Settings, tmp_path: Path) -> None:
+    canonical = tmp_path / "canonical.txt"
+    commands = GalleryDlCommandBuilder(settings.gallery_dl, canonical)
+
+    _provider, args = commands.inspection("https://instagram.com/p/abc123/")
+    assert args[args.index("--cookies") + 1] == str(canonical)
+
+
+def test_explicit_no_credential_does_not_use_canonical(settings: Settings, tmp_path: Path) -> None:
+    canonical = tmp_path / "canonical.txt"
+    commands = GalleryDlCommandBuilder(settings.gallery_dl, canonical)
+    _provider, args = commands.inspection(
+        "https://instagram.com/p/abc123/", credential=ResolvedCredential.none()
+    )
+    assert "--cookies" not in args
 
 
 def test_instagram_image_download_explicitly_disables_gallery_video_downloads(

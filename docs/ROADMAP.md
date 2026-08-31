@@ -32,10 +32,10 @@
 
 - T014 VIP entitlement and subscription domain — complete
 - T015 provider-neutral billing and payment foundation — complete
-- T016 secure companion web and callback boundary — planned
-- T017 encrypted per-user Instagram credential vault — planned; depends on T016
-- T018 Instagram account connection and recovery UX — planned; depends on T016/T017
-- T019 credential resolution and adapter integration — planned; depends on T017
+- T016 secure companion web and callback boundary — complete
+- T017 encrypted per-user Instagram credential vault — complete; depends on T016
+- T018 Instagram account connection and recovery UX — complete; depends on T016/T017
+- T019 credential resolution and adapter integration — complete; depends on T017
 - T020 VIP public Instagram user-first fallback — planned; depends on T014/T018/T019
 - T021 VIP private Instagram media — planned; depends on T020
 - T022 per-user Instagram session recovery and isolation — planned; depends on T018/T020/T021

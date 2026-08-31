@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from telegram_media_bot.bootstrap.config import GalleryDlSection
+from telegram_media_bot.domain.credential_resolution import CredentialKind, ResolvedCredential
 from telegram_media_bot.domain.errors import GalleryDlUnsupportedUrlError
 
 _PROVIDER_PATTERNS = {
@@ -54,27 +55,46 @@ class GalleryDlCommandBuilder:
         self._settings = settings
         self._canonical_cookie_file = canonical_cookie_file
 
-    def inspection(self, url: str) -> tuple[str, list[str]]:
+    def inspection(
+        self,
+        url: str,
+        *,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
+    ) -> tuple[str, list[str]]:
         provider = provider_for_single_item(url, self._settings.enabled_platforms)
-        args = self._base(provider)
+        args = self._base(provider, credential=credential, cookie_file=cookie_file)
         args.extend(("-o", "output.jsonl=true", "--dump-json", "--simulate", "--no-download", url))
         return provider, args
 
-    def inspect_url(self, provider: str, url: str) -> list[str]:
+    def inspect_url(
+        self,
+        provider: str,
+        url: str,
+        *,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
+    ) -> list[str]:
         """Unrestricted JSON-Lines inspection used by probes and the highlight tray browser.
 
         The provider must already be validated by the caller; this method intentionally skips
         the single-item URL pattern so authenticated tray endpoints are reachable.
         """
-        args = self._base(provider)
+        args = self._base(provider, credential=credential, cookie_file=cookie_file)
         args.extend(("-o", "output.jsonl=true", "--dump-json", "--simulate", "--no-download", url))
         return args
 
     def download(
-        self, url: str, workspace: Path, *, images_only: bool = False
+        self,
+        url: str,
+        workspace: Path,
+        *,
+        images_only: bool = False,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> tuple[str, list[str]]:
         provider = provider_for_single_item(url, self._settings.enabled_platforms)
-        args = self._base(provider)
+        args = self._base(provider, credential=credential, cookie_file=cookie_file)
         if images_only and provider == "instagram":
             args.extend(("-o", "extractor.instagram.videos=false"))
         args.extend(
@@ -94,7 +114,13 @@ class GalleryDlCommandBuilder:
     def version(self) -> list[str]:
         return [sys.executable, "-m", "gallery_dl", "--config-ignore", "--version"]
 
-    def _base(self, provider: str) -> list[str]:
+    def _base(
+        self,
+        provider: str,
+        *,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
+    ) -> list[str]:
         args = [
             sys.executable,
             "-m",
@@ -105,7 +131,18 @@ class GalleryDlCommandBuilder:
             "--sleep-request",
             str(self._settings.sleep_request_seconds),
         ]
-        cookie = self._settings.cookie_for(provider, self._canonical_cookie_file)
-        if cookie is not None:
-            args.extend(("--cookies", str(cookie)))
+        if credential is not None and cookie_file is not None:
+            raise ValueError("credential and cookie_file cannot both be supplied")
+        if credential is None:
+            selected_cookie = cookie_file or self._settings.cookie_for(
+                provider, self._canonical_cookie_file
+            )
+        elif credential.context.kind is CredentialKind.NONE:
+            selected_cookie = None
+        elif credential.context.kind is CredentialKind.USER_INSTAGRAM:
+            selected_cookie = credential.cookie_override()
+        else:
+            selected_cookie = self._settings.cookie_for(provider, self._canonical_cookie_file)
+        if selected_cookie is not None:
+            args.extend(("--cookies", str(selected_cookie)))
         return args

@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from typing import Protocol
 
+from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.models import (
     ComponentHealth,
     DownloadRequest,
@@ -14,8 +15,19 @@ CancellationCheck = Callable[[], bool]
 
 
 class DownloadEngine(Protocol):
-    def inspect(self, url: str) -> MediaInfo:
-        """Return normalized metadata without downloading the media."""
+    def inspect(
+        self,
+        url: str,
+        *,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
+    ) -> MediaInfo:
+        """Return normalized metadata without downloading the media.
+
+        ``cookie_file`` is the explicit per-attempt credential context (a materialized
+        Netscape cookie path leased to this attempt, or None). Engines/adapters never branch
+        on subscription/VIP policy; the caller chooses which credential, if any, applies.
+        """
         ...
 
     def download(
@@ -24,6 +36,8 @@ class DownloadEngine(Protocol):
         *,
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> DownloadResult:
         """Download and return one normalized final file."""
         ...
@@ -43,6 +57,8 @@ class InstagramVideoDownloadEngine(DownloadEngine, Protocol):
         expected_video_indices: tuple[int, ...],
         progress: ProgressSink | None = None,
         is_cancelled: CancellationCheck | None = None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> DownloadResult:
         """Resolve and strictly download every expected Instagram video child."""
         ...

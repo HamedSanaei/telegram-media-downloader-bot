@@ -1,6 +1,6 @@
 # T019 - Credential resolution and adapter integration
 
-**Status:** planned
+**Status:** complete
 
 ## Goal
 
@@ -16,7 +16,8 @@ sessions require an explicit, owner-safe attempt context, but adapters must not 
 
 - T017 credential vault/materializer and lease.
 - Existing T003/T013 adapter boundaries and ADR-002/027/028/030.
-- Proposed ADR-034 must be accepted during this task.
+- ADR-034 is accepted with the implementation below; authenticated fallback/private policy remains
+  disabled until T020/T021.
 
 ## Scope
 
@@ -116,4 +117,6 @@ activation without current zero-follow attestation and explicit public classific
 ## Definition of done
 
 ADR-034 is accepted, explicit resolver/engine contracts and adapter tests pass, operator compatibility
-is preserved, and no fallback or private behavior is enabled.
+is preserved, and no fallback or private behavior is enabled. T019 implements the typed context
+domain, owner/generation/state checks, sorted keyed operator attestation with explicit verified
+zero-follow input, adapter propagation, and an explicit operator-context seam in workers.

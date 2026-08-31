@@ -9,6 +9,7 @@ from typing import Any
 
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.domain.credential_resolution import CredentialKind, ResolvedCredential
 from telegram_media_bot.domain.errors import (
     MediaTooLargeError,
     MediaUnavailableError,
@@ -48,9 +49,17 @@ class YtDlpOptionsFactory:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    def inspect_options(self, *, single_video: bool = False) -> dict[str, Any]:
+    def inspect_options(
+        self,
+        *,
+        single_video: bool = False,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
+    ) -> dict[str, Any]:
         """Build options for metadata-only inspection.
 
+        ``cookie_file`` overrides the canonical operator cookie file for this one attempt
+        (explicit per-attempt credential context); when None the configured file applies.
         yt-dlp's format probing (``_check_formats``) writes its scratch files under the
         configured ``temp`` output path and silently falls back to the process working
         directory (or the ambient temp resolution) when it is unset, which fails on the
@@ -61,7 +70,7 @@ class YtDlpOptionsFactory:
         :func:`remove_inspection_workspace` when the ``YoutubeDL`` run finishes; the
         maintenance sweep reclaims it as an ordinary orphan if a crash leaks it.
         """
-        options = self._base_options()
+        options = self._base_options(credential=credential, cookie_file=cookie_file)
         workspace = self._create_inspection_workspace()
         options.update(
             {
@@ -95,12 +104,14 @@ class YtDlpOptionsFactory:
         progress_hook: Callable[[dict[str, Any]], None] | None = None,
         postprocessor_hook: Callable[[dict[str, Any]], None] | None = None,
         match_filter: Callable[[dict[str, Any]], str | None] | None = None,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> dict[str, Any]:
         request.output_directory.mkdir(parents=True, exist_ok=True)
         temp_directory = request.temp_directory or request.output_directory / ".tmp"
         temp_directory.mkdir(parents=True, exist_ok=True)
         output_template = "%(id)s.%(ext)s"
-        options = self._base_options()
+        options = self._base_options(credential=credential, cookie_file=cookie_file)
         options.update(
             {
                 "format": self.format_for_request(request),
@@ -161,7 +172,12 @@ class YtDlpOptionsFactory:
             return base
         return native
 
-    def _base_options(self) -> dict[str, Any]:
+    def _base_options(
+        self,
+        *,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
+    ) -> dict[str, Any]:
         ytdlp = self._settings.yt_dlp
         options: dict[str, Any] = {
             "quiet": True,
@@ -180,8 +196,18 @@ class YtDlpOptionsFactory:
             "windowsfilenames": True,
             "js_runtimes": {ytdlp.javascript_runtime: {}},
         }
-        if cookie_file := self._settings.effective_cookie_file():
-            options["cookiefile"] = str(cookie_file)
+        if credential is not None and cookie_file is not None:
+            raise ValueError("credential and cookie_file cannot both be supplied")
+        if credential is None:
+            selected_cookie_file = cookie_file or self._settings.effective_cookie_file()
+        elif credential.context.kind is CredentialKind.NONE:
+            selected_cookie_file = None
+        elif credential.context.kind is CredentialKind.USER_INSTAGRAM:
+            selected_cookie_file = credential.cookie_override()
+        else:
+            selected_cookie_file = self._settings.effective_cookie_file()
+        if selected_cookie_file:
+            options["cookiefile"] = str(selected_cookie_file)
         proxy = ytdlp.effective_proxy()
         if proxy is not None:
             options["proxy"] = proxy

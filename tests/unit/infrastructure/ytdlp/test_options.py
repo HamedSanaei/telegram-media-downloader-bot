@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.errors import (
     MediaTooLargeError,
     MediaUnavailableError,
@@ -196,6 +197,45 @@ def test_legacy_gallery_cookie_alias_is_the_effective_ytdlp_cookie(
     options = YtDlpOptionsFactory(configured).inspect_options()
 
     assert options["cookiefile"] == str(cookie.resolve())
+
+
+def test_per_attempt_cookie_file_overrides_canonical(settings: Settings, tmp_path: Path) -> None:
+    canonical = tmp_path / "canonical.txt"
+    per_attempt = tmp_path / "user-session.txt"
+    canonical.write_text("# Netscape\n", encoding="utf-8")
+    per_attempt.write_text("# Netscape\n", encoding="utf-8")
+    raw = settings.model_dump()
+    raw["yt_dlp"]["cookies_file"] = canonical
+    configured = type(settings).model_validate(raw)
+    factory = YtDlpOptionsFactory(configured)
+
+    inspect = factory.inspect_options(cookie_file=str(per_attempt))
+    assert inspect["cookiefile"] == str(per_attempt)
+    request = make_request(tmp_path / "out", DownloadMode.BEST)
+    downloaded = factory.download_options(request, cookie_file=str(per_attempt))
+    assert downloaded["cookiefile"] == str(per_attempt)
+
+
+def test_no_per_attempt_cookie_falls_back_to_canonical(settings: Settings, tmp_path: Path) -> None:
+    canonical = tmp_path / "canonical.txt"
+    canonical.write_text("# Netscape\n", encoding="utf-8")
+    raw = settings.model_dump()
+    raw["yt_dlp"]["cookies_file"] = canonical
+    configured = type(settings).model_validate(raw)
+    options = YtDlpOptionsFactory(configured).inspect_options()
+    assert options["cookiefile"] == str(canonical)
+
+
+def test_explicit_no_credential_does_not_use_canonical_cookie(
+    settings: Settings, tmp_path: Path
+) -> None:
+    canonical = tmp_path / "canonical.txt"
+    canonical.write_text("# Netscape\n", encoding="utf-8")
+    raw = settings.model_dump()
+    raw["yt_dlp"]["cookies_file"] = canonical
+    configured = type(settings).model_validate(raw)
+    options = YtDlpOptionsFactory(configured).inspect_options(credential=ResolvedCredential.none())
+    assert "cookiefile" not in options
 
 
 def test_explicit_proxy_disable_wins_over_configured_secret(settings: Settings) -> None:

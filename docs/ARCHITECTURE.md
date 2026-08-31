@@ -423,13 +423,11 @@ arbitrary documentation size ceiling.
 
 ## Milestone 4 architecture: VIP and authenticated Instagram
 
-**Status:** the T014 entitlement foundation (plans, subscription projection, immutable grants,
-UTC calendar arithmetic, reversal recomputation, and job authorization snapshots) and the T015
-provider-neutral billing/payment foundation (typed orders/attempts, the gateway/persistence ports,
-the additive WAL payment store, and the atomic confirmation/refund transactions) are
-**implemented**. Instagram credential vault, account-link/payment companion, VIP Telegram UX, the
-first real payment gateway, and routing changes all remain **planned** (T016+); nothing below that
-is unimplemented should be read as live.
+**Status:** T014-T019 are **implemented locally**: entitlement and provider-neutral billing/payment
+foundations, the disabled secure companion, encrypted credential vault, account connection flow, and
+the explicit credential/attestation boundary. VIP fallback/private authorization, purchasing UX, and
+the first real payment gateway remain planned or blocked (T020-T025); nothing below those boundaries
+should be read as live.
 
 ### Planned system view
 
@@ -534,7 +532,8 @@ credential cannot be resolved after `USER_RESTRICTED`, including during retry/re
 
 The nullable entitlement-snapshot field on jobs is **implemented** (T014). Credential policy/kind/
 owner/generation, access scope, current credential phase, and fallback-used fields remain planned
-(T017-T022). No cookie/ciphertext/password/code enters jobs, selections, ARQ payloads, logs,
+(T020-T022); T019's explicit attempt context is carried at the worker composition seam without
+persisting secrets. No cookie/ciphertext/password/code enters jobs, selections, ARQ payloads, logs,
 metrics, Telegram, or failure summaries.
 
 Per-user session failures update only that owner/generation. Reconnect may make eligible same-owner

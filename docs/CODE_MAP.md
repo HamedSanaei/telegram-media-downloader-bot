@@ -133,15 +133,17 @@ T017-T025 and do not exist yet.
 | `application/ports/instagram_credentials.py` | Owner-bound encrypted-credential repository, key store/cryptor, lease, and ephemeral materialization contracts (implemented) |
 | `application/services/billing.py` | Order lifecycle, verified-result confirmation, idempotent atomic refund/reversal, and reconciliation queries without provider-name branching (implemented) |
 | `application/services/instagram_connection.py` | Mints handoff links, runs the transient login, stores success in the vault, and exposes sanitized status/disconnect (implemented) |
-| `application/services/credential_resolution.py` | Credential policy matrix, public-only fallback eligibility, private user-only enforcement, and one-switch accounting |
+| `domain/credential_resolution.py` | Typed per-attempt credential kinds/policies, content scope, failure categories, resolved handles, and operator-record verifier (implemented T019) |
+| `application/services/credential_resolution.py` | Owner/generation/state-checked user materialization and explicit operator/none context resolution (implemented T019) |
+| `application/services/operator_attestation.py` | Explicit verified zero-follow operator attestation and stale-record detection (implemented T019) |
 | `application/services/credential_vault.py` | `CredentialVault` connect/re-connect (generation++), expiry/challenge markers, disconnect/revoke erase, and admin key-rotation re-encryption (implemented) |
-| `infrastructure/persistence/` additions | Additive SQLite repositories for payments (`sqlite_payments.py`), single-use handoff nonces (`sqlite_handoff.py`), and encrypted credentials/events/leases (`sqlite_instagram_credentials.py`), all implemented |
+| `infrastructure/persistence/` additions | Additive SQLite repositories for payments (`sqlite_payments.py`), single-use handoff nonces (`sqlite_handoff.py`), encrypted credentials/events/leases (`sqlite_instagram_credentials.py`), and operator attestations (`sqlite_operator_attestation.py`), all implemented |
 | `infrastructure/credentials/` | AES-256-GCM envelope/key-ring adapter, `CredentialCryptor`, and job-scoped restrictive Netscape materializer (implemented) |
 | `infrastructure/payment/<provider>/` | First provider adapter selected by composition; intentionally blocked in T024 until a provider is chosen |
 | companion web package/process | Separate least-privilege `aiohttp.web` account-link and payment-callback boundary without the Telegram bot token (implemented, disabled by default) |
-| `infrastructure/ytdlp/`, `infrastructure/gallerydl/`, and media router changes | Consume explicit ephemeral credential context while remaining unaware of VIP/subscription policy |
+| `infrastructure/ytdlp/`, `infrastructure/gallerydl/`, and media router changes | Consume explicit ephemeral credential context while remaining unaware of VIP/subscription policy (implemented T019) |
 | `telegram/` additions | `/vip`, entitlement-gating, expiry/renewal, audited administrator UX (T023); `/instagram`, `instagram_ux.py`, Persian connection prompts/status/disconnect (implemented) |
-| `workers/` and queue/persistence changes | Carry safe entitlement/credential snapshots, retain bounded fallback state, lease credentials, and clean plaintext on every terminal/recovery path |
+| `workers/` and queue/persistence changes | Carry the explicit operator credential seam while preserving legacy jobs; future safe user snapshots/fallback state remain T020-T022 |
 
 ## Proposed Milestone 5 ownership (not implemented)
 
