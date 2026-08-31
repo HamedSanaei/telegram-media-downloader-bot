@@ -6,6 +6,7 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -44,6 +45,7 @@ from telegram_media_bot.domain.models import (
     ErrorCategory,
     JobId,
     JobKind,
+    JobRecord,
     JobStatus,
     MediaAsset,
     MediaFormatOption,
@@ -52,6 +54,12 @@ from telegram_media_bot.domain.models import (
     OutputContainer,
     ProgressEvent,
     SizeConfidence,
+)
+from telegram_media_bot.domain.subscriptions import (
+    Capability,
+    EntitlementSnapshot,
+    GrantId,
+    PlanId,
 )
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
@@ -394,6 +402,104 @@ async def test_instagram_auto_download_create_and_enqueue_share_native_policy(
     assert persisted.status_message_id == 901
     assert len(bot.edits) == 1
     assert len(bot.messages) == 1
+
+
+async def test_instagram_auto_download_inherits_parent_entitlement_snapshot(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """An automatically created child download inherits the already-accepted parent snapshot.
+
+    This is a system-generated continuation of an already-authorized user intent, so it must NOT be
+    reauthorized as a new request. Public inspections carry no snapshot, so the child is unchanged.
+    """
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    configured = Settings.model_validate(raw)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    now = datetime.now(UTC)
+    snapshot = EntitlementSnapshot(
+        capability=Capability.INSTAGRAM_PRIVATE_MEDIA,
+        accepted_at=now,
+        authorized_until=now,
+        plan_id=PlanId("vip-1"),
+        grant_id=GrantId("g1"),
+    )
+    parent = JobRecord(
+        job_id=JobId("parent-inspection"),
+        kind=JobKind.INSPECTION,
+        status=JobStatus.QUEUED,
+        chat_id=10,
+        user_id=99,
+        url="https://example.test/reel/DbQqWqBDLXS",
+        mode=None,
+        idempotency_key="parent-key",
+        created_at=now,
+        updated_at=now,
+        entitlement_snapshot=snapshot,
+    )
+    repository.create_job(parent)
+    repository.set_status_message(parent.job_id, 30)
+    queue = CapturingQueue()
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "download_service": FakeInspectionService(),
+        "bot": FakeInspectionBot(fail_edit=True),
+        "metrics": MetricsRegistry(),
+        "queue": queue,
+        "job_id": str(parent.job_id),
+        "job_try": 1,
+    }
+
+    await process_inspection_job(
+        context,
+        chat_id=10,
+        user_id=99,
+        url=parent.url,
+    )
+
+    assert queue.download is not None
+    child = repository.get_job(cast(JobId, queue.download["job_id"]))
+    assert child is not None
+    assert child.entitlement_snapshot == snapshot
+
+
+async def test_public_instagram_download_child_has_no_snapshot(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """A public inspection produces a child download with no entitlement snapshot (unchanged flow)."""
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    configured = Settings.model_validate(raw)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    inspection, _ = JobService(repository).create_inspection(
+        chat_id=10,
+        user_id=99,
+        url="https://example.test/reel/DbQqWqBDLXS",
+    )
+    repository.set_status_message(inspection.job_id, 30)
+    queue = CapturingQueue()
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "download_service": FakeInspectionService(),
+        "bot": FakeInspectionBot(fail_edit=True),
+        "metrics": MetricsRegistry(),
+        "queue": queue,
+        "job_id": str(inspection.job_id),
+        "job_try": 1,
+    }
+    await process_inspection_job(context, chat_id=10, user_id=99, url=inspection.url)
+    assert queue.download is not None
+    child = repository.get_job(cast(JobId, queue.download["job_id"]))
+    assert child is not None
+    assert child.entitlement_snapshot is None
 
 
 @pytest.mark.parametrize(("user_id", "fail_edit"), [(99, True), (20, False)])

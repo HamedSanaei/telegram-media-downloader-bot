@@ -22,6 +22,10 @@
 | `src/telegram_media_bot/application/services/progress.py` | Framework-free download/delivery progress throttling |
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic access, required-channel membership, and rate policy |
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
+| `src/telegram_media_bot/domain/subscriptions.py` | T014 VIP/subscription domain: plans, `Capability`, contract and validation, immutable `EntitlementGrant`, monotonic grant windows with UTC calendar-month arithmetic, `EntitlementSnapshot`, and JSON-safe snapshot serialization |
+| `src/telegram_media_bot/application/services/entitlements.py` | `EntitlementService` (fail-closed `authorize`, grant activation, reversal recomputation, deterministic derived status); Telegram `is_premium` is never consulted |
+| `src/telegram_media_bot/application/ports/subscriptions.py` | Provider-neutral plan-catalog and subscription/grant persistence contracts |
+| `src/telegram_media_bot/infrastructure/persistence/sqlite_subscriptions.py` | WAL-backed plan/subscription/grant tables, exactly-once (user, source) unique grant index, additive idempotent schema |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
 | `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, including strict raw-entry Instagram mixed-carousel video resolution, zero-transcode AV1/H.264 MP4 and VP9 WebM selection, narrow Twitter HLS audio-metadata inference, native/inline compatibility probing, bounded explicit transcoding, private per-inspection scratch workspaces under the configured storage temp root (read-only-app-filesystem safe), and a network-free read-only-container inspection smoke |
 | `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, explicit JSON Lines event contract, bounded output/cancellation, strict non-empty vendor tuple parsing/error mapping, successful-empty unavailable classification, stable asset normalization, and safe original-image download with Instagram videos disabled when required. The typed result model carries IMAGE/VIDEO/mixed collections (Stories, Reels, video posts, avatar) without conflating "no images" with "no media" |
@@ -97,23 +101,24 @@
   terminal-failure administrator alerts, and cleanup;
 - `telegram/handlers.py`: owner validation, admin controls, and safe enqueue ordering.
 
-## Proposed Milestone 4 ownership (not implemented)
+## Proposed Milestone 4 ownership (T015+; entitlement foundation implemented)
 
-The following paths and responsibilities are an ownership plan for T014-T025 only. They do not
-claim that these modules, schemas, services, or processes exist in the current application.
+T014's entitlement foundation is implemented (see the Durable/VIP rows in the main table above:
+`domain/subscriptions.py`, `application/services/entitlements.py`,
+`application/ports/subscriptions.py`, `infrastructure/persistence/sqlite_subscriptions.py`, and
+the nullable `entitlement_snapshot` on `JobRecord`). The following remain a plan for T015-T025 only
+and do not exist yet: payments, Instagram credentials, account linking, VIP Telegram UX, and
+credential-dependent routing.
 
 | Proposed area | Planned ownership |
 |---|---|
-| `domain/subscriptions.py` | Framework-free plans, capabilities, subscriptions, immutable entitlement grants, status, and authorization snapshots |
 | `domain/payments.py` | Provider-neutral orders, attempts, statuses, provider identifiers, transaction references, and immutable amount/plan snapshots |
 | `domain/instagram_credentials.py` | Credential state/kind/policy, access scope, safe references, generations, leases, envelopes, and typed credential failures |
-| `application/ports/subscriptions.py` | Subscription and entitlement-grant persistence contracts |
 | `application/ports/payments.py` | Payment repository and project-owned payment-gateway requests/results |
 | `application/ports/instagram_credentials.py` | Owner-bound encrypted-credential repository, resolver, lease, and ephemeral materialization contracts |
-| `application/services/entitlements.py` | VIP authorization, UTC calendar-month stacking, snapshot issuance, and reversal recomputation |
 | `application/services/billing.py` | Order lifecycle, callback verification orchestration, idempotent confirmation, and refund/reversal handling without provider-name branching |
 | `application/services/credential_resolution.py` | Credential policy matrix, public-only fallback eligibility, private user-only enforcement, and one-switch accounting |
-| `infrastructure/persistence/` additions | Additive SQLite repositories for subscriptions, payments, encrypted credentials, sanitized events, single-use handoff nonces, and leases |
+| `infrastructure/persistence/` additions | Additive SQLite repositories for payments, encrypted credentials, sanitized events, single-use handoff nonces, and leases (subscription tables already exist from T014) |
 | `infrastructure/credentials/` | AES-256-GCM envelope/key-ring adapter and job-scoped restrictive Netscape materialization |
 | `infrastructure/payment/<provider>/` | First provider adapter selected by composition; intentionally blocked in T024 until a provider is chosen |
 | proposed companion web package/process | Separate least-privilege `aiohttp.web` account-link and payment-callback boundary without the Telegram bot token |

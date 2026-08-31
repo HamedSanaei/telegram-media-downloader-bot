@@ -197,6 +197,10 @@ async def process_inspection_job(
             and settings.media.instagram.auto_download
         ):
             instagram_container, instagram_policy = _instagram_download_contract(settings)
+            # A system-generated child continuation inherits the parent inspection's accepted
+            # entitlement snapshot so a VIP job does not need reauthorization. Public inspections
+            # carry no snapshot, so this stays a no-op for the current public flow.
+            inherited_snapshot = record.entitlement_snapshot if record is not None else None
             download, created = await asyncio.to_thread(
                 JobService(repository).create_download,
                 chat_id=chat_id,
@@ -205,6 +209,7 @@ async def process_inspection_job(
                 mode=DownloadMode.BEST_ORIGINAL,
                 container=instagram_container,
                 container_policy=instagram_policy,
+                entitlement_snapshot=inherited_snapshot,
             )
             status_message_id = await _edit_or_send_inspection_message(
                 bot=bot,

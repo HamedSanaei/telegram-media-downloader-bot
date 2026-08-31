@@ -54,6 +54,10 @@ from telegram_media_bot.domain.recoverability import (
     provider_for_job,
     recovery_class_for_job,
 )
+from telegram_media_bot.domain.subscriptions import (
+    entitlement_snapshot_from_dict,
+    entitlement_snapshot_to_dict,
+)
 
 _ACTIVE_STATUSES = (
     JobStatus.QUEUED.value,
@@ -255,6 +259,7 @@ class SqliteJobRepository(JobRepository):
                 "recovery_notification_sent",
                 "INTEGER NOT NULL DEFAULT 0",
             )
+            _ensure_column(connection, "jobs", "entitlement_snapshot_json", "TEXT")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS jobs_recoverability_idx "
                 "ON jobs(recoverability_class, status, updated_at)"
@@ -452,10 +457,10 @@ class SqliteJobRepository(JobRepository):
                     delivery_file_unique_id, attempt, url_classification,
                     story_delivery_mode, recoverability_class, recovery_attempt_count,
                     last_recovery_version, failed_app_version, last_recovery_attempt_at,
-                    recovery_notification_sent
+                    recovery_notification_sent, entitlement_snapshot_json
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 _job_values(record),
@@ -1433,6 +1438,11 @@ def _job_from_row(row: sqlite3.Row) -> JobRecord:
             else None
         ),
         recovery_notification_sent=bool(row["recovery_notification_sent"]),
+        entitlement_snapshot=(
+            entitlement_snapshot_from_dict(json.loads(str(row["entitlement_snapshot_json"])))
+            if row["entitlement_snapshot_json"]
+            else None
+        ),
     )
 
 
@@ -1471,6 +1481,13 @@ def _job_values(record: JobRecord) -> tuple[Any, ...]:
         if record.last_recovery_attempt_at
         else None,
         int(record.recovery_notification_sent),
+        json.dumps(
+            entitlement_snapshot_to_dict(record.entitlement_snapshot),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if record.entitlement_snapshot
+        else None,
     )
 
 

@@ -1,6 +1,13 @@
 # T014 - VIP entitlement and subscription domain
 
-**Status:** planned
+**Status:** implemented
+
+Implements the provider-neutral VIP entitlement and subscription foundation: typed plans,
+capabilities, immutable grants, a durable subscription projection, deterministic UTC calendar-month
+arithmetic with end-of-month clamping, reversal recomputation, a fail-closed
+`EntitlementService.authorize()`, additive SQLite/WAL tables, and a nullable job entitlement
+snapshot with child-job inheritance. No payment provider, Instagram credential, VIP UI, or pricing
+was introduced; the plan catalog is empty by default.
 
 ## Goal
 

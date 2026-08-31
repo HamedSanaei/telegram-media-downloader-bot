@@ -47,6 +47,9 @@ from telegram_media_bot.infrastructure.persistence.sqlite_inbound_updates import
     SqliteInboundUpdateRepository,
 )
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
+from telegram_media_bot.infrastructure.persistence.sqlite_subscriptions import (
+    SqliteSubscriptionRepository,
+)
 from telegram_media_bot.infrastructure.queue.arq_queue import ArqJobQueue
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
 from telegram_media_bot.infrastructure.storage.workspace import (
@@ -87,6 +90,8 @@ async def startup(ctx: dict[str, Any]) -> None:
     try:
         repository = SqliteJobRepository(settings.database_path())
         await asyncio.to_thread(repository.initialize)
+        subscription_store = SqliteSubscriptionRepository(settings.database_path())
+        await asyncio.to_thread(subscription_store.initialize)
         inbound_store = SqliteInboundUpdateRepository(settings.database_path())
         await asyncio.to_thread(inbound_store.initialize)
         effect_store = SqliteEffectLedger(settings.database_path())

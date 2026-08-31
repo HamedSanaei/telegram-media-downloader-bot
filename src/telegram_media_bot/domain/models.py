@@ -6,6 +6,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import NewType
 
+from telegram_media_bot.domain.subscriptions import EntitlementSnapshot
+
 JobId = NewType("JobId", str)
 SelectionToken = NewType("SelectionToken", str)
 
@@ -474,6 +476,10 @@ class JobRecord:
     last_recovery_attempt_at: datetime | None = None
     #: Whether a resume/status notification was already sent for the current recovery attempt.
     recovery_notification_sent: bool = False
+    #: Safe nullable authorization snapshot from protected job acceptance; ``None`` for public/
+    #: legacy jobs. Contains only capability, acceptance time, authorized expiry, and grant/plan
+    #: references — never a payment or credential secret.
+    entitlement_snapshot: EntitlementSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)

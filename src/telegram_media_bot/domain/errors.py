@@ -259,3 +259,41 @@ class CookieStoreUnavailableError(CookieManagementError):
 
 class CookieStoreWriteError(CookieManagementError):
     pass
+
+
+class EntitlementDeniedError(MediaBotError):
+    """Base class for controlled entitlement denials (non-retryable)."""
+
+
+class EntitlementInactiveError(EntitlementDeniedError):
+    """The user has no subscription/entitlement history at all."""
+
+
+class EntitlementExpiredError(EntitlementDeniedError):
+    """All valid paid time has elapsed before the protected request's acceptance instant."""
+
+
+class EntitlementCancelledError(EntitlementDeniedError):
+    """The user's subscription is cancelled and no longer authorizes new requests."""
+
+
+class EntitlementNoValidGrantError(EntitlementDeniedError):
+    """Every grant was reversed/satisfied and no valid paid time remains."""
+
+
+class EntitlementCapabilityMissingError(EntitlementDeniedError):
+    """The user has active time but the requested capability is not covered by those grants."""
+
+
+class EntitlementBackendError(MediaBotError):
+    """The entitlement backend is unavailable; authorization FAILS CLOSED (never Free/VIP)."""
+
+    retryable = True
+
+
+class DuplicateEntitlementGrantError(EntitlementDeniedError):
+    """A grant with the same (source_type, source_reference) already exists."""
+
+
+class EntitlementGrantNotFoundError(MediaBotError):
+    """The referenced grant does not exist or was already purged externally."""

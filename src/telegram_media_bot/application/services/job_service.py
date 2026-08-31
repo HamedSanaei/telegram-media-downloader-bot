@@ -19,6 +19,7 @@ from telegram_media_bot.domain.models import (
     StoryDeliveryMode,
     normalize_container_policy,
 )
+from telegram_media_bot.domain.subscriptions import EntitlementSnapshot
 
 
 class JobService:
@@ -85,6 +86,7 @@ class JobService:
         selected_format_ids: tuple[str, ...] = (),
         image_delivery_mode: ImageDeliveryMode | None = None,
         story_delivery_mode: StoryDeliveryMode | None = None,
+        entitlement_snapshot: EntitlementSnapshot | None = None,
     ) -> tuple[JobRecord, bool]:
         container_policy = normalize_container_policy(mode, container_policy)
         return self._create(
@@ -99,6 +101,7 @@ class JobService:
             selected_format_ids=selected_format_ids,
             image_delivery_mode=image_delivery_mode,
             story_delivery_mode=story_delivery_mode,
+            entitlement_snapshot=entitlement_snapshot,
         )
 
     def _create(
@@ -115,6 +118,7 @@ class JobService:
         selected_format_ids: tuple[str, ...] = (),
         image_delivery_mode: ImageDeliveryMode | None = None,
         story_delivery_mode: StoryDeliveryMode | None = None,
+        entitlement_snapshot: EntitlementSnapshot | None = None,
     ) -> tuple[JobRecord, bool]:
         intent = canonicalize_media_url(url)
         url = intent.canonical_url
@@ -151,6 +155,7 @@ class JobService:
             image_delivery_mode=image_delivery_mode,
             story_delivery_mode=story_delivery_mode,
             url_classification=intent.instagram_kind,
+            entitlement_snapshot=entitlement_snapshot,
         )
         persisted = self._repository.create_job(candidate)
         return persisted, persisted.job_id == candidate.job_id

@@ -421,10 +421,12 @@ CI. `scripts/agent_context.py` provides a deterministic standard-library fallbac
 `scripts/check_agent_context.py` protects the progressive-discovery contract without imposing an
 arbitrary documentation size ceiling.
 
-## Planned Milestone 4 architecture: VIP and authenticated Instagram
+## Milestone 4 architecture: VIP and authenticated Instagram
 
-**Planning status:** proposed future architecture only. No module, schema, process, credential
-context, entitlement, or payment behavior described below exists yet.
+**Status:** the T014 entitlement foundation (plans, subscription projection, immutable grants,
+UTC calendar arithmetic, reversal recomputation, and job authorization snapshots) is **implemented**.
+Payments, Instagram credential vault, account-link/payment companion, VIP Telegram UX, and routing
+changes all remain **planned** (T015+); nothing below that is unimplemented should be read as live.
 
 ### Planned system view
 
@@ -458,21 +460,35 @@ fragment-delivered, POST-exchanged, and nonce-consumed once. Browser flow state,
 codes remain in memory for at most ten minutes. Payment callbacks require provider signature and
 replay verification; browser redirects are presentation only.
 
-### Planned entitlement and economic state
+### Implemented entitlement foundation (T014)
 
-SQLite stores plan catalog, subscription projection, immutable entitlement grants, payment orders,
-attempts, and unique provider transaction references. Payment confirmation uses one immediate
-transaction for verification, order transition, unique transaction claim, and grant insertion.
-Redis never becomes economic truth.
+SQLite stores a plan catalog (`subscription_plans` + capabilities), a per-user subscription
+projection, and an immutable entitlement-grant ledger plus a nullable job entitlement-snapshot
+field. Redis never becomes economic truth. The commercial plan catalog starts empty and no price
+is invented.
 
-Plans use arbitrary positive calendar-month durations and typed capabilities. UTC month arithmetic
-clamps invalid destination days. Renewal starts after `max(confirmation, current expiry)`. Reversal
-marks a grant reversed and recomputes the remaining confirmation-ordered chain. Financial records
-are retained indefinitely and excluded from media cleanup.
+Plans use arbitrary positive calendar-month durations and typed `Capability` values
+(`instagram_private_media`, `instagram_user_session_preference`). UTC month arithmetic clamps
+invalid destination days. Renewal/stacking starts after `max(confirmation, preceding expiry)` and
+is deterministic. Reversal marks a grant ``reversed`` — never deleting the audit row — and
+recomputes the remaining confirmation-ordered chain; if no valid paid time remains, access ends
+immediately. Financial records are retained indefinitely and excluded from media cleanup. Free
+users require no subscription row.
 
-Protected work captures an immutable entitlement snapshot at durable acceptance. Automatic child
-jobs inherit it; a later user callback is a new request. Subscription expiry does not randomly fail
-accepted queued work, but credential revoke/disconnect remains immediately authoritative.
+`EntitlementService.authorize(user_id, capability, accepted_at)` accepts only against a typed
+active entitlement, otherwise raising a typed denial (inactive / expired / cancelled / no-valid
+grant / capability-missing) and failing closed (`EntitlementBackendError`) when the repository is
+unavailable. Telegram's `UserProfile.is_premium` is never consulted. A protected request
+successfully authorized and durably accepted persists an immutable `EntitlementSnapshot` on its
+`JobRecord`; automatic child jobs inherit it, while a later user callback is a new request that
+must reauthorize. Subscription expiry never invalidates an already accepted snapshot, but
+credential revoke/disconnect (T017+) remains an entirely separate authority.
+
+### Planned economic state beyond T014
+
+Payment orders, attempts, and unique provider transaction references are still planned (T015).
+Payment confirmation will use one immediate transaction for verification, order transition, unique
+transaction claim, and grant insertion.
 
 ### Planned credential boundary and policy
 
@@ -508,11 +524,12 @@ Private/restricted media is `USER_ONLY` for inspection through delivery. The con
 already have visibility. Unknown scope fails closed without existence disclosure. The operator
 credential cannot be resolved after `USER_RESTRICTED`, including during retry/recovery.
 
-### Planned persistence, recovery, and observability
+### Persistence, recovery, and observability
 
-Jobs may add nullable safe entitlement snapshot, credential policy/kind/owner/generation, access
-scope, current credential phase, and fallback-used fields. No cookie/ciphertext/password/code enters
-jobs, selections, ARQ payloads, logs, metrics, Telegram, or failure summaries.
+The nullable entitlement-snapshot field on jobs is **implemented** (T014). Credential policy/kind/
+owner/generation, access scope, current credential phase, and fallback-used fields remain planned
+(T017-T022). No cookie/ciphertext/password/code enters jobs, selections, ARQ payloads, logs,
+metrics, Telegram, or failure summaries.
 
 Per-user session failures update only that owner/generation. Reconnect may make eligible same-owner
 jobs available for one bounded recovery; explicit revoke, cancellation, and delivery uncertainty

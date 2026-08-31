@@ -33,7 +33,7 @@ fixed attribution and per-item/part lines, reduces only oversized title text, ke
 and uses a receipt-associated reply only when the 1024-character media-caption limit cannot fit the
 complete source line. No source URL is added to logs or metrics.
 
-Tasks T001 through T013 are implemented. Patch 1.3.6 repairs the production yt-dlp inspection
+Tasks T001 through T014 are implemented. Patch 1.3.6 repairs the production yt-dlp inspection
 failure on read-only application filesystems without changing
 dependency/runtime topology or the passive Cookie Health architecture: `inspect_options()` now
 gives every inspection a private scratch workspace under the configured storage temp hierarchy
@@ -125,6 +125,21 @@ alert contract, and one unreachable administrator cannot affect other alerts or 
 
 Final v1.3.0 Python, architecture, security, package, contract, Compose, and Docker results are
 recorded in `docs/HANDOFF_REPORT.md` after the release-quality run.
+
+## Milestone 4 foundation (T014)
+
+Implemented the provider-neutral VIP entitlement/subscription foundation without payments or
+Instagram behavior. New typed domain (`SubscriptionPlan`, `Subscription`, `EntitlementGrant`,
+`SubscriptionStatus`, `Capability`, `EntitlementSnapshot`), UTC calendar-month arithmetic with
+end-of-month clamping, deterministic stacking/reversal recomputation, and a fail-closed
+`EntitlementService.authorize()` that never reads `UserProfile.is_premium`. Additive SQLite/WAL
+tables (`subscription_plans`, `subscription_plan_capabilities`, `subscriptions`,
+`entitlement_grants`) plus a nullable `entitlement_snapshot` JSON field on jobs; the commercial plan
+catalog is empty by default. A unique `(user_id, source_type, source_reference)` index gives a
+future payment provider exactly-once grant creation. Legacy databases upgrade without rewriting or
+deleting rows, free users need no subscription row, and Redis is never economic truth. An accepted
+protected job keeps its durable snapshot after expiry while automatically created child jobs
+inherit it; later user callbacks reauthorize. No version/tag/release/deployment was created.
 
 ## Implemented production controls
 

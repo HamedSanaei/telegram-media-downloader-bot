@@ -443,13 +443,15 @@ does not silently substitute a release, and healthy older rollback targets remai
 remote revocation service is deferred because the single embedded withdrawal does not justify a
 new availability and trust dependency in disaster-recovery tooling.
 
-## ADR-032: Durable VIP grants and payment confirmation are ledger based
+## ADR-032: Durable VIP entitlement is a typed, ledger-based bot capability
 
-**Status:** proposed
+**Status:** accepted for the T014 entitlement foundation (plans, grants, subscription projection,
+UTC calendar arithmetic, reversal recomputation, and job snapshots). The payment-confirmation
+decision paragraphs at the end of this record remain **proposed** and wait for T015.
 
 The product calls the feature VIP, but domain/application code uses typed subscription,
-entitlement, capability, order, and grant models. Telegram's `UserProfile.is_premium` is unrelated
-and cannot authorize bot VIP behavior.
+entitlement, capability, plan, and grant models. Telegram's `UserProfile.is_premium` is unrelated
+and cannot authorize bot VIP behavior; it is never read by the entitlement service.
 
 Subscription plans accept any positive number of calendar months and snapshot integer minor-unit
 price, currency, enabled state, and capabilities. Month arithmetic is UTC with end-of-month
@@ -465,10 +467,12 @@ reversed and recomputes the chain from the remaining grants; if no valid paid ti
 ends immediately. Economic rows are retained indefinitely and never enter media cleanup.
 
 A protected request authorized and durably accepted while its capability is active stores a safe
-`EntitlementSnapshot` and may finish after subscription expiry. Automatically created child jobs
-inherit that snapshot. A later user callback or new URL is a new protected request and must
-reauthorize. Credential revocation remains live and can still stop an accepted credential-dependent
-job.
+`EntitlementSnapshot` on its job and may finish after subscription expiry. Automatically created
+child jobs inherit that snapshot. A later user callback or new URL is a new protected request and
+must reauthorize. Credential revocation (T017+) remains a separate authority and can still stop an
+accepted credential-dependent job.
+
+**Proposed (T015): payment confirmation does not grant a second extension.**
 
 A provider adapter cryptographically verifies its callback before returning a project-owned result.
 One SQLite `BEGIN IMMEDIATE` transaction validates order/amount/currency/status, claims the unique
