@@ -116,7 +116,7 @@ def test_event_accepts_project_generated_urlsafe_identities(identity: str) -> No
         ("Cookie: sessionid=first-secret; csrftoken=second-secret", "second-secret"),
         ("Set-Cookie: sessionid=cookie-secret; Path=/; HttpOnly", "cookie-secret"),
         ("password: correct horse battery staple", "correct horse battery staple"),
-        ('{"password": "quoted-secret"}', "quoted-secret"),
+        ('{"password": "quoted-secret"}', "quoted-secret"),  # pragma: allowlist secret
         ("sessionid=session-secret", "session-secret"),
         ("Instagram session: long session secret", "long session secret"),
         ("Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
@@ -160,7 +160,7 @@ def test_event_serialization_is_stable_and_round_trips() -> None:
 
 def test_sanitizer_is_idempotent_for_persistence_boundary() -> None:
     sanitized = sanitize_audit_message(
-        'Cookie: sessionid=secret; password="correct horse battery staple"'
+        'Cookie: sessionid=secret; password="correct horse battery staple"'  # pragma: allowlist secret
     )
     assert sanitize_audit_message(sanitized) == sanitized
 
