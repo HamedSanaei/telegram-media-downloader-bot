@@ -54,9 +54,33 @@ def render_instagram_unavailable() -> str:
     return INSTAGRAM_NOT_AVAILABLE_TEXT
 
 
+def render_vip_dashboard(
+    *,
+    active: bool,
+    authorized_until: str | None,
+    plans: tuple[str, ...],
+    credential: SafeCredentialView | None,
+    payment_available: bool,
+) -> str:
+    """Render the owner-bound `/vip` overview without exposing provider or secret data."""
+    status = "فعال" if active else "رایگان/غیرفعال"
+    lines = [f"⭐ VIP: {status}"]
+    if authorized_until:
+        lines.append(f"اعتبار تا: {authorized_until}")
+    lines.append(render_connection_status(credential))
+    if plans and payment_available:
+        lines.append("پلن‌های فعال: " + "، ".join(plans))
+    elif not payment_available:
+        lines.append("خرید VIP در حال حاضر در دسترس نیست.")
+    else:
+        lines.append("پلن فعالی برای خرید ثبت نشده است.")
+    return "\n".join(lines)
+
+
 __all__ = [
     "render_connect_prompt",
     "render_connection_status",
     "render_disconnect_confirmation",
     "render_instagram_unavailable",
+    "render_vip_dashboard",
 ]

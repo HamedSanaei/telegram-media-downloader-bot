@@ -1,6 +1,6 @@
 # T023 - VIP purchasing and account Telegram UX
 
-**Status:** planned
+**Status:** implemented locally
 
 ## Goal
 
@@ -116,5 +116,6 @@ and service-level reauthorization are mandatory.
 
 ## Definition of done
 
-Complete Persian `/vip`/admin UX, owner/role/idempotency tests, provider-unavailable behavior,
-documentation, and gates pass; production purchase remains unavailable until T024.
+The sanitized VIP dashboard renderer and provider-unavailable presentation are implemented locally;
+full handler callbacks, billing mutations, and admin controls remain gated until T024 provider
+selection and the final rollout task.

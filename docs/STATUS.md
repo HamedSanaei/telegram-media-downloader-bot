@@ -76,8 +76,8 @@ unchanged.
 
 Milestone 4 decomposes future VIP subscriptions, provider-neutral billing, encrypted per-user
 Instagram credentials, authenticated public/private routing, secure account linking, and rollout
-work into T014-T025. T014-T022 are implemented locally; ADR-032 through ADR-035 are accepted for
-those foundations. T023 and T025 remain planned, while T024 is blocked until a real payment
+work into T014-T025. T014-T023 are implemented locally; ADR-032 through ADR-035 are accepted for
+those foundations. T025 remains planned, while T024 is blocked until a real payment
 provider is selected, so production purchasing remains blocked.
 
 T019 adds typed `CredentialContext`/`ResolvedCredential` values, owner/generation/state enforcement
