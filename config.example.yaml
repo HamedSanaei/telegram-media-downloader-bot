@@ -57,7 +57,8 @@ telegram:
     submission_mirror_enabled: false
     # Set true only after the operator has reviewed the private-channel access/retention policy.
     operator_privacy_attested: false
-    # Bump when the notice changes materially so users are asked once for the new policy.
+    # Kept for backward compatibility. Since v1.4.0-rc.2 no per-user
+    # acknowledgement is required; the value is not consulted at runtime.
     privacy_notice_version: logger-v1
   progress_min_interval_seconds: 3.0
   progress_min_percent_delta: 5.0

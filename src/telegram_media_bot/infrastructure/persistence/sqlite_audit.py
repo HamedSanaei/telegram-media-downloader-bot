@@ -103,6 +103,9 @@ class SqliteAuditRepository:
                     PRIMARY KEY (source_chat_id, media_group_id),
                     FOREIGN KEY (event_id) REFERENCES audit_events(event_id)
                 );
+                -- Deprecated since v1.4.0-rc.2: per-user privacy acknowledgement is
+                -- no longer part of the runtime acceptance path. The table is kept
+                -- for backward compatibility and is not written by new code.
                 CREATE TABLE IF NOT EXISTS logger_privacy_acknowledgements (
                     telegram_user_id INTEGER NOT NULL,
                     policy_version TEXT NOT NULL,
@@ -362,6 +365,7 @@ class SqliteAuditRepository:
         return len(message_ids)
 
     def has_privacy_acknowledgement(self, user_id: int, policy_version: str) -> bool:
+        """Deprecated: legacy per-user acknowledgement is no longer consulted."""
         with self._connect() as connection:
             row = connection.execute(
                 """SELECT 1 FROM logger_privacy_acknowledgements
@@ -371,6 +375,7 @@ class SqliteAuditRepository:
         return row is not None
 
     def acknowledge_privacy(self, user_id: int, policy_version: str) -> bool:
+        """Deprecated: legacy rows are retained only for backward compatibility."""
         with self._connect() as connection:
             created = connection.execute(
                 """INSERT OR IGNORE INTO logger_privacy_acknowledgements

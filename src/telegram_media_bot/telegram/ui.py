@@ -32,19 +32,6 @@ STORY_DELIVERY_FILE_TEXT = "📁 دانلود به صورت فایل"
 STORY_DELIVERY_MODE_PROMPT = "حالت ارسال همهٔ استوری‌های فعال را انتخاب کنید:"
 
 
-def logger_privacy_acknowledgement_keyboard(policy_version: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ موافقم و ادامه می‌دهم",
-                    callback_data=f"privacy:ack:{policy_version}",
-                )
-            ]
-        ]
-    )
-
-
 def story_delivery_mode_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
     """Ask how an all-active-Stories batch should be delivered."""
     return InlineKeyboardMarkup(

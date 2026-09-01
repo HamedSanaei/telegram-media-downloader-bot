@@ -196,7 +196,9 @@ depth; they never contain user/channel IDs, URLs, message text, filenames, or cr
 
 - Enabled config-managed and runtime-managed private channels form a deduplicated union by numeric
   `chat_id`; the design does not assume one hardcoded channel.
-- Activation requires logger enablement, the privacy-notice gate, and at least one valid destination.
+- Activation requires logger enablement, operator privacy attestation, and at least one valid
+  destination. Since v1.4.0-rc.2 there is no per-user privacy-notice acknowledgement gate: the
+  disclosure is informational only (`/privacy`) and never blocks acceptance.
 - Every enabled destination receives selected events independently. A missing, forbidden, removed,
   or unreachable destination produces structured logs and bounded health metrics only; it never
   falls back to all `telegram.admin_ids`.

@@ -54,13 +54,6 @@ CANCELLED_TEXT = "درخواست لغو شد و فایل‌های موقت پا�
 CANNOT_CANCEL_TEXT = "این کار پیدا نشد یا دیگر قابل لغو نیست."
 PROCESSING_TEXT = "در حال دریافت… {percent}٪"
 RESUME_NOTICE_TEXT = "مشکل دسترسی این درخواست برطرف شد و دانلود دوباره در حال انجام است."
-LOGGER_PRIVACY_ACKNOWLEDGED_TEXT = (
-    "تأیید شما ثبت شد. اکنون لینک یا رسانهٔ موردنظر را دوباره ارسال کنید."
-)
-LOGGER_PRIVACY_UNAVAILABLE_TEXT = (
-    "ثبت تأیید حریم خصوصی موقتاً ممکن نیست؛ دانلود عادی بدون کپی لاگر ادامه می‌یابد."
-)
-
 # Instagram account connection (T018). Persian, secret-free, never reveals usernames/cookies.
 INSTAGRAM_NOT_AVAILABLE_TEXT = (
     "اتصال حساب اینستاگرام در این نصب فعال نیست. با مدیر ربات تماس بگیرید."

@@ -1,59 +1,48 @@
-# ruff: noqa: RUF001
+"""RC2: privacy disclosure is informational and never blocks downloads."""
+
+from __future__ import annotations
+
 from pathlib import Path
 
 from telegram_media_bot.application.services.audit_service import AuditService
 from telegram_media_bot.application.services.logger_privacy import (
-    LOGGER_PRIVACY_NOTICE_FA,
-    LoggerPrivacyService,
+    LOGGER_PRIVACY_DISCLOSURE_FA,
 )
 from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
 
-EXPECTED_NOTICE = (
-    "برای اجرای سرویس و پشتیبانی/امنیت، لینک‌ها و رسانه‌هایی که برای دانلود می‌فرستید "
-    "ممکن است در کانال خصوصی عملیاتی لاگر کپی و به‌صورت نامحدود نگهداری شوند؛ "
-    "با ادامهٔ استفاده موافقت می‌کنید."
+EXPECTED_DISCLOSURE = (
+    "برخی درخواست‌های دانلود ممکن است برای امنیت، پشتیبانی و بررسی خطا در کانال "
+    "خصوصی عملیاتی ثبت شوند. اطلاعات ورود، رمز عبور، کد دو مرحله‌ای و داده‌های "
+    "حساس در لاگر ثبت نمی‌شوند."
 )
 
 
-def test_notice_matches_the_approved_persian_policy_exactly() -> None:
-    assert LOGGER_PRIVACY_NOTICE_FA == EXPECTED_NOTICE
+def test_disclosure_matches_the_approved_persian_text_exactly() -> None:
+    assert LOGGER_PRIVACY_DISCLOSURE_FA == EXPECTED_DISCLOSURE
 
 
-def test_acknowledgement_is_versioned_durable_and_not_requested_repeatedly(
-    tmp_path: Path,
-) -> None:
+def test_disclosure_is_informational_and_mentions_that_credentials_are_not_logged() -> None:
+    text = LOGGER_PRIVACY_DISCLOSURE_FA
+    # It describes the mirror and the credential exclusion; it must not demand
+    # any action or contain any acknowledgement wording.
+    assert "عملیاتی" in text
+    assert "رمز عبور" in text
+    assert "ثبت نمی‌شوند" in text
+    assert "موافقم" not in text
+
+
+def test_legacy_acknowledgement_persistence_remains_compatible(tmp_path: Path) -> None:
     path = tmp_path / "state.sqlite3"
     repository = SqliteAuditRepository(path)
     repository.initialize()
-    repository.reconcile_config((-1001234567890,))
     audit = AuditService(repository, enabled=True)
-    version_one = LoggerPrivacyService(audit, enabled=True, policy_version="logger-v1")
 
-    assert version_one.requires_acknowledgement(42)
-    assert version_one.acknowledge(42)
-    assert not version_one.acknowledge(42)
-    assert not version_one.requires_acknowledgement(42)
+    # The deprecated acknowledgement API still works and stores rows durably,
+    # even though the runtime acceptance path never consults it.
+    assert audit.acknowledge_privacy(42, "logger-v1")
+    assert audit.has_privacy_acknowledgement(42, "logger-v1")
 
     restarted = SqliteAuditRepository(path)
     restarted.initialize()
-    restarted_audit = AuditService(restarted, enabled=True)
-    assert not LoggerPrivacyService(
-        restarted_audit, enabled=True, policy_version="logger-v1"
-    ).requires_acknowledgement(42)
-    assert LoggerPrivacyService(
-        restarted_audit, enabled=True, policy_version="logger-v2"
-    ).requires_acknowledgement(42)
-
-
-def test_privacy_gate_is_inactive_without_mirror_or_destination(tmp_path: Path) -> None:
-    repository = SqliteAuditRepository(tmp_path / "state.sqlite3")
-    repository.initialize()
-    audit = AuditService(repository, enabled=True)
-
-    assert not LoggerPrivacyService(
-        audit, enabled=True, policy_version="logger-v1"
-    ).requires_acknowledgement(42)
-    repository.reconcile_config((-1001234567890,))
-    assert not LoggerPrivacyService(
-        audit, enabled=False, policy_version="logger-v1"
-    ).requires_acknowledgement(42)
+    assert restarted.has_privacy_acknowledgement(42, "logger-v1")
+    assert restarted.acknowledge_privacy(42, "logger-v1") is False

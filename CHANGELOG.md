@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Changed (targeting v1.4.0-rc.2)
+
+- Remove the blocking per-user privacy acknowledgement from the submission-mirror acceptance path.
+  Accepted submissions no longer require (or ask for) any user acknowledgement; the Persian privacy
+disclosure is informational only via the `/privacy` command and never blocks, delays, or rejects a
+download. Mirroring remains gated by `logger.enabled` AND `submission_mirror_enabled` AND
+`operator_privacy_attested`. Legacy `logger_privacy_acknowledgements` rows stay backward-compatible
+and are never consulted; no destructive migration is performed.
+- Fix the Logger admin inline "Add channel" flow: `adm:lg:add` now enters the bounded
+  `awaiting_add_chat_id` state exactly like the reply-keyboard path, so an authorized admin can
+  complete the add from the inline menu.
+
 ### Operations
 
 - Withdraw v1.3.7 from every supported install/update target because its inbound Telegram

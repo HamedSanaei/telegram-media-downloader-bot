@@ -8,7 +8,10 @@ from aiogram import Bot
 
 from telegram_media_bot.application.services.audit_outbox import AuditOutboxProcessor
 from telegram_media_bot.application.services.audit_service import AuditService
-from telegram_media_bot.application.services.submission_audit import AcceptedSubmissionAuditService
+from telegram_media_bot.application.services.submission_audit import (
+    AcceptedSubmissionAuditService,
+    mirroring_enabled,
+)
 from telegram_media_bot.domain.audit import TelegramSourceReference
 from telegram_media_bot.infrastructure.persistence.sqlite_audit import (
     SqliteAuditRepository,
@@ -65,6 +68,35 @@ def test_submission_event_is_idempotent_across_restart_and_fans_out_per_destinat
     assert {item.event.telegram_user_id for item in items} == {4242}
 
 
+def test_operator_attestation_still_gates_mirroring() -> None:
+    # logger.enabled AND submission_mirror_enabled AND operator_privacy_attested
+    assert mirroring_enabled(
+        logger_enabled=True,
+        submission_mirror_enabled=True,
+        operator_privacy_attested=True,
+    )
+    assert not mirroring_enabled(
+        logger_enabled=False,
+        submission_mirror_enabled=True,
+        operator_privacy_attested=True,
+    )
+    assert not mirroring_enabled(
+        logger_enabled=True,
+        submission_mirror_enabled=False,
+        operator_privacy_attested=True,
+    )
+    assert not mirroring_enabled(
+        logger_enabled=True,
+        submission_mirror_enabled=True,
+        operator_privacy_attested=False,
+    )
+    assert not mirroring_enabled(
+        logger_enabled=False,
+        submission_mirror_enabled=False,
+        operator_privacy_attested=False,
+    )
+
+
 def test_logger_and_mirror_flags_are_independent(tmp_path: Path) -> None:
     repository = SqliteAuditRepository(tmp_path / "state.sqlite3")
     repository.initialize()
@@ -94,21 +126,36 @@ def test_no_effective_destination_means_no_submission_event(tmp_path: Path) -> N
         assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone() == (0,)
 
 
-def test_versioned_privacy_acknowledgement_is_required_before_mirror(tmp_path: Path) -> None:
+def test_mirroring_requires_no_user_acknowledgement(tmp_path: Path) -> None:
     repository = SqliteAuditRepository(tmp_path / "state.sqlite3")
     repository.initialize()
     repository.reconcile_config((-1001234567890,))
     audit = AuditService(repository, enabled=True)
-    mirror = AcceptedSubmissionAuditService(
-        audit,
-        enabled=True,
-        privacy_notice_version="logger-v1",
-    )
+    mirror = AcceptedSubmissionAuditService(audit, enabled=True)
     source = TelegramSourceReference(4242, (55,))
 
-    assert _record(mirror, source) == 0
-    assert audit.acknowledge_privacy(4242, "logger-v1")
+    # Zero user acknowledgement exists and none is ever required: the operator
+    # attestation at configuration time is the only privacy gate.
+    assert not audit.has_privacy_acknowledgement(4242, "logger-v1")
     assert _record(mirror, source) == 1
+
+
+def test_legacy_acknowledgement_rows_remain_backward_compatible(tmp_path: Path) -> None:
+    repository = SqliteAuditRepository(tmp_path / "state.sqlite3")
+    repository.initialize()
+    repository.reconcile_config((-1001234567890,))
+    audit = AuditService(repository, enabled=True)
+
+    assert audit.acknowledge_privacy(4242, "logger-v1")
+    assert audit.has_privacy_acknowledgement(4242, "logger-v1")
+
+    # Historical rows never gate mirroring and survive a restart untouched.
+    mirror = AcceptedSubmissionAuditService(audit, enabled=True)
+    assert _record(mirror, TelegramSourceReference(4243, (56,))) == 1
+    restarted = SqliteAuditRepository(tmp_path / "state.sqlite3")
+    restarted.initialize()
+    assert restarted.has_privacy_acknowledgement(4242, "logger-v1")
+    assert restarted.acknowledge_privacy(4242, "logger-v1") is False  # idempotent row
 
 
 def test_album_extension_preserves_order_and_one_logical_event(tmp_path: Path) -> None:

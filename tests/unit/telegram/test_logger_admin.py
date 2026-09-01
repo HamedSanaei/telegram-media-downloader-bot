@@ -23,7 +23,11 @@ from telegram_media_bot.domain.audit import (
 )
 from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
 from telegram_media_bot.telegram.admin_handlers import build_admin_router
-from telegram_media_bot.telegram.admin_menu import ADMIN_LOGGER_BUTTON
+from telegram_media_bot.telegram.admin_menu import (
+    ADMIN_LOGGER_ADD_BUTTON,
+    ADMIN_LOGGER_BUTTON,
+    AdminLoggerState,
+)
 from telegram_media_bot.telegram.texts import ACCESS_DENIED_TEXT
 
 CHANNEL = -1001234567890
@@ -265,9 +269,11 @@ def test_forged_logger_callback_rejected(admin_settings: Settings, tmp_path: Pat
     router = _router(admin_settings, service)
     callback = FakeCallback(20, f"adm:lg:test:{CHANNEL}")
 
-    asyncio.run(_handler(router, "logger_callback")(callback))
+    state = FakeState()
+    asyncio.run(_handler(router, "logger_callback")(callback, state))
 
     assert callback.answers == [(ACCESS_DENIED_TEXT, True)]
+    assert state.value is None
 
 
 def test_non_admin_cannot_complete_add_state(admin_settings: Settings, tmp_path: Path) -> None:
@@ -313,6 +319,91 @@ def test_add_invalid_channel_id_rejected(admin_settings: Settings, tmp_path: Pat
     assert repository.list_destinations() == ()
 
 
+def test_inline_add_sets_awaiting_state(
+    admin_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(admin_module, "Message", FakeMessage)
+    service, repository, _verifier = _service(tmp_path)
+    router = _router(admin_settings, service)
+    state = FakeState()
+    callback = FakeCallback(99, "adm:lg:add")
+
+    asyncio.run(_handler(router, "logger_callback")(callback, state))
+
+    assert state.value is AdminLoggerState.awaiting_add_chat_id
+    assert repository.list_destinations() == ()
+    assert callback.message.answers[-1][0] == admin_module.LOGGER_ADD_PROMPT_TEXT
+
+
+def test_inline_add_flow_completes_and_clears_state(
+    admin_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(admin_module, "Message", FakeMessage)
+    service, repository, verifier = _service(tmp_path)
+    router = _router(admin_settings, service)
+    state = FakeState()
+
+    asyncio.run(_handler(router, "logger_callback")(FakeCallback(99, "adm:lg:add"), state))
+    assert state.value is AdminLoggerState.awaiting_add_chat_id
+
+    asyncio.run(_handler(router, "receive_logger_chat_id")(FakeMessage(99, str(CHANNEL)), state))
+
+    assert state.value is None
+    destinations = repository.list_destinations()
+    assert len(destinations) == 1
+    assert destinations[0].chat_id == CHANNEL
+    assert verifier.calls == [CHANNEL]
+
+
+def test_forged_inline_add_cannot_set_state(
+    admin_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(admin_module, "Message", FakeMessage)
+    service, repository, _verifier = _service(tmp_path)
+    router = _router(admin_settings, service)
+    state = FakeState()
+    callback = FakeCallback(20, "adm:lg:add")
+
+    asyncio.run(_handler(router, "logger_callback")(callback, state))
+
+    assert callback.answers == [(ACCESS_DENIED_TEXT, True)]
+    assert state.value is None
+    assert repository.list_destinations() == ()
+
+
+def test_inline_add_retains_state_on_invalid_id(
+    admin_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(admin_module, "Message", FakeMessage)
+    service, repository, _verifier = _service(tmp_path)
+    router = _router(admin_settings, service)
+    state = FakeState()
+
+    asyncio.run(_handler(router, "logger_callback")(FakeCallback(99, "adm:lg:add"), state))
+    asyncio.run(_handler(router, "receive_logger_chat_id")(FakeMessage(99, "not-a-number"), state))
+
+    assert state.value is AdminLoggerState.awaiting_add_chat_id
+    assert repository.list_destinations() == ()
+
+
+def test_inline_and_reply_add_paths_set_equivalent_state(
+    admin_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(admin_module, "Message", FakeMessage)
+    service, _repository, _verifier = _service(tmp_path)
+    router = _router(admin_settings, service)
+
+    reply_state = FakeState()
+    asyncio.run(
+        _handler(router, "begin_logger_add")(FakeMessage(99, ADMIN_LOGGER_ADD_BUTTON), reply_state)
+    )
+    inline_state = FakeState()
+    asyncio.run(_handler(router, "logger_callback")(FakeCallback(99, "adm:lg:add"), inline_state))
+
+    assert reply_state.value is AdminLoggerState.awaiting_add_chat_id
+    assert inline_state.value is AdminLoggerState.awaiting_add_chat_id
+
+
 def test_logger_callback_test_updates_health(
     admin_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -322,7 +413,7 @@ def test_logger_callback_test_updates_health(
     router = _router(admin_settings, service)
     callback = FakeCallback(99, f"adm:lg:test:{CHANNEL}")
 
-    asyncio.run(_handler(router, "logger_callback")(callback))
+    asyncio.run(_handler(router, "logger_callback")(callback, FakeState()))
 
     assert verifier.calls == [CHANNEL]
     destination = next(d for d in repository.list_destinations() if d.chat_id == CHANNEL)
@@ -337,11 +428,19 @@ def test_logger_callback_enable_disable(
     service.add(CHANNEL)
     router = _router(admin_settings, service)
 
-    asyncio.run(_handler(router, "logger_callback")(FakeCallback(99, f"adm:lg:disable:{CHANNEL}")))
+    asyncio.run(
+        _handler(router, "logger_callback")(
+            FakeCallback(99, f"adm:lg:disable:{CHANNEL}"), FakeState()
+        )
+    )
     destination = next(d for d in repository.list_destinations() if d.chat_id == CHANNEL)
     assert not destination.enabled
 
-    asyncio.run(_handler(router, "logger_callback")(FakeCallback(99, f"adm:lg:enable:{CHANNEL}")))
+    asyncio.run(
+        _handler(router, "logger_callback")(
+            FakeCallback(99, f"adm:lg:enable:{CHANNEL}"), FakeState()
+        )
+    )
     destination = next(d for d in repository.list_destinations() if d.chat_id == CHANNEL)
     assert destination.enabled
 
@@ -355,10 +454,18 @@ def test_logger_callback_remove_requires_confirm(
     router = _router(admin_settings, service)
 
     # First tap arms confirmation
-    asyncio.run(_handler(router, "logger_callback")(FakeCallback(99, f"adm:lg:remove:{CHANNEL}")))
+    asyncio.run(
+        _handler(router, "logger_callback")(
+            FakeCallback(99, f"adm:lg:remove:{CHANNEL}"), FakeState()
+        )
+    )
     assert len(repository.list_destinations()) == 1
     # Confirm removes
-    asyncio.run(_handler(router, "logger_callback")(FakeCallback(99, f"adm:lg:confirm:{CHANNEL}")))
+    asyncio.run(
+        _handler(router, "logger_callback")(
+            FakeCallback(99, f"adm:lg:confirm:{CHANNEL}"), FakeState()
+        )
+    )
     assert repository.list_destinations() == ()
 
 
@@ -373,7 +480,9 @@ def test_logger_callback_remove_config_owned_denied(
     router = _router(admin_settings, service)
 
     asyncio.run(
-        _handler(router, "logger_callback")(FakeCallback(99, f"adm:lg:confirm:{CONFIG_CHANNEL}"))
+        _handler(router, "logger_callback")(
+            FakeCallback(99, f"adm:lg:confirm:{CONFIG_CHANNEL}"), FakeState()
+        )
     )
     destinations = repository.list_destinations()
     assert len(destinations) == 1

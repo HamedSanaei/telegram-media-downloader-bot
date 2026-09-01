@@ -21,11 +21,9 @@ class AcceptedSubmissionAuditService:
         audit: AuditService,
         *,
         enabled: bool,
-        privacy_notice_version: str | None = None,
     ) -> None:
         self._audit = audit
         self._enabled = enabled
-        self._privacy_notice_version = privacy_notice_version
 
     def record_accepted(
         self,
@@ -38,16 +36,10 @@ class AcceptedSubmissionAuditService:
         provider: str | None,
         occurred_at: datetime,
     ) -> int:
-        if (
-            not self._enabled
-            or not self._audit.has_usable_destination()
-            or (
-                self._privacy_notice_version is not None
-                and not self._audit.has_privacy_acknowledgement(
-                    telegram_user_id, self._privacy_notice_version
-                )
-            )
-        ):
+        # Mirroring is enabled only when the operator enables the logger, the
+        # submission mirror, AND explicitly attests the privacy policy. No
+        # per-user acknowledgement is ever required in the acceptance path.
+        if not self._enabled or not self._audit.has_usable_destination():
             return 0
         identity = _submission_identity(source, update_id)
         return self._audit.emit(
@@ -73,6 +65,20 @@ class AcceptedSubmissionAuditService:
         return self._audit.extend_submission_source(source)
 
 
+def mirroring_enabled(
+    *,
+    logger_enabled: bool,
+    submission_mirror_enabled: bool,
+    operator_privacy_attested: bool,
+) -> bool:
+    """Operator-level gate: logger + mirror flag + explicit privacy attestation.
+
+    There is intentionally no per-user acknowledgement in this contract: the
+    operator attestation is the only privacy requirement in the acceptance path.
+    """
+    return logger_enabled and submission_mirror_enabled and operator_privacy_attested
+
+
 def _submission_identity(source: TelegramSourceReference, update_id: int | None) -> str:
     if source.media_group_id is not None:
         return f"submission:{source.chat_id}:group:{source.media_group_id}"
@@ -81,4 +87,4 @@ def _submission_identity(source: TelegramSourceReference, update_id: int | None)
     return f"submission:{source.chat_id}:message:{source.message_ids[0]}"
 
 
-__all__ = ["AcceptedSubmissionAuditService"]
+__all__ = ["AcceptedSubmissionAuditService", "mirroring_enabled"]

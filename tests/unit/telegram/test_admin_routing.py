@@ -7,7 +7,7 @@ from typing import Any, cast
 import pytest
 
 import telegram_media_bot.telegram.handlers as handlers_module
-from telegram_media_bot.application.services.logger_privacy import LOGGER_PRIVACY_NOTICE_FA
+from telegram_media_bot.application.services.logger_privacy import LOGGER_PRIVACY_DISCLOSURE_FA
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.audit import TelegramSourceReference
 from telegram_media_bot.domain.models import (
@@ -156,21 +156,6 @@ class FakeSubmissionAudit:
     def observe_media_group_member(self, source: object) -> int:
         self.observed.append(source)
         return 0
-
-
-class FakeLoggerPrivacy:
-    policy_version = "logger-v1"
-
-    def __init__(self) -> None:
-        self.acknowledged = False
-
-    def requires_acknowledgement(self, _user_id: int) -> bool:
-        return not self.acknowledged
-
-    def acknowledge(self, _user_id: int) -> bool:
-        created = not self.acknowledged
-        self.acknowledged = True
-        return created
 
 
 class FakeCallback:
@@ -356,13 +341,12 @@ async def test_invalid_and_start_control_traffic_are_never_mirrored(
     assert jobs.calls == []
 
 
-async def test_versioned_privacy_notice_precedes_acceptance_and_ack_is_not_mirrored(
+async def test_mirroring_accepts_without_any_user_acknowledgement(
     role_settings: Settings,
 ) -> None:
     jobs = FakeJobs()
     queue = FakeQueue()
     mirror = FakeSubmissionAudit()
-    privacy = FakeLoggerPrivacy()
     router = build_router(
         settings=role_settings,
         queue=queue,  # type: ignore[arg-type]
@@ -371,27 +355,54 @@ async def test_versioned_privacy_notice_precedes_acceptance_and_ack_is_not_mirro
         jobs=jobs,  # type: ignore[arg-type]
         users=FakeUsers(),  # type: ignore[arg-type]
         submission_audit=mirror,  # type: ignore[arg-type]
-        logger_privacy=privacy,  # type: ignore[arg-type]
     )
-    first = FakeMessage(20, "https://example.com/media")
+    message = FakeMessage(20, "https://example.com/media")
 
-    await _handler(router, "enqueue_url")(first, durable_update_id=80)
+    await _handler(router, "enqueue_url")(message, durable_update_id=80)
 
-    assert jobs.calls == []
-    assert mirror.accepted == []
-    assert first.answers[0][0] == LOGGER_PRIVACY_NOTICE_FA
-    markup = cast(Any, first.answers[0][1])
-    assert markup.inline_keyboard[0][0].callback_data == "privacy:ack:logger-v1"
-
-    callback = FakeCallback(20, "privacy:ack:logger-v1")
-    await _handler(router, "acknowledge_logger_privacy")(callback)
-    assert callback.answers[-1] == ("تأیید ثبت شد", False)
-    assert mirror.accepted == []
-
-    second = FakeMessage(20, "https://example.com/media", message_id=101)
-    await _handler(router, "enqueue_url")(second, durable_update_id=81)
+    # Mirroring is active, zero user acknowledgement exists, yet the download
+    # is durably accepted and mirrored.
     assert len(jobs.calls) == 1
     assert len(mirror.accepted) == 1
+    # No blocking privacy acknowledgement message is ever emitted in the
+    # download acceptance path.
+    assert all(LOGGER_PRIVACY_DISCLOSURE_FA not in text for text, _ in message.answers)
+
+
+async def test_mirroring_accepts_when_audit_write_fails(role_settings: Settings) -> None:
+    jobs = FakeJobs()
+    queue = FakeQueue()
+    router = build_router(
+        settings=role_settings,
+        queue=queue,  # type: ignore[arg-type]
+        repository=FakeRepository(),  # type: ignore[arg-type]
+        access_policy=FakeAccessPolicy(),  # type: ignore[arg-type]
+        jobs=jobs,  # type: ignore[arg-type]
+        users=FakeUsers(),  # type: ignore[arg-type]
+        submission_audit=FakeSubmissionAudit(fail=True),  # type: ignore[arg-type]
+    )
+    message = FakeMessage(20, "https://example.com/media")
+
+    await _handler(router, "enqueue_url")(message, durable_update_id=82)
+
+    # Logger failure must never fail or block the user's download.
+    assert len(jobs.calls) == 1
+
+
+async def test_privacy_disclosure_command_is_non_blocking(role_settings: Settings) -> None:
+    router = build_router(
+        settings=role_settings,
+        queue=FakeQueue(),  # type: ignore[arg-type]
+        repository=FakeRepository(),  # type: ignore[arg-type]
+        access_policy=FakeAccessPolicy(),  # type: ignore[arg-type]
+        jobs=FakeJobs(),  # type: ignore[arg-type]
+        users=FakeUsers(),  # type: ignore[arg-type]
+    )
+    message = FakeMessage(20, "/privacy")
+
+    await _handler(router, "privacy_disclosure")(message)
+
+    assert message.answers[-1][0] == LOGGER_PRIVACY_DISCLOSURE_FA
 
 
 async def test_existing_inspection_is_reconciled_without_new_pending_status(

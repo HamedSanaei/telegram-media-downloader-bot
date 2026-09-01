@@ -264,7 +264,7 @@ def build_admin_router(
         )
 
     @router.callback_query(F.data.startswith("adm:lg:"))
-    async def logger_callback(callback: CallbackQuery) -> None:
+    async def logger_callback(callback: CallbackQuery, state: FSMContext) -> None:
         if not _is_admin_user(callback.from_user.id if callback.from_user else None, settings):
             await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
             return
@@ -284,6 +284,8 @@ def build_admin_router(
             await callback.answer()
             return
         if action == "add":
+            await state.clear()
+            await state.set_state(AdminLoggerState.awaiting_add_chat_id)
             await callback.answer(LOGGER_ADD_PROMPT_TEXT)
             await callback.message.answer(
                 LOGGER_ADD_PROMPT_TEXT, reply_markup=build_admin_logger_keyboard()
@@ -817,7 +819,7 @@ def _parse_logger_callback(data: str) -> tuple[str, int | None] | None:
     if not data.startswith(prefix):
         return None
     rest = data[len(prefix) :]
-    if rest in {"noop", "refresh"}:
+    if rest in {"noop", "refresh", "add"}:
         return rest, None
     if ":" not in rest:
         return None

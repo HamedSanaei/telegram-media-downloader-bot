@@ -626,11 +626,13 @@ numeric user IDs.
 Accepted download submissions are recorded only after durable acceptance (implemented T030). Native
 Telegram copy operations preserve original media, captions, and album ordering; media groups receive
 one logical submission identity. Control interactions are excluded. The original message is not
-edited or deleted. Before acceptance, the exact Persian privacy notice gates each user's current
-versioned acknowledgement. Mirroring additionally requires explicit operator privacy attestation
-and a usable private destination. Acknowledgements survive restarts; changing the configured notice
-version requires acknowledgement again. Audit copies/safe metadata are retained indefinitely; no
-automatic Telegram deletion is introduced and media-workspace cleanup remains independent.
+edited or deleted. Mirroring requires explicit operator privacy attestation
+(`operator_privacy_attested`), a usable private destination, and nothing else: since v1.4.0-rc.2 the
+exact Persian disclosure is informational only (`/privacy`) and no per-user acknowledgement is
+required, requested, or consulted in the acceptance path. Legacy acknowledgement rows are retained
+for backward compatibility and are never read. Audit copies/safe metadata are retained
+indefinitely; no automatic Telegram deletion is introduced and media-workspace cleanup remains
+independent.
 
 ### Reliability and rollout
 

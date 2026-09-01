@@ -262,9 +262,10 @@ Activate in this order, restarting after each reviewed configuration change:
    outbox gauges without admitting events.
 4. Set `alerts_enabled: true`; verify one controlled terminal operational event and one Cookie
    Health transition reach the channel without any automatic admin DM.
-5. Review the exact Persian notice and indefinite retention, set `operator_privacy_attested: true`,
-   then set `submission_mirror_enabled: true`. Verify an unacknowledged user sees the notice before
-   acceptance, acknowledgement creates no mirror, and the next accepted submission copies once.
+5. Review the privacy policy in `docs/PRIVACY.md` and the indefinite retention, set
+   `operator_privacy_attested: true`, then set `submission_mirror_enabled: true`. Since
+   v1.4.0-rc.2 the disclosure is informational only (`/privacy`); no user acknowledgement is
+   required or requested, and an accepted submission copies once without any per-user gate.
 6. Record the owner, activation time, backup archive, config diff, destination probe, metric
    baseline, and rollback criteria. T024 remains blocked; no payment/VIP credential event is enabled
    by this rollout, and release `1.3.7` remains forbidden.
@@ -287,10 +288,11 @@ the affected credential outside the bot, and follow the organization's incident 
 delete user messages or durable state as first response.
 
 Rollback sets `submission_mirror_enabled`, `alerts_enabled`, and then `logger.enabled` false and
-restores the matching pre-change configuration. It does not delete destinations, acknowledgements,
-events, outbox rows, or Telegram copies. Audit content and safe metadata remain indefinitely
-retained with no automatic purge; any future manual purge requires its own bounded, idempotent,
-independently retried design and approval.
+restores the matching pre-change configuration. It does not delete destinations, events, outbox
+rows, or Telegram copies; legacy per-user acknowledgement rows (deprecated since v1.4.0-rc.2) are
+kept for backward compatibility and are never consulted. Audit content and safe metadata remain
+indefinitely retained with no automatic purge; any future manual purge requires its own bounded,
+idempotent, independently retried design and approval.
 
 Weekly and monthly administrator charts are generated entirely in memory with Pillow. The font is
 `telegram_media_bot/assets/fonts/NotoSans-Regular.ttf`, licensed by the adjacent `OFL.txt`, and is

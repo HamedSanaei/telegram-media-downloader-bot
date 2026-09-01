@@ -59,7 +59,8 @@ copy and its safe metadata; leases and uncertain effects remain explicitly bound
 
 ## Configuration
 
-The mirror activates only when logger enablement, privacy notice, and at least one valid destination
+The mirror activates only when logger enablement, operator privacy attestation, and at least one
+valid destination
 are satisfied. Destination selection is the T027 config/runtime union.
 
 ## Security and privacy

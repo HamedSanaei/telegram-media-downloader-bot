@@ -50,7 +50,8 @@ delivery. Indefinite audit retention is preserved during rollback.
 
 ## Configuration
 
-Validate strict logger settings, configured/runtime reconciliation, privacy acknowledgement, and
+Validate strict logger settings, configured/runtime reconciliation, the non-blocking privacy
+disclosure (no per-user acknowledgement since v1.4.0-rc.2), and
 feature gates before activation. Restore the matching pre-change configuration on rollback.
 
 ## Security and privacy

@@ -105,14 +105,16 @@ review, tests, and operational ownership are explicit and implementation-ready.
 
 ## Implementation record
 
-- Accepted-submission mirroring requires logger and mirror enablement, explicit operator privacy
-  attestation, at least one usable private destination, and the submitting user's durable
-  acknowledgement of the current `privacy_notice_version`.
-- The exact Persian notice appears before durable job acceptance. Its callback stores only
-  `(telegram_user_id, policy_version, acknowledged_at)` in additive SQLite state. Acknowledgement
-  survives restart; changing the configured version requires acknowledgement again.
-- Notice/control interactions never create audit events. Notice-store, sanitizer, and audit faults
-  close only the mirror path and cannot change ordinary download acceptance.
+- **v1.4.0-rc.2 change:** accepted-submission mirroring requires logger enablement, mirror
+  enablement, explicit operator privacy attestation, and at least one usable private destination —
+  and nothing else. The per-user acknowledgement gate was removed from the acceptance path; the
+  disclosure is informational only (`/privacy`) and never blocks, delays, or rejects a download.
+- The exact Persian disclosure text is `LOGGER_PRIVACY_DISCLOSURE_FA`. Legacy
+  `logger_privacy_acknowledgements` rows and the `has_privacy_acknowledgement`/
+  `acknowledge_privacy` API are deprecated and retained for backward compatibility only; no
+  destructive migration is performed and the table is never consulted at runtime.
+- Notice/control interactions never create audit events. Sanitizer and audit faults close only the
+  mirror path and cannot change ordinary download acceptance.
 - Audit identifiers are bounded safe values. The sanitizer rejects raw tracebacks, sensitive paths,
   cookie rows, and non-string payloads, and redacts authorization, bot-token, account/session,
   signed-login, proxy, card/payment, and gateway-secret material before durable persistence.

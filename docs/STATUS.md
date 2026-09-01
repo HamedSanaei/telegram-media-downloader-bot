@@ -121,9 +121,11 @@ into the durable outbox instead of being broadcast to every `telegram.admin_ids`
 or destinations the worker only records structured logs, and logger storage faults can never
 change a user job outcome. T030 accepted-submission mirroring, T031 privacy/retention controls, and
 T032 E2E rollout/operations are complete. Mirroring defaults off and requires explicit
-operator attestation, the exact Persian privacy notice, a versioned durable acknowledgement from
-each submitting user, and a usable private destination. Retention is indefinite with no automatic
-Telegram purge; media cleanup remains unchanged. ADR-036 through ADR-038 are accepted.
+operator attestation, a usable private destination, and nothing else: since v1.4.0-rc.2 the exact
+Persian disclosure is informational only (`/privacy`) and no per-user acknowledgement is required,
+requested, or consulted in the acceptance path; legacy acknowledgement rows are retained for
+backward compatibility only. Retention is indefinite with no automatic Telegram purge; media
+cleanup remains unchanged. ADR-036 through ADR-038 are accepted.
 The worker now drains at most 20 logger effects every 30 seconds, emits bounded aggregate
 outcome/depth/age metrics and safe secondary readiness detail, isolates destination lifecycle
 changes, and preserves `UNCERTAIN` sends. Managed backups and staged activation/incident/rollback

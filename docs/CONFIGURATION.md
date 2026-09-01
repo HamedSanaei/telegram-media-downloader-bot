@@ -75,12 +75,12 @@ takes effect when the bot restarts and reloads `config.yaml`.
 `submission_mirror_enabled` admits accepted-submission copies only when
 `operator_privacy_attested` is also true. `channels` is a unique list of numeric `-100...` private
 channel IDs and reconciles with runtime destinations as a protected union. The configured
-`privacy_notice_version` is a bounded non-secret identifier: bump it after any material notice
-change so each user must acknowledge the exact Persian notice once again. Submission mirroring also
-requires at least one usable destination and the current user's durable acknowledgement. Unknown
-keys, unsafe versions, duplicate/invalid IDs, or capability flags with `enabled: false` fail strict
-configuration. These flags do not change ordinary download behavior; logger faults close only the
-audit path.
+`privacy_notice_version` is retained for backward compatibility and is not consulted at runtime:
+since v1.4.0-rc.2 no per-user acknowledgement is required or stored in the acceptance path.
+Submission mirroring requires the operator attestation, at least one usable destination, and
+nothing else. Unknown keys, unsafe versions, duplicate/invalid IDs, or capability flags with
+`enabled: false` fail strict configuration. These flags do not change ordinary download behavior;
+logger faults close only the audit path.
 
 `yt_dlp.proxy_enabled` controls only source inspection/download requests. Supported schemes are
 HTTP, HTTPS, SOCKS4, SOCKS4a, SOCKS5, and SOCKS5h. A legacy configuration that has `proxy` but omits

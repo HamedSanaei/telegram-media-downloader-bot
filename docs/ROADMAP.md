@@ -95,14 +95,16 @@ logger-channel management UX (add/list/test/enable/disable/remove with a typed v
 reauthorized callbacks). T029 routes terminal operational failures and Cookie Health
 transitions/reminders as typed logger events with no admin-DM fallback. T030 now emits replay-safe
 accepted-submission events after durable job creation, resolves bounded album source identities,
-and supplies native `copyMessage`/`copyMessages` delivery. T031 adds the exact Persian notice,
-versioned durable user acknowledgement, explicit operator attestation, indefinite retention, and
-the permanent secret-exclusion boundary. T032 wires bounded worker draining, aggregate health and
-metrics, destination lifecycle isolation, consistent backups, and staged rollout/incident/rollback
-runbooks. Alerts and submission mirroring are separately enabled; mirroring also requires the
-operator privacy attestation and
-each user's acknowledgement. Audit content has indefinite retention and no automatic Telegram
-deletion. ADR-036 through ADR-038 are accepted.
+and supplies native `copyMessage`/`copyMessages` delivery. T031 adds the exact Persian disclosure,
+explicit operator attestation, indefinite retention, and the permanent secret-exclusion boundary.
+Since v1.4.0-rc.2 the privacy disclosure is informational only (`/privacy`): no per-user
+acknowledgement is required, requested, or consulted in the acceptance path, and legacy
+acknowledgement rows are retained for backward compatibility only. T032 wires bounded worker
+draining, aggregate health and metrics, destination lifecycle isolation, consistent backups, and
+staged rollout/incident/rollback runbooks. Alerts and submission mirroring are separately enabled;
+mirroring requires the operator privacy attestation and a usable private destination. Audit
+content has indefinite retention and no automatic Telegram deletion. ADR-036 through ADR-038 are
+accepted.
 
 ## Milestone 6 - CI performance and developer velocity
 

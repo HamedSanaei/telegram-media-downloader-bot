@@ -38,10 +38,7 @@ from telegram_media_bot.application.services.instagram_delivery import (
 )
 from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
 from telegram_media_bot.application.services.job_service import JobService
-from telegram_media_bot.application.services.logger_privacy import (
-    LOGGER_PRIVACY_NOTICE_FA,
-    LoggerPrivacyService,
-)
+from telegram_media_bot.application.services.logger_privacy import LOGGER_PRIVACY_DISCLOSURE_FA
 from telegram_media_bot.application.services.native_options import (
     build_native_option_catalog,
     is_native_video_option,
@@ -97,8 +94,6 @@ from telegram_media_bot.telegram.texts import (
     INSPECTION_ACTIVE_TEXT,
     INSPECTION_QUEUED_TEXT,
     INVALID_URL_TEXT,
-    LOGGER_PRIVACY_ACKNOWLEDGED_TEXT,
-    LOGGER_PRIVACY_UNAVAILABLE_TEXT,
     QUEUED_TEXT,
     RATE_LIMIT_TEXT,
     SELECTION_EXPIRED_TEXT,
@@ -113,7 +108,6 @@ from telegram_media_bot.telegram.ui import (
     container_keyboard,
     highlight_tray_keyboard,
     instagram_image_delivery_keyboard,
-    logger_privacy_acknowledgement_keyboard,
     render_highlight_tray,
     render_instagram_image_delivery_prompt,
     render_media_info,
@@ -144,7 +138,6 @@ def build_router(
     audit_admin: LoggerDestinationAdminService | None = None,
     submission_audit: AcceptedSubmissionAuditService | None = None,
     source_resolver: TelegramSourceResolver | None = None,
-    logger_privacy: LoggerPrivacyService | None = None,
 ) -> Router:
     router = Router(name="main")
     router.message.outer_middleware(CorrelationMiddleware())
@@ -211,29 +204,11 @@ def build_router(
             await callback.message.edit_text("عضویت شما تأیید شد. اکنون لینک را دوباره ارسال کنید.")
         await callback.answer("تأیید شد")
 
-    @router.callback_query(F.data.startswith("privacy:ack:"))
-    async def acknowledge_logger_privacy(callback: CallbackQuery) -> None:
-        if callback.from_user is None or logger_privacy is None or callback.data is None:
-            await callback.answer(LOGGER_PRIVACY_UNAVAILABLE_TEXT, show_alert=True)
-            return
-        expected = f"privacy:ack:{logger_privacy.policy_version}"
-        if callback.data != expected:
-            await callback.answer(
-                "نسخهٔ این تأیید منقضی شده است؛ لینک را دوباره بفرستید.", show_alert=True
-            )
-            return
-        try:
-            await asyncio.to_thread(logger_privacy.acknowledge, callback.from_user.id)
-        except Exception:
-            await logger.aexception(
-                "logger_privacy_acknowledgement_failed",
-                error_type="PrivacyAcknowledgementError",
-            )
-            await callback.answer(LOGGER_PRIVACY_UNAVAILABLE_TEXT, show_alert=True)
-            return
-        if isinstance(callback.message, Message):
-            await callback.message.edit_text(LOGGER_PRIVACY_ACKNOWLEDGED_TEXT)
-        await callback.answer("تأیید ثبت شد")
+    @router.message(Command("privacy"))
+    async def privacy_disclosure(message: Message) -> None:
+        # Informational only. Never blocks, delays, or rejects a download, and
+        # never requires any user acknowledgement.
+        await message.answer(LOGGER_PRIVACY_DISCLOSURE_FA)
 
     @router.message(Command("health"))
     async def health(message: Message) -> None:
@@ -1192,27 +1167,6 @@ def build_router(
             await message.answer(INVALID_URL_TEXT, reply_markup=invalid_markup)
             return False
         intent = canonicalize_media_url(validated)
-        if logger_privacy is not None:
-            try:
-                privacy_required = await asyncio.to_thread(
-                    logger_privacy.requires_acknowledgement,
-                    message.from_user.id,
-                )
-            except Exception:
-                # Fail the mirror closed, but never fail ordinary download acceptance.
-                privacy_required = False
-                await logger.aexception(
-                    "logger_privacy_check_failed",
-                    error_type="PrivacyCheckError",
-                )
-            if privacy_required:
-                await message.answer(
-                    LOGGER_PRIVACY_NOTICE_FA,
-                    reply_markup=logger_privacy_acknowledgement_keyboard(
-                        logger_privacy.policy_version
-                    ),
-                )
-                return False
         if intent.youtube_video_id is not None:
             await logger.ainfo("youtube_url_canonicalized", **intent.log_fields)
         record, created = await asyncio.to_thread(
