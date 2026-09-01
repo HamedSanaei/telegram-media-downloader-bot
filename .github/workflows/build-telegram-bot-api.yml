@@ -94,8 +94,13 @@ jobs:
           docker push "$image"
           digest="$(docker image inspect "$image" --format '{{index .RepoDigests 0}}' | cut -d@ -f2)"
           test -n "$digest"
-          gh api --method PATCH /user/packages/container/telegram-bot-api \
-            -f visibility=public >/dev/null
+          # GITHUB_TOKEN cannot manage package visibility on user-owned accounts
+          # (REST returns 404). Making visibility public is best-effort here; the
+          # strict anonymous pull verification below is the authoritative gate.
+          if ! gh api --method PATCH /user/packages/container/telegram-bot-api \
+              -f visibility=public >/dev/null 2>&1; then
+            echo "warning: package visibility API unavailable (GITHUB_TOKEN on user account); anonymous pull step is the real gate"
+          fi
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           {
             echo "### Telegram Bot API artifact"
