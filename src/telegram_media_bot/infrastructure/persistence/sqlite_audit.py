@@ -112,6 +112,13 @@ class SqliteAuditRepository:
                     acknowledged_at TEXT NOT NULL,
                     PRIMARY KEY (telegram_user_id, policy_version)
                 );
+                CREATE TABLE IF NOT EXISTS logger_delivery_output_intents (
+                    job_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS logger_delivery_output_pending_idx
+                    ON logger_delivery_output_intents(completed_at, created_at);
                 """
             )
 
@@ -308,6 +315,44 @@ class SqliteAuditRepository:
                 ).rowcount
             connection.execute("COMMIT")
         return created
+
+    def prepare_delivery_output(self, job_id: str) -> bool:
+        """Persist the output-mirror intent before Telegram user delivery begins."""
+        now = _now()
+        with self._connect() as connection:
+            created = connection.execute(
+                """INSERT OR IGNORE INTO logger_delivery_output_intents
+                (job_id,created_at,completed_at) VALUES (?,?,NULL)""",
+                (job_id, now),
+            ).rowcount
+        return bool(created)
+
+    def pending_delivery_outputs(self, *, limit: int = 50) -> tuple[str, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT job_id FROM logger_delivery_output_intents
+                WHERE completed_at IS NULL ORDER BY created_at,job_id LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return tuple(str(row["job_id"]) for row in rows)
+
+    def delivery_output_pending(self, job_id: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM logger_delivery_output_intents
+                WHERE job_id=? AND completed_at IS NULL""",
+                (job_id,),
+            ).fetchone()
+        return row is not None
+
+    def complete_delivery_output(self, job_id: str) -> bool:
+        with self._connect() as connection:
+            changed = connection.execute(
+                """UPDATE logger_delivery_output_intents SET completed_at=?
+                WHERE job_id=? AND completed_at IS NULL""",
+                (_now(), job_id),
+            ).rowcount
+        return bool(changed)
 
     def extend_submission_source(self, source: TelegramSourceReference) -> int:
         """Merge one album member before delivery; a sent/leased album remains immutable."""

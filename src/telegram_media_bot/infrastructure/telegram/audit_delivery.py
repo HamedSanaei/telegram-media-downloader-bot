@@ -14,12 +14,14 @@ from aiogram.exceptions import (
 
 from telegram_media_bot.application.services.audit_sanitizer import safe_failure_class
 from telegram_media_bot.domain.audit import (
-    AuditCategory,
     AuditDeliveryOutcome,
     AuditDeliveryResult,
     AuditEvent,
+    AuditEventType,
     LoggerOutboxItem,
 )
+
+_COPY_MESSAGES_LIMIT = 100
 
 
 class TelegramAuditDelivery:
@@ -31,7 +33,10 @@ class TelegramAuditDelivery:
     async def deliver(self, item: LoggerOutboxItem) -> AuditDeliveryResult:
         side_effect_completed = False
         try:
-            if item.event.category is AuditCategory.USER_SUBMISSION:
+            if item.event.event_type in {
+                AuditEventType.USER_SUBMISSION_RECEIVED,
+                AuditEventType.DOWNLOAD_OUTPUT_DELIVERED,
+            }:
                 source = item.event.source
                 if source is None:
                     return AuditDeliveryResult(
@@ -43,13 +48,17 @@ class TelegramAuditDelivery:
                         from_chat_id=source.chat_id,
                         message_id=source.message_ids[0],
                     )
+                    side_effect_completed = True
                 else:
-                    await self._bot.copy_messages(
-                        chat_id=item.destination_chat_id,
-                        from_chat_id=source.chat_id,
-                        message_ids=list(source.message_ids),
-                    )
-                side_effect_completed = True
+                    for offset in range(0, len(source.message_ids), _COPY_MESSAGES_LIMIT):
+                        await self._bot.copy_messages(
+                            chat_id=item.destination_chat_id,
+                            from_chat_id=source.chat_id,
+                            message_ids=list(
+                                source.message_ids[offset : offset + _COPY_MESSAGES_LIMIT]
+                            ),
+                        )
+                        side_effect_completed = True
                 await self._bot.send_message(
                     item.destination_chat_id,
                     _metadata_text(item.event),
@@ -78,7 +87,11 @@ class TelegramAuditDelivery:
 
 def _metadata_text(event: AuditEvent) -> str:
     fields = [
-        "🧾 Accepted download submission",
+        (
+            "📦 Delivered download output"
+            if event.event_type is AuditEventType.DOWNLOAD_OUTPUT_DELIVERED
+            else "🧾 Accepted download submission"
+        ),
         f"user_id: {event.telegram_user_id}" if event.telegram_user_id is not None else None,
         f"update_id: {event.update_id}" if event.update_id is not None else None,
         f"job_id: {event.job_id}" if event.job_id is not None else None,

@@ -24,6 +24,9 @@ from telegram_media_bot.application.services.cookie_health_service import (
     CookieHealthAlert,
     CookieHealthService,
 )
+from telegram_media_bot.application.services.delivery_output_audit import (
+    DeliveredOutputAuditService,
+)
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.audit import (
@@ -347,6 +350,12 @@ async def test_worker_download_persists_receipt_and_cleans(
     worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
 ) -> None:
     context, repository, service, delivery = worker_context
+    audit_store = SqliteAuditRepository(repository._path)
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
+    context["output_audit"] = DeliveredOutputAuditService(
+        AuditService(audit_store, enabled=True), repository, enabled=True
+    )
     job_id = await process_download_job(
         context,
         chat_id=10,
@@ -363,6 +372,17 @@ async def test_worker_download_persists_receipt_and_cleans(
     assert delivery.file_present_during_delivery
     assert delivery.last_source_url == "https://example.com/media"
     assert delivery.last_caption is not None and "@telegram_media_bot" in delivery.last_caption
+    output_events = [
+        event
+        for event in _load_audit_events(audit_store)
+        if event["event_type"] == AuditEventType.DOWNLOAD_OUTPUT_DELIVERED.value
+    ]
+    assert len(output_events) == 1
+    assert output_events[0]["source"] == {
+        "chat_id": 10,
+        "media_group_id": None,
+        "message_ids": [3],
+    }
     with closing(sqlite3.connect(repository._path)) as connection:
         usage = connection.execute(
             "SELECT successful_download_count, delivered_bytes FROM users WHERE user_id = 20"
@@ -370,6 +390,37 @@ async def test_worker_download_persists_receipt_and_cleans(
     assert usage == (1, 5)
     assert not (cast(Settings, context["settings"]).storage.downloads_path() / job_id).exists()
     assert not (cast(Settings, context["settings"]).storage.temp_path() / job_id).exists()
+
+
+async def test_output_logger_failure_never_changes_successful_job(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context, repository, _service, delivery = worker_context
+    audit_store = SqliteAuditRepository(repository._path)
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
+    output_audit = DeliveredOutputAuditService(
+        AuditService(audit_store, enabled=True), repository, enabled=True
+    )
+
+    def fail_finalize(_job_id: JobId) -> bool:
+        raise RuntimeError("logger unavailable")
+
+    monkeypatch.setattr(output_audit, "finalize", fail_finalize)
+    context["output_audit"] = output_audit
+
+    result = await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media",
+        mode=DownloadMode.BEST.value,
+    )
+
+    record = repository.get_job(JobId(result))
+    assert record is not None and record.status is JobStatus.SUCCEEDED
+    assert delivery.deliveries == 1
 
 
 async def test_recovered_youtube_mix_job_is_normalized_at_execution_boundary(

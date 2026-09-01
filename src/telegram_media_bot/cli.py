@@ -298,7 +298,9 @@ def _run_static_doctor_checks(
         readable = _cookie_file_readable(cookie)
         print(f"{'OK  ' if readable else 'FAIL'} gallery_dl_cookie_{source}")
         failed = failed or not readable
-    logger_healthy, logger_detail = _logger_doctor_health(settings)
+    logger_healthy, logger_detail = _logger_doctor_health(
+        settings, runtime_filesystem_read_only=runtime_filesystem_read_only
+    )
     print(f"{'OK  ' if logger_healthy else 'FAIL'} operator_logger: {logger_detail}")
     failed = failed or not logger_healthy
     from telegram_media_bot.infrastructure.analytics.usage_chart_doctor import (
@@ -333,13 +335,19 @@ def _run_static_doctor_checks(
     return failed
 
 
-def _logger_doctor_health(settings: Settings) -> tuple[bool, str]:
+def _logger_doctor_health(
+    settings: Settings,
+    *,
+    runtime_filesystem_read_only: bool,
+) -> tuple[bool, str]:
     logger_settings = settings.telegram.logger
     if not logger_settings.enabled:
         return True, "disabled"
     database = settings.database_path()
     if not database.is_file():
         return False, "enabled;durable_state=missing"
+    if runtime_filesystem_read_only:
+        return _logger_doctor_readonly_filesystem(settings, database)
     from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
 
     try:
@@ -359,6 +367,56 @@ def _logger_doctor_health(settings: Settings) -> tuple[bool, str]:
         f"mirror={int(logger_settings.submission_mirror_enabled)}"
     )
     return healthy, detail
+
+
+def _logger_doctor_readonly_filesystem(
+    settings: Settings,
+    database: Path,
+) -> tuple[bool, str]:
+    """Read-only pre-stop preflight: filesystem-level validation only.
+
+    A WAL-backed SQLite database whose `-wal`/`-shm` files are absent cannot be
+    opened on a read-only bind mount (SQLITE_CANTOPEN: creating the shared-memory
+    file requires a write). The pre-stop candidate preflight therefore must NOT
+    open the durable database at all: it verifies readability of the existing
+    files, proves no file is created or modified, and defers the real snapshot
+    check to the strong post-stop verification.
+    """
+    try:
+        if not database.is_file():
+            return False, "enabled;durable_state=missing"
+        if not os.access(database, os.R_OK):
+            return False, "enabled;durable_state=unreadable"
+        state_dir = database.parent
+        if not state_dir.is_dir() or not os.access(state_dir, os.R_OK | os.X_OK):
+            return False, "enabled;durable_state=state_unreadable"
+        before = _database_files_state(database)
+        with database.open("rb") as handle:
+            header = handle.read(16)
+        if len(header) < 16:
+            return False, "enabled;durable_state=corrupt"
+        after = _database_files_state(database)
+        if after != before:
+            return False, "enabled;durable_state=mutated"
+    except OSError:
+        return False, "enabled;durable_state=unavailable"
+    return True, "enabled;durable_state=deferred-readonly"
+
+
+def _database_files_state(
+    database: Path,
+) -> tuple[tuple[str, int, int], ...]:
+    """Capture (name, size, mtime_ns) for the DB and any WAL/SHM sidecars."""
+    state: list[tuple[str, int, int]] = []
+    for candidate in (
+        database,
+        database.with_suffix(database.suffix + "-wal"),
+        database.with_suffix(database.suffix + "-shm"),
+    ):
+        if candidate.exists():
+            stat = candidate.stat()
+            state.append((candidate.name, stat.st_size, stat.st_mtime_ns))
+    return tuple(state)
 
 
 def _package_version_health(expected_version: str | None) -> tuple[bool, str]:

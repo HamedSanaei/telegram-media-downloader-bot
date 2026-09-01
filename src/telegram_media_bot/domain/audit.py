@@ -29,6 +29,7 @@ class AuditEventType(StrEnum):
     TERMINAL_OPERATIONAL_ERROR = "terminal_operational_error"
     COOKIE_HEALTH_CHANGED = "cookie_health_changed"
     USER_SUBMISSION_RECEIVED = "user_submission_received"
+    DOWNLOAD_OUTPUT_DELIVERED = "download_output_delivered"
     SYSTEM_HEALTH = "system_health"
 
 
@@ -74,6 +75,7 @@ _EVENT_CATEGORIES = {
     AuditEventType.TERMINAL_OPERATIONAL_ERROR: AuditCategory.ERROR,
     AuditEventType.COOKIE_HEALTH_CHANGED: AuditCategory.COOKIE_HEALTH,
     AuditEventType.USER_SUBMISSION_RECEIVED: AuditCategory.USER_SUBMISSION,
+    AuditEventType.DOWNLOAD_OUTPUT_DELIVERED: AuditCategory.USER_SUBMISSION,
     AuditEventType.SYSTEM_HEALTH: AuditCategory.SYSTEM,
 }
 
@@ -158,8 +160,15 @@ class AuditEvent:
                 raise ValueError(f"{label} must be a bounded safe classification")
         if self.source is not None and not isinstance(self.source, TelegramSourceReference):
             raise ValueError("source must be a typed Telegram source reference")
-        if self.event_type is AuditEventType.USER_SUBMISSION_RECEIVED and self.source is None:
-            raise ValueError("accepted submission events require a source reference")
+        if (
+            self.event_type
+            in {
+                AuditEventType.USER_SUBMISSION_RECEIVED,
+                AuditEventType.DOWNLOAD_OUTPUT_DELIVERED,
+            }
+            and self.source is None
+        ):
+            raise ValueError("Telegram copy events require a source reference")
 
 
 @dataclass(frozen=True, slots=True)

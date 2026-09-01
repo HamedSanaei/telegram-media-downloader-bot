@@ -20,8 +20,12 @@ from telegram_media_bot.application.ports.download_engine import DownloadEngine
 from telegram_media_bot.application.services.audit_outbox import AuditOutboxProcessor
 from telegram_media_bot.application.services.audit_service import AuditService
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
+from telegram_media_bot.application.services.delivery_output_audit import (
+    DeliveredOutputAuditService,
+)
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
+from telegram_media_bot.application.services.submission_audit import mirroring_enabled
 from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.domain.audit import LoggerHealthSnapshot
 from telegram_media_bot.domain.credential_resolution import ResolvedCredential
@@ -108,6 +112,15 @@ async def startup(ctx: dict[str, Any]) -> None:
         audit = AuditService(
             audit_store,
             enabled=_worker_alerts_enabled(settings),
+        )
+        output_audit = DeliveredOutputAuditService(
+            AuditService(audit_store, enabled=settings.telegram.logger.enabled),
+            repository,
+            enabled=mirroring_enabled(
+                logger_enabled=settings.telegram.logger.enabled,
+                submission_mirror_enabled=(settings.telegram.logger.submission_mirror_enabled),
+                operator_privacy_attested=(settings.telegram.logger.operator_privacy_attested),
+            ),
         )
         inbound_store = SqliteInboundUpdateRepository(settings.database_path())
         await asyncio.to_thread(inbound_store.initialize)
@@ -198,6 +211,7 @@ async def startup(ctx: dict[str, Any]) -> None:
             bot_identity_available=True,
             cookie_health_service=cookie_health_service,
             audit=audit,
+            output_audit=output_audit,
             audit_store=audit_store,
             audit_processor=audit_processor,
             # The current public path remains operator-backed; this explicit project-owned
@@ -277,6 +291,16 @@ async def startup(ctx: dict[str, Any]) -> None:
                 recovery_decision=recovery.decision.value,
                 final_status=record.status.value,
             )
+        try:
+            output_mirrors_reconciled = await asyncio.to_thread(
+                output_audit.reconcile_pending, limit=50
+            )
+        except Exception as exc:
+            output_mirrors_reconciled = 0
+            await logger.aerror(
+                "delivery_output_audit_reconciliation_failed",
+                failure_class=type(exc).__name__[:96],
+            )
         startup_cleanup = await asyncio.to_thread(
             sweep_workspaces,
             settings,
@@ -354,6 +378,7 @@ async def startup(ctx: dict[str, Any]) -> None:
             cancelled_jobs=cancelled_count,
             appfix_recovered_jobs=appfix_recovered,
             recovery_requeues_reconciled=recovery_requeues_reconciled,
+            output_mirrors_reconciled=output_mirrors_reconciled,
             recoverable_jobs_pending=recoverable_pending,
             cleanup_directories=startup_cleanup.directories_deleted,
             cleanup_bytes_reclaimed=startup_cleanup.bytes_reclaimed,

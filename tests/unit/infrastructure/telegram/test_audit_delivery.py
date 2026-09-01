@@ -44,10 +44,15 @@ class FakeBot:
         self.messages.append((chat_id, text))
 
 
-def _item(message_ids: tuple[int, ...] = (10,)) -> LoggerOutboxItem:
+def _item(
+    message_ids: tuple[int, ...] = (10,),
+    *,
+    event_type: AuditEventType = AuditEventType.USER_SUBMISSION_RECEIVED,
+    source_chat_id: int = 4242,
+) -> LoggerOutboxItem:
     event = AuditEvent(
         event_id="event-1",
-        event_type=AuditEventType.USER_SUBMISSION_RECEIVED,
+        event_type=event_type,
         category=AuditCategory.USER_SUBMISSION,
         severity=AuditSeverity.INFO,
         occurred_at=datetime(2026, 8, 31, 12, 0, tzinfo=UTC),
@@ -58,9 +63,7 @@ def _item(message_ids: tuple[int, ...] = (10,)) -> LoggerOutboxItem:
         job_id="inspection-1",
         content_type="photo",
         provider="example.com",
-        source=TelegramSourceReference(
-            4242, message_ids, "album-1" if len(message_ids) > 1 else None
-        ),
+        source=TelegramSourceReference(source_chat_id, message_ids),
     )
     return LoggerOutboxItem(
         event=event,
@@ -97,6 +100,42 @@ async def test_album_uses_copy_messages_once_and_preserves_source_order() -> Non
             "message_ids": [10, 11, 12],
         }
     ]
+
+
+async def test_download_output_copies_recipient_messages_not_submission_source() -> None:
+    bot = FakeBot()
+
+    result = await TelegramAuditDelivery(cast(Bot, cast(Any, bot))).deliver(
+        _item(
+            (901, 902),
+            event_type=AuditEventType.DOWNLOAD_OUTPUT_DELIVERED,
+            source_chat_id=-1007770001112,
+        )
+    )
+
+    assert result.outcome is AuditDeliveryOutcome.SUCCEEDED
+    assert bot.groups == [
+        {
+            "chat_id": -1001234567890,
+            "from_chat_id": -1007770001112,
+            "message_ids": [901, 902],
+        }
+    ]
+    assert bot.messages[0][1].startswith("📦 Delivered download output")
+
+
+async def test_large_output_copy_is_bounded_and_preserves_global_order() -> None:
+    bot = FakeBot()
+    message_ids = tuple(range(1, 207))
+
+    result = await TelegramAuditDelivery(cast(Bot, cast(Any, bot))).deliver(
+        _item(message_ids, event_type=AuditEventType.DOWNLOAD_OUTPUT_DELIVERED)
+    )
+
+    assert result.outcome is AuditDeliveryOutcome.SUCCEEDED
+    copied_groups = [cast(list[int], group["message_ids"]) for group in bot.groups]
+    assert [len(group) for group in copied_groups] == [100, 100, 6]
+    assert [item for group in copied_groups for item in group] == list(message_ids)
 
 
 async def test_forbidden_is_terminal_and_network_ambiguity_is_uncertain() -> None:

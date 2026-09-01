@@ -30,6 +30,7 @@ SHARED_BUILDKIT_CACHE = "telegram-media-downloader-bot-amd64"
         "scripts/build_release_archives.sh",
         "scripts/tests/test_tmb_update.sh",
         "scripts/tests/test_tmb_upgrade_integration.sh",
+        "scripts/tests/test_readonly_logger_preflight.sh",
     ],
 )
 def test_complete_release_bash_script_parses(script: str) -> None:
@@ -45,6 +46,15 @@ def test_python_build_argument_is_global() -> None:
 
     assert instructions[0] == "ARG PYTHON_VERSION=3.14.5"
     assert "FROM python:${PYTHON_VERSION}-slim AS runtime" in instructions
+
+
+def test_windows_updater_keeps_strong_post_install_logger_doctor() -> None:
+    updater = Path("scripts/tmb.ps1").read_text(encoding="utf-8")
+
+    # Windows does not run the Linux read-only candidate bind-mount preflight.
+    # Its post-install verification must keep the full SQLite health snapshot.
+    assert '"telegram-media-bot", "doctor", "--config", "/app/config.yaml"' in updater
+    assert "--read-only-runtime" not in updater
 
 
 def test_app_containers_are_read_only_and_drop_capabilities() -> None:
@@ -246,6 +256,7 @@ def test_updater_integration_lane_retains_full_historical_matrix() -> None:
     combined = "\n".join(runs + envs)
 
     assert any("test_local_api_readiness.sh" in run for run in runs)
+    assert any("test_readonly_logger_preflight.sh" in run for run in runs)
     for marker in (
         "TMB_TEST_PREVIOUS_VERSION=1.0.2",
         "TMB_TEST_PREVIOUS_VERSION=1.2.1",
@@ -360,6 +371,7 @@ def test_release_waits_for_published_image_smoke_test_and_attaches_verified_asse
     assert "--verify-uid 10001" in workflow
     assert "--network none --read-only" in workflow
     assert "test_tmb_upgrade_integration.sh" in workflow
+    assert "test_readonly_logger_preflight.sh" in workflow
     assert "TMB_TEST_PREVIOUS_VERSION=1.2.1" in workflow
     assert "TMB_TEST_PREVIOUS_VERSION=1.3.0" in workflow
     assert "TMB_TEST_PREVIOUS_VERSION=1.3.1" in workflow

@@ -32,6 +32,7 @@ jobs:
           bash -n scripts/build_release_archives.sh
           bash -n scripts/tests/test_tmb_update.sh
           bash -n scripts/tests/test_tmb_upgrade_integration.sh
+          bash -n scripts/tests/test_readonly_logger_preflight.sh
       - name: Verify tag matches package version
         shell: bash
         run: |
@@ -127,6 +128,8 @@ jobs:
         env:
           RUN_PRIVILEGED_UPGRADE_TESTS: "1"
         run: |
+          TMB_READONLY_IMAGE=telegram-media-downloader-bot:ci \
+            bash scripts/tests/test_readonly_logger_preflight.sh
           TMB_TEST_PREVIOUS_VERSION=1.0.2 \
             bash scripts/tests/test_tmb_upgrade_integration.sh
           TMB_TEST_PREVIOUS_VERSION=1.2.1 TMB_USE_RELEASE_UPDATER_ASSET=1 \

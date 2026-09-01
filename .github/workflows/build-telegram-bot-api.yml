@@ -1,0 +1,115 @@
+name: Build Telegram Bot API artifact
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile.telegram-bot-api
+      - .github/workflows/build-telegram-bot-api.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telegram-bot-api-artifact-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TELEGRAM_BOT_API_REF: adfd7f6a8e990272851777eeb3ae0def4216f161
+  TELEGRAM_BOT_API_VERSION: "10.2"
+  TDLIB_REF: a9966eb3704a3351568c28013fed67d797c17828
+  IMAGE_NAME: ghcr.io/hamedsanaei/telegram-bot-api
+
+jobs:
+  build-verify-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - name: Build immutable artifact locally
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.telegram-bot-api
+          load: true
+          push: false
+          pull: true
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE_NAME }}:${{ env.TELEGRAM_BOT_API_VERSION }}-${{ env.TELEGRAM_BOT_API_REF }}
+          build-args: |
+            TELEGRAM_BOT_API_REF=${{ env.TELEGRAM_BOT_API_REF }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ env.TELEGRAM_BOT_API_REF }}
+            io.telegram-media-downloader-bot.tdlib-revision=${{ env.TDLIB_REF }}
+          cache-from: type=gha,scope=telegram-bot-api-amd64
+          cache-to: type=gha,mode=max,scope=telegram-bot-api-amd64
+      - name: Verify artifact in application runtime environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${IMAGE_NAME}:${TELEGRAM_BOT_API_VERSION}-${TELEGRAM_BOT_API_REF}"
+          container="$(docker create "$image")"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          mkdir artifact-smoke
+          docker cp "$container:/telegram-bot-api" artifact-smoke/telegram-bot-api
+          test -x artifact-smoke/telegram-bot-api
+          docker run --rm --platform linux/amd64 \
+            -v "${PWD}/artifact-smoke/telegram-bot-api:/usr/local/bin/telegram-bot-api:ro" \
+            python:3.14.5-slim sh -c '
+              set -eu
+              apt-get update
+              apt-get install -y --no-install-recommends ca-certificates ffmpeg 7zip tini file
+              test -x /usr/local/bin/telegram-bot-api
+              file /usr/local/bin/telegram-bot-api | grep -F "x86-64"
+              ldd /usr/local/bin/telegram-bot-api | tee /tmp/telegram-bot-api.ldd
+              ! grep -F "not found" /tmp/telegram-bot-api.ldd
+              /usr/local/bin/telegram-bot-api --help >/tmp/telegram-bot-api.help 2>&1
+              test -s /tmp/telegram-bot-api.help
+            '
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish immutable artifact and report digest
+        id: publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${TELEGRAM_BOT_API_VERSION}-${TELEGRAM_BOT_API_REF}"
+          image="${IMAGE_NAME}:${tag}"
+          docker push "$image"
+          digest="$(docker image inspect "$image" --format '{{index .RepoDigests 0}}' | cut -d@ -f2)"
+          test -n "$digest"
+          gh api --method PATCH /user/packages/container/telegram-bot-api \
+            -f visibility=public >/dev/null
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Telegram Bot API artifact"
+            echo
+            echo "- Upstream: \`${TELEGRAM_BOT_API_REF}\`"
+            echo "- TDLib: \`${TDLIB_REF}\`"
+            echo "- Tag: \`${image}\`"
+            echo "- Digest: \`${digest}\`"
+            echo "- Platform: \`linux/amd64\`"
+            echo "- Builder: \`debian:bookworm-slim\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify anonymous pull access
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${IMAGE_NAME}:${TELEGRAM_BOT_API_VERSION}-${TELEGRAM_BOT_API_REF}"
+          docker logout ghcr.io
+          docker image rm "$image"
+          docker pull --platform linux/amd64 "$image"

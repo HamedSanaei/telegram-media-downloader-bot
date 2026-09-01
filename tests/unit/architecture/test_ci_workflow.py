@@ -163,6 +163,7 @@ def test_updater_integration_retains_local_api_readiness_scenario() -> None:
     data = _ci()
     runs = " ".join(step.get("run", "") for step in data["jobs"]["updater-integration"]["steps"])
     assert "test_local_api_readiness.sh" in runs
+    assert "test_readonly_logger_preflight.sh" in runs
 
 
 def test_updater_integration_builds_and_loads_the_runtime_image() -> None:

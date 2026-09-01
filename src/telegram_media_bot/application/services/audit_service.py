@@ -94,5 +94,25 @@ class AuditService:
             return 0
         return self._repository.extend_submission_source(source)
 
+    def prepare_delivery_output(self, job_id: str) -> bool:
+        if not self._enabled:
+            return False
+        return self._repository.prepare_delivery_output(job_id)
+
+    def pending_delivery_outputs(self, *, limit: int = 50) -> tuple[str, ...]:
+        if not self._enabled:
+            return ()
+        return self._repository.pending_delivery_outputs(limit=limit)
+
+    def delivery_output_pending(self, job_id: str) -> bool:
+        if not self._enabled:
+            return False
+        return self._repository.delivery_output_pending(job_id)
+
+    def complete_delivery_output(self, job_id: str) -> bool:
+        if not self._enabled:
+            return False
+        return self._repository.complete_delivery_output(job_id)
+
 
 __all__ = ["AuditService"]

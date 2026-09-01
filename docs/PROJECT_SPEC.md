@@ -224,6 +224,15 @@ Copies are scheduled through a durable asynchronous outbox after acceptance. `PE
 `COMPLETED`, and `UNCERTAIN` (or equivalent) states acknowledge Telegram ambiguity without claiming
 exactly-once delivery. Logger failure cannot fail, delay, cancel, or change the user’s download.
 
+After a download reaches durable `SUCCEEDED`, the same operator gate also mirrors the actual
+Telegram output with a separate `DOWNLOAD_OUTPUT_DELIVERED` event. Only ordered durable delivery
+items in `DELIVERED` state with concrete recipient message IDs are eligible; partial collections
+include only their confirmed items. Native `copyMessage`/`copyMessages` preserves the representation
+the user received without reading or re-uploading local media. A durable pre-delivery intent and
+restart reconciliation recover a crash after job completion but before outbox enqueue, while a
+deterministic `delivery-output:{job_id}` identity prevents duplicate effects. Delivery-uncertain or
+missing-receipt work is never inferred, and logger uncertainty remains quarantined without retry.
+
 ### Privacy, retention, and future-feature boundary
 
 Before activation users must see:

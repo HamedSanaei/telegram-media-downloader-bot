@@ -159,9 +159,9 @@ The following runtime ownership implements the completed logger milestone.
 | `infrastructure/telegram/audit_destination_verifier.py` | Typed channel probe: existence, type, bot membership, posting test, sanitized outcome mapping (implemented T028) |
 | `application/services/submission_audit.py`, `telegram/handlers.py` | Durable-acceptance-only `USER_SUBMISSION` emission, replay-stable source identity, bounded album aggregation, and logger-failure isolation (implemented T030) |
 | `application/services/logger_privacy.py`, `application/services/submission_audit.py` | Non-blocking Persian disclosure (`/privacy`), operator-attestation activation gate, no per-user acknowledgement (implemented T031/RC2); legacy acknowledgement rows kept for backward compatibility in `infrastructure/persistence/sqlite_audit.py` |
-| `infrastructure/telegram/audit_delivery.py`, `infrastructure/persistence/sqlite_audit.py` | Native single/group copy transport, typed failure outcomes, per-destination outbox, and restart-safe album source merging (implemented T027/T030) |
+| `infrastructure/telegram/audit_delivery.py`, `infrastructure/persistence/sqlite_audit.py` | Native bounded single/group copy transport, typed failure outcomes, per-destination outbox, restart-safe album source merging, and additive delivery-output intent recovery |
 | `telegram/admin_menu.py` / `telegram/admin_handlers.py` | Logger-channel management flow, numeric channel validation, test, enable/disable/remove, and health UI (implemented T028) |
-| `workers/settings.py`, `workers/jobs.py` | Independent alert admission, bounded 30-second/20-item outbox dispatch, aggregate health/metrics, and restart-safe native Telegram delivery (implemented T029/T032) |
+| `application/services/delivery_output_audit.py`, `workers/settings.py`, `workers/jobs.py` | Independent alert/output-mirror admission, durable receipt-derived output events, crash reconciliation, bounded 30-second/20-item outbox dispatch, aggregate health/metrics, and logger-failure isolation |
 | `docs/` | Completed T026-T032, accepted ADR-036-038, privacy/retention policy, staged rollout, incident, backup, and rollback runbooks |
 
 ## Milestone 6 ownership (implemented)

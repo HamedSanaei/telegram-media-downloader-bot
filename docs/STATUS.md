@@ -340,6 +340,15 @@ smokes are recorded in `docs/HANDOFF_REPORT.md`.
 
 ## Recent fixes
 
+- 2026-09-01: Fixed the v1.4.0-rc.2 logger/update regressions. Linux candidate preflight now
+  validates an enabled logger database strictly at the filesystem layer when `/data` is mounted
+  read-only, creates or mutates no SQLite/WAL files, and defers the full health snapshot to the
+  strong post-stop doctor. The Operator Logger now mirrors the concrete delivered Telegram output
+  through a separate typed event built only from ordered durable delivery receipts. A pre-delivery
+  intent, deterministic per-job identity, and startup/maintenance reconciliation close the
+  completion crash window without coupling logger failures to user success or guessing uncertain
+  deliveries.
+
 - 2026-08-31: Added user-visible durable source links to every successful media-delivery path while
   preserving all existing caption, attribution, Story/Highlight, collection ordinal, and multipart
   text. Album items remain individually traceable, tracking parameters stay stripped by the existing

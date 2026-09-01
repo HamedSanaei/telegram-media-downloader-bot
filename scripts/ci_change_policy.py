@@ -135,6 +135,7 @@ _LINUX_FILES = (
     "scripts/tests/test_tmb_update.sh",
     "scripts/tests/test_tmb_upgrade_integration.sh",
     "scripts/tests/test_local_api_readiness.sh",
+    "scripts/tests/test_readonly_logger_preflight.sh",
 )
 _WINDOWS_FILES = (
     "install.ps1",
@@ -154,6 +155,7 @@ _UPGRADE_FILES = (
     "scripts/tests/test_tmb_update.sh",
     "scripts/tests/test_tmb_upgrade_integration.sh",
     "scripts/tests/test_local_api_readiness.sh",
+    "scripts/tests/test_readonly_logger_preflight.sh",
     "scripts/tests/Test-TmbUpdate.ps1",
     "release-policy.json",
     "docker-compose.yml",

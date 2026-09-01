@@ -32,20 +32,103 @@ def test_logger_doctor_uses_safe_aggregate_durable_state(
         }
     )
     configured = Settings.model_validate(raw)
-    missing_healthy, missing_detail = cli._logger_doctor_health(configured)
+    missing_healthy, missing_detail = cli._logger_doctor_health(
+        configured, runtime_filesystem_read_only=False
+    )
     assert not missing_healthy
     assert missing_detail == "enabled;durable_state=missing"
 
     repository = SqliteAuditRepository(configured.database_path())
     repository.initialize()
     repository.reconcile_config(configured.telegram.logger.channels)
-    healthy, detail = cli._logger_doctor_health(configured)
+    healthy, detail = cli._logger_doctor_health(configured, runtime_filesystem_read_only=False)
 
     assert healthy
     assert "effective=1" in detail
     assert "active=1" in detail
     assert "alerts=1" in detail
     assert "-1001234567890" not in detail
+
+
+def _readonly_logger_settings(settings: Settings, tmp_path: Path) -> Settings:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    raw["telegram"]["logger"].update(
+        {
+            "enabled": True,
+            "channels": [-1001234567890],
+            "alerts_enabled": True,
+        }
+    )
+    return Settings.model_validate(raw)
+
+
+def test_read_only_logger_doctor_defers_to_filesystem_check(
+    settings: Settings, tmp_path: Path
+) -> None:
+    configured = _readonly_logger_settings(settings, tmp_path)
+    database = configured.database_path()
+    repository = SqliteAuditRepository(database)
+    repository.initialize()
+    repository.reconcile_config(configured.telegram.logger.channels)
+    # Simulate the cleanly-closed WAL state seen on the read-only bind mount:
+    # a real sqlite open would need to create -shm/-wal and fail (SQLITE_CANTOPEN).
+    wal = database.with_suffix(database.suffix + "-wal")
+    shm = database.with_suffix(database.suffix + "-shm")
+    wal.unlink(missing_ok=True)
+    shm.unlink(missing_ok=True)
+
+    healthy, detail = cli._logger_doctor_health(configured, runtime_filesystem_read_only=True)
+
+    assert healthy
+    assert detail == "enabled;durable_state=deferred-readonly"
+    # No new files and no byte/metadata mutation.
+    assert not wal.exists()
+    assert not shm.exists()
+    stat_before = database.stat()
+    assert (stat_before.st_size, stat_before.st_mtime_ns) == (
+        database.stat().st_size,
+        database.stat().st_mtime_ns,
+    )
+
+
+def test_read_only_logger_doctor_fails_safely_when_database_missing(
+    settings: Settings, tmp_path: Path
+) -> None:
+    configured = _readonly_logger_settings(settings, tmp_path)
+    healthy, detail = cli._logger_doctor_health(configured, runtime_filesystem_read_only=True)
+    assert not healthy
+    assert detail == "enabled;durable_state=missing"
+
+
+def test_read_only_logger_doctor_never_opens_sqlite(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configured = _readonly_logger_settings(settings, tmp_path)
+    database = configured.database_path()
+    database.parent.mkdir(parents=True, exist_ok=True)
+    database.write_bytes(b"SQLite format 3\x00" + b"\x00" * 15)
+
+    def _fail(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("read-only preflight must not open the SQLite database")
+
+    monkeypatch.setattr(
+        "telegram_media_bot.infrastructure.persistence.sqlite_audit.SqliteAuditRepository.health_snapshot",
+        _fail,
+    )
+    healthy, detail = cli._logger_doctor_health(configured, runtime_filesystem_read_only=True)
+    assert healthy
+    assert detail == "enabled;durable_state=deferred-readonly"
+
+
+def test_logger_doctor_disabled_never_checks_database(settings: Settings, tmp_path: Path) -> None:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    raw["telegram"]["logger"]["enabled"] = False
+    configured = Settings.model_validate(raw)
+    healthy, detail = cli._logger_doctor_health(configured, runtime_filesystem_read_only=True)
+    assert healthy
+    assert detail == "disabled"
 
 
 def test_config_check_does_not_print_configuration_or_secrets(

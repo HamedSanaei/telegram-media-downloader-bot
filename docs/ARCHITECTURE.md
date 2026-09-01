@@ -321,6 +321,12 @@ with a read-only container root, read-only `config.yaml`, and the project's pers
 mounted read-only at `/data`. This mirrors runtime path visibility and UID/GID without permitting
 changes to cookies, SQLite, downloads, or Local Bot API state.
 
+When the logger is enabled, this pre-stop read-only phase validates the existing SQLite database
+and sidecars as filesystem objects and deliberately does not open SQLite, because a clean WAL
+database may need to create `-shm` even for an otherwise read-only query. The post-stop Linux
+offline doctor still opens the writable durable state and requires the full logger health snapshot.
+The Windows updater has no read-only bind-mount phase and retains its full post-install doctor.
+
 Fresh installers and Linux/Windows updaters carry a small embedded snapshot of the canonical
 `release-policy.json` denylist because each bootstrap must remain independently executable. Tests
 require all snapshots to match the canonical file. A requested blocked tag fails before download;
@@ -578,6 +584,14 @@ accepted Telegram update
                                              |
                                              +--> Telegram native copy/send gateway (implemented T030)
                                              +--> PENDING / COMPLETED / UNCERTAIN (modeled)
+
+confirmed worker delivery receipts
+        |
+        +--> pre-delivery output intent --> durable job SUCCEEDED
+                                               |
+                                               +--> DOWNLOAD_OUTPUT_DELIVERED
+                                                    (recipient message IDs only)
+                                               +--> restart reconciliation by job_id
 ```
 
 Terminal worker failures and persisted Cookie Health transitions emit typed events after their
@@ -607,6 +621,9 @@ health. It never changes job status, cancellation precedence, cleanup, or delive
   Cookie Health event emission; no `telegram.admin_ids` fallback (implemented T029). A separate
   30-second cron drains at most 20 logger effects, records bounded aggregate metrics/health, and
   keeps dispatcher faults outside download outcomes (implemented T032).
+- `application/services/delivery_output_audit.py`: output-mirror admission, durable-intent
+  reconciliation, ordered delivered-receipt filtering, and deterministic per-job identity. It is
+  independently isolated from user completion and never reads local media for logger delivery.
 
 Configured destinations and runtime-created destinations reconcile as a deduplicated union by
 numeric `chat_id`. Config-managed rows cannot be removed through the runtime API or the T028 admin

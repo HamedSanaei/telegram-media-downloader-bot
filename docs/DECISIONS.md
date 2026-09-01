@@ -634,6 +634,14 @@ captions, and one logical submission identity are preserved. The original messag
 deleted, and control interactions are excluded. The original user-entered URL remains in the
 private copy; canonical/provider classification is separate correlation metadata.
 
+`DOWNLOAD_OUTPUT_DELIVERED` is a distinct typed event for the concrete Telegram messages produced
+by a fully completed download. The worker derives its ordered source references only from durable
+`DELIVERED` receipt rows with numeric recipient message IDs and copies those messages from the
+recipient chat; it never reuses the accepted input reference or re-uploads local files. A
+pre-delivery SQLite intent plus deterministic `delivery-output:{job_id}` identity closes the
+post-completion crash window. Non-successful or receipt-ambiguous delivery is never guessed, and
+logger failure remains unable to change the user job outcome.
+
 Before activation, users see: «برای اجرای سرویس و پشتیبانی/امنیت، لینک‌ها و رسانه‌هایی که برای دانلود می‌فرستید ممکن است در کانال خصوصی عملیاتی لاگر کپی و به‌صورت نامحدود نگهداری شوند؛ با ادامهٔ استفاده موافقت می‌کنید.» Audit copies and safe metadata are retained indefinitely in the first implementation; no automatic
 Telegram deletion is introduced. Any later manual purge must be bounded and idempotent.
 

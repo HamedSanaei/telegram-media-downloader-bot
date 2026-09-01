@@ -31,6 +31,9 @@ from telegram_media_bot.application.services.cookie_health_service import (
     CookieHealthAlert,
     CookieHealthService,
 )
+from telegram_media_bot.application.services.delivery_output_audit import (
+    DeliveredOutputAuditService,
+)
 from telegram_media_bot.application.services.diagnostic_sanitizer import (
     sanitize_exception_message,
 )
@@ -754,6 +757,7 @@ async def process_download_job(
         if record is None:
             raise RuntimeError("Durable download record is missing")
         if record.status is JobStatus.SUCCEEDED and record.delivery_file_id:
+            await _finalize_delivery_output_audit(ctx, job_id)
             await logger.ainfo("download_idempotent_skip", job_id=job_id)
             return str(job_id)
         if record.status is JobStatus.CANCELLED:
@@ -838,6 +842,7 @@ async def process_download_job(
         await asyncio.to_thread(
             repository.transition, job_id, JobStatus.DELIVERING, source=result.source
         )
+        await _prepare_delivery_output_audit(ctx, job_id)
         if (
             selected_mode is DownloadMode.INSTAGRAM_ALL_STORIES
             and selected_story_delivery_mode is not None
@@ -885,6 +890,7 @@ async def process_download_job(
                 raise
             except Exception as exc:
                 raise DeliveryError("Atomic delivery completion persistence failed") from exc
+            await _finalize_delivery_output_audit(ctx, job_id)
             metrics.add_bytes(batch.delivered_bytes)
             metrics.record_job(outcome="succeeded", source=result.source)
             if record.status_message_id is not None:
@@ -951,6 +957,7 @@ async def process_download_job(
             raise
         except Exception as exc:
             raise DeliveryError("Atomic delivery completion persistence failed") from exc
+        await _finalize_delivery_output_audit(ctx, job_id)
         metrics.add_bytes(result.total_file_size_bytes)
         metrics.record_job(outcome="succeeded", source=result.source)
         if record.status_message_id is not None:
@@ -1239,8 +1246,47 @@ async def maintenance_job(ctx: dict[str, Any]) -> int:
         log_context["recovery_discovered"] = recovery_summary.discovered
         log_context["recovery_deferred"] = recovery_summary.deferred
 
+    output_audit = ctx.get("output_audit")
+    if isinstance(output_audit, DeliveredOutputAuditService):
+        try:
+            reconciled = await asyncio.to_thread(output_audit.reconcile_pending, limit=50)
+            log_context["output_mirrors_reconciled"] = reconciled
+        except Exception as exc:
+            await logger.aerror(
+                "delivery_output_audit_reconciliation_failed",
+                failure_class=safe_failure_class(exc),
+            )
+
     await logger.ainfo("maintenance_completed", **log_context)
     return total_removed
+
+
+async def _prepare_delivery_output_audit(ctx: dict[str, Any], job_id: JobId) -> None:
+    output_audit = ctx.get("output_audit")
+    if not isinstance(output_audit, DeliveredOutputAuditService):
+        return
+    try:
+        await asyncio.to_thread(output_audit.prepare, job_id)
+    except Exception as exc:
+        await logger.aerror(
+            "delivery_output_audit_prepare_failed",
+            job_id=job_id,
+            failure_class=safe_failure_class(exc),
+        )
+
+
+async def _finalize_delivery_output_audit(ctx: dict[str, Any], job_id: JobId) -> None:
+    output_audit = ctx.get("output_audit")
+    if not isinstance(output_audit, DeliveredOutputAuditService):
+        return
+    try:
+        await asyncio.to_thread(output_audit.finalize, job_id)
+    except Exception as exc:
+        await logger.aerror(
+            "delivery_output_audit_finalize_failed",
+            job_id=job_id,
+            failure_class=safe_failure_class(exc),
+        )
 
 
 async def audit_dispatch_job(ctx: dict[str, Any]) -> int:

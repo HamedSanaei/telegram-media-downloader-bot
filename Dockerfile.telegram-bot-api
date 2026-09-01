@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.7
+ARG TELEGRAM_BOT_API_REF=adfd7f6a8e990272851777eeb3ae0def4216f161
+
+FROM debian:bookworm-slim AS builder
+ARG TELEGRAM_BOT_API_REF
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates cmake g++ git gperf libssl-dev make zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git clone --filter=blob:none --no-checkout https://github.com/tdlib/telegram-bot-api.git \
+    && cd telegram-bot-api \
+    && git checkout --detach "${TELEGRAM_BOT_API_REF}" \
+    && test "$(git rev-parse HEAD)" = "${TELEGRAM_BOT_API_REF}" \
+    && git submodule update --init --recursive \
+    && test "$(git -C td rev-parse HEAD)" = "a9966eb3704a3351568c28013fed67d797c17828" \
+    && cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/telegram-bot-api \
+    && cmake --build build --target install --parallel 2 \
+    && test -x /opt/telegram-bot-api/bin/telegram-bot-api
+
+FROM scratch
+COPY --from=builder /opt/telegram-bot-api/bin/telegram-bot-api /telegram-bot-api
