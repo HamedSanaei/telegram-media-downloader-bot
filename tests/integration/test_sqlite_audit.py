@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -36,7 +37,7 @@ def _event(identity: str = "event-1", message: str = "safe") -> AuditEvent:
 
 
 def _state(path: Path, event_id: str, chat_id: int) -> str:
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         row = connection.execute(
             """SELECT state FROM logger_outbox
             WHERE event_id=? AND destination_chat_id=?""",
@@ -48,8 +49,9 @@ def _state(path: Path, event_id: str, chat_id: int) -> str:
 
 def _expire_and_make_due(path: Path) -> None:
     past = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.execute("UPDATE logger_outbox SET lease_until=?,next_attempt_at=?", (past, past))
+        connection.commit()
 
 
 def test_config_runtime_union_deduplicates_and_runtime_removal_preserves_config(
@@ -142,15 +144,16 @@ def test_repeated_initialization_upgrades_legacy_database_without_rewriting_rows
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "legacy.sqlite3"
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.execute("CREATE TABLE jobs(id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
         connection.execute("INSERT INTO jobs VALUES ('existing','unchanged')")
+        connection.commit()
 
     repository = SqliteAuditRepository(path)
     repository.initialize()
     repository.initialize()
 
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         assert connection.execute("SELECT * FROM jobs").fetchall() == [("existing", "unchanged")]
         tables = {
             row[0]

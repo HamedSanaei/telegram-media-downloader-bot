@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from contextlib import suppress
+from contextlib import closing, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -143,10 +143,11 @@ def test_pending_effect_with_known_message_id_is_reused(tmp_path: Path) -> None:
     service = EffectLedgerService(ledger)
     # Simulate: effect reserved, Telegram send landed, message_id recorded, crash before COMPLETED.
     ledger.reserve("update:3:initial_status", update_id=3, effect_type="initial_status", chat_id=7)
-    with sqlite3.connect(tmp_path / "state" / "jobs.sqlite3") as connection:
+    with closing(sqlite3.connect(tmp_path / "state" / "jobs.sqlite3")) as connection:
         connection.execute(
             "UPDATE telegram_effects SET message_id = 555 WHERE effect_key = 'update:3:initial_status'"
         )
+        connection.commit()
     sends = 0
     edited: list[int] = []
 
@@ -221,8 +222,9 @@ def test_stale_pending_effect_becomes_uncertain(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     ledger.reserve("stale", update_id=1, effect_type="status", chat_id=1)
     old = (datetime.now(UTC) - timedelta(minutes=30)).isoformat(timespec="microseconds")
-    with sqlite3.connect(tmp_path / "state" / "jobs.sqlite3") as connection:
+    with closing(sqlite3.connect(tmp_path / "state" / "jobs.sqlite3")) as connection:
         connection.execute("UPDATE telegram_effects SET created_at = ?", (old,))
+        connection.commit()
     assert (
         ledger.reconcile_stale_pending(datetime.now(UTC), stale_after_minutes=10, batch_size=500)
         == 1
@@ -254,8 +256,9 @@ def test_stale_reconciliation_is_batched(tmp_path: Path) -> None:
     for index in range(1000):
         ledger.reserve(f"stale-{index}", update_id=index, effect_type="status", chat_id=1)
     old = (datetime.now(UTC) - timedelta(minutes=30)).isoformat(timespec="microseconds")
-    with sqlite3.connect(tmp_path / "state" / "jobs.sqlite3") as connection:
+    with closing(sqlite3.connect(tmp_path / "state" / "jobs.sqlite3")) as connection:
         connection.execute("UPDATE telegram_effects SET created_at = ?", (old,))
+        connection.commit()
     now = datetime.now(UTC)
     assert ledger.reconcile_stale_pending(now, stale_after_minutes=10, batch_size=500) == 500
     assert ledger.reconcile_stale_pending(now, stale_after_minutes=10, batch_size=500) == 500
@@ -266,8 +269,9 @@ def test_stale_effect_can_later_be_purged(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     ledger.reserve("old-pending", update_id=1, effect_type="status", chat_id=1)
     old = (datetime.now(UTC) - timedelta(days=60)).isoformat(timespec="microseconds")
-    with sqlite3.connect(tmp_path / "state" / "jobs.sqlite3") as connection:
+    with closing(sqlite3.connect(tmp_path / "state" / "jobs.sqlite3")) as connection:
         connection.execute("UPDATE telegram_effects SET created_at = ?", (old,))
+        connection.commit()
     now = datetime.now(UTC)
     assert ledger.reconcile_stale_pending(now, stale_after_minutes=10, batch_size=500) == 1
     assert ledger.purge_retention(now, retention_days=30, batch_size=500) == 1
@@ -296,12 +300,13 @@ def test_effect_cleanup_purges_old_completed_but_keeps_pending(tmp_path: Path) -
     ledger.reserve("update:3:status", update_id=3, effect_type="status", chat_id=7)
     # Backdate the completed effects; PENDING stays fresh.
     old = (datetime.now(UTC) - timedelta(days=60)).isoformat(timespec="microseconds")
-    with sqlite3.connect(tmp_path / "state" / "jobs.sqlite3") as connection:
+    with closing(sqlite3.connect(tmp_path / "state" / "jobs.sqlite3")) as connection:
         connection.execute(
             "UPDATE telegram_effects SET created_at = ?, completed_at = ? "
             "WHERE effect_key IN ('update:1:status', 'update:2:status')",
             (old, old),
         )
+        connection.commit()
     purged = ledger.purge_retention(datetime.now(UTC), retention_days=30, batch_size=100)
     assert purged == 2
     assert ledger.get("update:1:status") is None
@@ -331,11 +336,12 @@ def test_effect_cleanup_is_batched_and_idempotent(tmp_path: Path) -> None:
     for index in range(25):
         asyncio.run(send_effect(f"update:{index}:status"))
     old = (datetime.now(UTC) - timedelta(days=60)).isoformat(timespec="microseconds")
-    with sqlite3.connect(tmp_path / "state" / "jobs.sqlite3") as connection:
+    with closing(sqlite3.connect(tmp_path / "state" / "jobs.sqlite3")) as connection:
         connection.execute(
             "UPDATE telegram_effects SET created_at = ?, completed_at = ?",
             (old, old),
         )
+        connection.commit()
     now = datetime.now(UTC)
     first = ledger.purge_retention(now, retention_days=30, batch_size=10)
     second = ledger.purge_retention(now, retention_days=30, batch_size=10)

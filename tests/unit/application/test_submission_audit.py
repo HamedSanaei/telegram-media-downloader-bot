@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -89,7 +90,7 @@ def test_no_effective_destination_means_no_submission_event(tmp_path: Path) -> N
 
     assert _record(mirror, TelegramSourceReference(4242, (55,))) == 0
 
-    with sqlite3.connect(tmp_path / "state.sqlite3") as connection:
+    with closing(sqlite3.connect(tmp_path / "state.sqlite3")) as connection:
         assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone() == (0,)
 
 
@@ -124,7 +125,7 @@ def test_album_extension_preserves_order_and_one_logical_event(tmp_path: Path) -
     )
     assert _record(mirror, first) == 0
 
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         rows = connection.execute("SELECT event_json FROM audit_events").fetchall()
         outbox = connection.execute("SELECT COUNT(*) FROM logger_outbox").fetchone()
     assert len(rows) == 1

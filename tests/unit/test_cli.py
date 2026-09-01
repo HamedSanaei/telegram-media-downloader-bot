@@ -388,6 +388,42 @@ def test_offline_doctor_fails_closed_on_expected_package_version(
     assert "FAIL package:" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    ("installed", "package_version", "expected", "healthy"),
+    [
+        # The RC package installs under its normalized PEP 440 form (`1.4.0rc1`), while
+        # pyproject/py __version__ carry `1.4.0-rc.1`; these must compare as equal.
+        ("1.4.0rc1", "1.4.0-rc.1", "1.4.0-rc.1", True),
+        ("1.4.0-rc.1", "1.4.0rc1", None, True),
+        ("1.4.0rc1", "1.4.0-rc.1", None, True),
+        # Stable versions still compare correctly.
+        ("1.3.8", "1.3.8", "1.3.8", True),
+        ("1.4.0", "1.4.0", None, True),
+        ("1.4.0rc1", "1.4.0-rc.1", "1.4.0", False),
+        # Genuinely different versions still fail.
+        ("1.3.8", "1.4.0-rc.1", "1.4.0-rc.1", False),
+        ("999.0.0", "1.4.0-rc.1", None, False),
+        # Malformed versions fail safely.
+        ("not-a-version", "1.4.0-rc.1", None, False),
+        ("1.4.0rc1", "1.4.0-rc.1", "not-a-version", False),
+    ],
+)
+def test_package_version_health_uses_pep440_equivalence(
+    monkeypatch: pytest.MonkeyPatch,
+    installed: str,
+    package_version: str,
+    expected: str | None,
+    healthy: bool,
+) -> None:
+    monkeypatch.setattr(cli, "distribution_version", lambda _name: installed)
+    monkeypatch.setattr("telegram_media_bot.__version__", package_version)
+
+    result_healthy, detail = cli._package_version_health(expected)
+
+    assert result_healthy is healthy
+    assert detail == installed
+
+
 def test_online_doctor_runs_only_selected_restored_service_checks(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,

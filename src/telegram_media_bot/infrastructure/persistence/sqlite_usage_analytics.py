@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -19,34 +21,41 @@ class SqliteUsageAnalyticsRepository(UsageAnalyticsRepository):
     def __init__(self, path: Path) -> None:
         self._path = path.resolve()
 
-    def load_activity(self, start_at: datetime, end_at: datetime) -> tuple[UsageActivity, ...]:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        connection = sqlite3.connect(self._path, timeout=30)
         try:
-            with sqlite3.connect(self._path, timeout=30) as connection:
-                connection.row_factory = sqlite3.Row
-                rows = connection.execute(
-                    """
-                    SELECT
-                        jobs.user_id,
-                        jobs.kind,
-                        jobs.status,
-                        jobs.created_at,
-                        jobs.source,
-                        jobs.mode,
-                        jobs.container,
-                        COALESCE(download_usage_events.delivered_bytes, 0) AS delivered_bytes
-                    FROM jobs
-                    LEFT JOIN download_usage_events
-                        ON download_usage_events.job_id = jobs.job_id
-                    WHERE jobs.created_at >= ? AND jobs.created_at <= ?
-                    ORDER BY jobs.created_at
-                    """,
-                    (
-                        start_at.isoformat(timespec="microseconds"),
-                        end_at.isoformat(timespec="microseconds"),
-                    ),
-                ).fetchall()
+            connection.row_factory = sqlite3.Row
+            yield connection
         except sqlite3.Error as exc:
             raise PersistenceError("Usage analytics query failed") from exc
+        finally:
+            connection.close()
+
+    def load_activity(self, start_at: datetime, end_at: datetime) -> tuple[UsageActivity, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    jobs.user_id,
+                    jobs.kind,
+                    jobs.status,
+                    jobs.created_at,
+                    jobs.source,
+                    jobs.mode,
+                    jobs.container,
+                    COALESCE(download_usage_events.delivered_bytes, 0) AS delivered_bytes
+                FROM jobs
+                LEFT JOIN download_usage_events
+                    ON download_usage_events.job_id = jobs.job_id
+                WHERE jobs.created_at >= ? AND jobs.created_at <= ?
+                ORDER BY jobs.created_at
+                """,
+                (
+                    start_at.isoformat(timespec="microseconds"),
+                    end_at.isoformat(timespec="microseconds"),
+                ),
+            ).fetchall()
         return tuple(_activity_from_row(row) for row in rows)
 
 

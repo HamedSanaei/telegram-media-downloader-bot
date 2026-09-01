@@ -363,13 +363,14 @@ def _logger_doctor_health(settings: Settings) -> tuple[bool, str]:
 
 def _package_version_health(expected_version: str | None) -> tuple[bool, str]:
     from telegram_media_bot import __version__
+    from telegram_media_bot.versions import versions_equal
 
     try:
         installed_version = distribution_version("telegram-media-downloader-bot")
     except PackageNotFoundError:
         return False, "distribution metadata unavailable"
-    healthy = installed_version == __version__ and (
-        expected_version is None or installed_version == expected_version
+    healthy = versions_equal(installed_version, __version__) and (
+        expected_version is None or versions_equal(installed_version, expected_version)
     )
     return healthy, installed_version
 

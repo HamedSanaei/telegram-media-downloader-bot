@@ -310,17 +310,34 @@ def test_release_workflow_generates_stable_and_prerelease_tags_safely() -> None:
     assert "linux/arm64" not in workflow
 
 
+SEMVER_TAG_PATTERN = re.compile(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
+
+
 def test_release_tag_exactly_matches_project_version() -> None:
+    """The publish contract is generic: tag == v{pyproject version}, valid SemVer.
+
+    Deliberately version-agnostic (no hard-coded release number) so stable and
+    pre-release bumps such as 1.4.0-rc.1 keep this test green while unresolved
+    drift between sources of truth is caught. The same SemVer pattern is enforced
+    by the publish workflow's inline guard.
+    """
+    from telegram_media_bot.versions import is_valid_version
+
     project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     workflow = Path(".github/workflows/publish-container.yml").read_text(encoding="utf-8")
     version = project["project"]["version"]
     tag = f"v{version}"
 
-    assert version == "1.3.8"
+    # The package must carry a syntactically valid PEP 440 version.
+    assert is_valid_version(version)
+    # The in-code version must never drift from pyproject.toml.
     assert __version__ == version
-    assert tag == "v1.3.8"
-    assert re.fullmatch(r"v\d+\.\d+\.\d+", tag)
+    # The release tag is exactly v{version}.
+    assert tag == f"v{version}"
+    assert SEMVER_TAG_PATTERN.fullmatch(tag) is not None
+    # The workflow guard rejects any tag that does not match pyproject.toml.
     assert 'if tag != f"v{version}":' in workflow
+    assert "Release tag is not valid SemVer" in workflow
 
 
 def test_release_waits_for_published_image_smoke_test_and_attaches_verified_assets() -> None:

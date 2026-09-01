@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -88,13 +89,14 @@ def test_scenario_a_purge_keeps_active_replay(tmp_path: Path) -> None:
     # Backdate the completed row so it is eligible for purge, and the stuck row so it surfaces.
     old = (datetime.now(UTC) - timedelta(days=30)).isoformat(timespec="microseconds")
     recently = (datetime.now(UTC) - timedelta(hours=2)).isoformat(timespec="microseconds")
-    with sqlite3.connect(tmp_path / "state" / "jobs.sqlite3") as connection:
+    with closing(sqlite3.connect(tmp_path / "state" / "jobs.sqlite3")) as connection:
         connection.execute(
             "UPDATE inbound_updates SET completed_at = ? WHERE update_id = 2", (old,)
         )
         connection.execute(
             "UPDATE inbound_updates SET received_at = ? WHERE update_id = 1", (recently,)
         )
+        connection.commit()
     purged = repo.purge_retention(
         datetime.now(UTC),
         completed_retention_days=14,

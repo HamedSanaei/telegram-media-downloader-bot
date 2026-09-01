@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -72,7 +73,7 @@ def test_password_twofa_never_durable(tmp_path: Path) -> None:
     raw = repo.get_credential_for_owner(7)
     assert raw is not None and raw.envelope is not None
     # The envelope is ciphertext; the DB rows never contain the plaintext secret.
-    with sqlite3.connect(tmp_path / "creds.sqlite3") as connection:
+    with closing(sqlite3.connect(tmp_path / "creds.sqlite3")) as connection:
         dumped = "".join(
             str(row) for row in connection.execute("SELECT * FROM instagram_credentials")
         )

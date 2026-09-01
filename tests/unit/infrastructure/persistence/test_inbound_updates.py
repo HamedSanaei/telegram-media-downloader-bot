@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -22,7 +23,7 @@ def _backdate(tmp_path: Path, update_id: int, *, days: int, state: str | None = 
     """Rewrite a row's timestamps so retention tests are deterministic."""
     path = tmp_path / "state" / "jobs.sqlite3"
     stamp = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="microseconds")
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.execute(
             "UPDATE inbound_updates SET received_at = ?, completed_at = ? WHERE update_id = ?",
             (stamp, stamp, update_id),
@@ -32,6 +33,7 @@ def _backdate(tmp_path: Path, update_id: int, *, days: int, state: str | None = 
                 "UPDATE inbound_updates SET processing_state = ? WHERE update_id = ?",
                 (state, update_id),
             )
+        connection.commit()
 
 
 def _repo(tmp_path: Path) -> SqliteInboundUpdateRepository:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -99,7 +100,7 @@ def test_nonce_repo_purge(tmp_path: Path) -> None:
     )
     removed = repo.purge_expired(now=now, before=now - timedelta(hours=1))
     assert removed == 1
-    with sqlite3.connect(tmp_path / "handoff.sqlite3") as connection:
+    with closing(sqlite3.connect(tmp_path / "handoff.sqlite3")) as connection:
         remaining = connection.execute(
             "SELECT nonce_hash FROM handoff_nonce_consumptions"
         ).fetchall()
