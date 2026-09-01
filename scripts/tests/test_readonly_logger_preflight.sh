@@ -26,7 +26,10 @@ DATA="$TEST_ROOT/data"
 
 cleanup() {
   if [[ "${TMB_KEEP_TEST_ROOT:-0}" != "1" ]]; then
-    rm -rf -- "$TEST_ROOT"
+    # chown -R 10001:10001 /data makes fixture files non-removable by root on some
+    # Docker bind-mount configurations (the container's chown can leave sticky/immutable
+    # attributes or cause ownership races).  Cleanup must NEVER fail the test.
+    rm -rf -- "$TEST_ROOT" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
