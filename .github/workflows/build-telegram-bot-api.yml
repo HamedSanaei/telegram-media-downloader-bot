@@ -57,7 +57,9 @@ jobs:
         run: |
           set -euo pipefail
           image="${IMAGE_NAME}:${TELEGRAM_BOT_API_VERSION}-${TELEGRAM_BOT_API_REF}"
-          container="$(docker create "$image")"
+          # The artifact image is FROM scratch with no ENTRYPOINT/CMD, so
+          # docker create requires an explicit command to inspect the filesystem.
+          container="$(docker create "$image" /telegram-bot-api)"
           trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
           mkdir artifact-smoke
           docker cp "$container:/telegram-bot-api" artifact-smoke/telegram-bot-api
