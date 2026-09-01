@@ -1,3 +1,3 @@
 """Telegram media downloader bot."""
 
-__version__ = "1.3.8"
+__version__ = "1.4.0-rc.1"
