@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Changed (targeting v1.4.0-rc.2)
+### Changed (targeting v1.4.0-rc.3)
 
 - The application Dockerfile now consumes the published immutable Telegram Bot API artifact
   (`ghcr.io/hamedsanaei/telegram-bot-api` pinned by full sha256 digest) instead of compiling
