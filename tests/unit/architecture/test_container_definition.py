@@ -119,9 +119,43 @@ def test_config_path_is_explicit_and_local_api_secrets_are_not_in_container_file
         assert forbidden not in dockerfile_text.casefold()
 
 
-def test_telegram_bot_api_uses_full_parent_commit_before_syncing_submodules() -> None:
+TELEGRAM_BOT_API_IMAGE = "ghcr.io/hamedsanaei/telegram-bot-api"
+TELEGRAM_BOT_API_DIGEST = "sha256:36f4813c3feeb09a09918caa8617d8e217784019065298c6ad1bca2ca2dea826"
+
+
+def test_telegram_bot_api_is_consumed_as_immutable_artifact() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
-    match = re.search(r"^ARG TELEGRAM_BOT_API_REF=(?P<ref>[0-9a-f]+)$", dockerfile, re.MULTILINE)
+    assert re.search(
+        rf"^ARG TELEGRAM_BOT_API_IMAGE={re.escape(TELEGRAM_BOT_API_IMAGE)}"
+        rf"@{re.escape(TELEGRAM_BOT_API_DIGEST)}$",
+        dockerfile,
+        re.MULTILINE,
+    )
+    assert "FROM ${TELEGRAM_BOT_API_IMAGE} AS telegram-bot-api" in dockerfile
+    copy = dockerfile.split("COPY --from=telegram-bot-api", maxsplit=1)[1]
+    assert "/telegram-bot-api" in copy
+    assert "/usr/local/bin/telegram-bot-api" in copy
+
+
+def test_application_build_never_compiles_telegram_bot_api() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    for forbidden in (
+        "git clone",
+        "git submodule update",
+        "cmake --build",
+        "cmake -S",
+        "gperf",
+        "libssl-dev",
+        "zlib1g-dev",
+        "telegram-bot-api-build",
+    ):
+        assert forbidden not in dockerfile
+
+
+def test_telegram_source_build_is_isolated_in_the_dedicated_dockerfile() -> None:
+    main = Path("Dockerfile").read_text(encoding="utf-8")
+    dedicated = Path("Dockerfile.telegram-bot-api").read_text(encoding="utf-8")
+    match = re.search(r"^ARG TELEGRAM_BOT_API_REF=(?P<ref>[0-9a-f]+)$", dedicated, re.MULTILINE)
 
     assert match is not None
     assert re.fullmatch(r"[0-9a-f]{40}", match["ref"])
@@ -129,22 +163,21 @@ def test_telegram_bot_api_uses_full_parent_commit_before_syncing_submodules() ->
     clone = "git clone --filter=blob:none --no-checkout"
     checkout = 'git checkout --detach "${TELEGRAM_BOT_API_REF}"'
     submodules = "git submodule update --init --recursive"
-    assert dockerfile.index(clone) < dockerfile.index(checkout) < dockerfile.index(submodules)
-    assert "git clone --filter=blob:none --recursive" not in dockerfile
+    assert dedicated.index(clone) < dedicated.index(checkout) < dedicated.index(submodules)
+    assert "cmake --build build --target install" in dedicated
+    assert "git clone --filter=blob:none --recursive" not in dedicated
+    for marker in (clone, submodules, "cmake --build"):
+        assert marker not in main
 
 
-def test_telegram_bot_api_build_stage_is_isolated_from_application_changes() -> None:
-    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
-    stage_start = dockerfile.index("FROM debian:bookworm-slim AS telegram-bot-api-build")
-    stage_end = dockerfile.index("FROM python:${PYTHON_VERSION}-slim AS runtime")
-    stage = dockerfile[stage_start:stage_end]
-
-    assert "ARG TELEGRAM_BOT_API_REF" in stage
-    assert "${PYTHON_VERSION}" not in stage
-    assert not re.search(r"^(?:COPY|ADD)\s", stage, re.MULTILINE)
-    for application_input in ("tests", "docs", "config.example.yaml", "pyproject.toml"):
-        assert application_input not in stage
-    assert "COPY --from=telegram-bot-api-build" in dockerfile[stage_end:]
+def test_telegram_artifact_workflow_is_manual_only() -> None:
+    workflow = yaml.load(
+        Path(".github/workflows/build-telegram-bot-api.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    assert workflow["on"] == {"workflow_dispatch": ""}
+    assert "push" not in workflow["on"]
+    assert workflow["permissions"] == {"contents": "read"}
 
 
 def test_bot_worker_and_local_api_share_the_pinned_application_build() -> None:

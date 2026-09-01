@@ -1,12 +1,11 @@
 name: Build Telegram Bot API artifact
 
+# Manual-only: the immutable artifact is already published and consumed by digest from the normal
+# application Dockerfile. This workflow must NEVER auto-run on ordinary pushes; a future intentional
+# Telegram Bot API upgrade is an explicit workflow_dispatch after changing the pinned upstream
+# revision above.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - Dockerfile.telegram-bot-api
-      - .github/workflows/build-telegram-bot-api.yml
 
 permissions:
   contents: read

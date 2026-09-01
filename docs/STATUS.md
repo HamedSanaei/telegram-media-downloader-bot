@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-08-31
+Last updated: 2026-09-01
 
 ## Release state
 
@@ -277,9 +277,11 @@ The in-dashboard connection/reconnect/disconnect actions land with the `/vip` da
   multi-video delivery, and runtime bot attribution in every caption.
 - Permanent SQLite user profiles, daily counters, and job-idempotent delivery byte accounting.
 - Docker-first Linux/Windows installers with SHA-256-verified release archives, version-pinned
-  images, interactive `tmb` management, official pinned Local Bot API source build, dedicated
-  Local API service, and a tag-gated GHCR amd64 release workflow. CI and release builds share a
-  scoped GHA BuildKit cache for the expensive Telegram API compilation stage.
+  images, interactive `tmb` management, dedicated Local API service, and a tag-gated GHCR amd64
+  release workflow. The application image consumes the published immutable Telegram Bot API
+  artifact (`ghcr.io/hamedsanaei/telegram-bot-api` pinned by full sha256 digest); only the
+  manual-only `Dockerfile.telegram-bot-api` workflow builds that binary from pinned upstream
+  source. Normal CI and release application builds never compile Telegram Bot API or TDLib.
 - Failed interactive configuration writes remove their secret-bearing temporary file; the exact
   temporary filename is also ignored by Git.
 - Linux `tmb update` now completes release/network preflight before downtime, records all four
@@ -340,6 +342,21 @@ smokes are recorded in `docs/HANDOFF_REPORT.md`.
 
 ## Recent fixes
 
+- 2026-09-01: Consumed the published immutable Telegram Bot API artifact instead of compiling it
+  inside the normal application Dockerfile: the source-build stage and its compiler toolchain are
+  gone, `ARG TELEGRAM_BOT_API_IMAGE` pins
+  `ghcr.io/hamedsanaei/telegram-bot-api@sha256:36f4813c…2dea826`, and the image copies
+  `/telegram-bot-api` from that stage. `Dockerfile.telegram-bot-api` remains the only allowed
+  source-build location and its workflow is now manual-only (`workflow_dispatch`), so ordinary
+  application pushes never trigger a Telegram/TDLib compile. Architecture tests prove the
+  application build never clones/submodules/cmakes Telegram and the artifact workflow never
+  auto-runs on pushes.
+- 2026-09-01: Repaired CI harness failures: the read-only logger preflight test now prepares its
+  bind-mounted fixture tree through explicit root containers (`--user 0:0`) for config/database
+  creation, corruption, and cleanup (chowning the fixture to the runtime user), while the
+  doctor/preflight containers under test keep the normal unprivileged application user and the
+  existing read-only semantics; the preflight doctor helper no longer forwards `$@` (ShellCheck
+  SC2119/SC2120 clean). FILE_MANIFEST is regenerated last after all repository modifications.
 - 2026-09-01: Fixed the v1.4.0-rc.2 logger/update regressions. Linux candidate preflight now
   validates an enabled logger database strictly at the filesystem layer when `/data` is mounted
   read-only, creates or mutates no SQLite/WAL files, and defers the full health snapshot to the
@@ -529,9 +546,11 @@ smokes are recorded in `docs/HANDOFF_REPORT.md`.
 - DNS and extracted URLs are revalidated, but no application can eliminate DNS rebinding between a
   validation lookup and an upstream library's socket connect without controlling that library's
   resolver/transport.
-- The Docker image builds the official Local Bot API executable from pinned upstream source. The
-  destructive real >200 MB upload test still requires an explicitly configured local bot/chat and
-  remains skipped in the default suite.
+- The Docker image bundles the official Local Bot API executable from the published immutable
+  GHCR artifact (pinned by full sha256 digest); the binary itself is built from pinned upstream
+  source only by the manual-only dedicated artifact workflow. The destructive real >200 MB upload
+  test still requires an explicitly configured local bot/chat and remains skipped in the default
+  suite.
 - Instagram Stories/Highlights that require authentication depend on a current operator-supplied
   restricted canonical cookies file; upstream login challenges can still invalidate it.
 - Castbox and Spotify are not implemented; both remain outside the generic v1 engine policy.

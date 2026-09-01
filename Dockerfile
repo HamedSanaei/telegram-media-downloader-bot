@@ -1,25 +1,13 @@
 # syntax=docker/dockerfile:1.7
 ARG PYTHON_VERSION=3.14.5
-ARG TELEGRAM_BOT_API_REF=adfd7f6a8e990272851777eeb3ae0def4216f161
+# Immutable Telegram Local Bot API artifact, built once by the manual-only
+# Dockerfile.telegram-bot-api workflow and published to GHCR. The normal
+# application build never compiles Telegram Bot API or TDLib from source.
+ARG TELEGRAM_BOT_API_IMAGE=ghcr.io/hamedsanaei/telegram-bot-api@sha256:36f4813c3feeb09a09918caa8617d8e217784019065298c6ad1bca2ca2dea826
 
 FROM ghcr.io/astral-sh/uv:0.11.31 AS uv
 FROM denoland/deno:bin-2.9.3 AS deno
-
-FROM debian:bookworm-slim AS telegram-bot-api-build
-ARG TELEGRAM_BOT_API_REF
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ca-certificates cmake g++ git gperf libssl-dev make zlib1g-dev \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /src
-RUN git clone --filter=blob:none --no-checkout https://github.com/tdlib/telegram-bot-api.git \
-    && cd telegram-bot-api \
-    && git checkout --detach "${TELEGRAM_BOT_API_REF}" \
-    && git submodule update --init --recursive \
-    && cmake -S . -B build \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX=/opt/telegram-bot-api \
-    && cmake --build build --target install --parallel 2
+FROM ${TELEGRAM_BOT_API_IMAGE} AS telegram-bot-api
 
 FROM python:${PYTHON_VERSION}-slim AS runtime
 ARG APP_UID=10001
@@ -48,8 +36,8 @@ RUN apt-get update \
 
 COPY --from=uv /uv /uvx /bin/
 COPY --from=deno /deno /usr/local/bin/deno
-COPY --from=telegram-bot-api-build \
-    /opt/telegram-bot-api/bin/telegram-bot-api \
+COPY --from=telegram-bot-api \
+    /telegram-bot-api \
     /usr/local/bin/telegram-bot-api
 WORKDIR /app
 

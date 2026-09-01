@@ -238,15 +238,18 @@ $env:TMB_RELEASE_TAG = "v1.0.1"; tmb update
 Restore the timestamped archive under `backups/` only when state rollback is also required, and
 keep the current backup until the older release has passed `tmb doctor`.
 
-The Local API image is built from pinned official `tdlib/telegram-bot-api` source. API credentials
-are read from mounted YAML and passed to the official process only through its child environment;
-they do not appear in Compose environment, Docker command, installer logs, shell history, or status
-output. Bot and Worker use `http://local-api:8081`.
+The Local API image bundles the official server binary from the published immutable
+`ghcr.io/hamedsanaei/telegram-bot-api` artifact (pinned by full sha256 digest in the Dockerfile).
+API credentials are read from mounted YAML and passed to the official process only through its
+child environment; they do not appear in Compose environment, Docker command, installer logs,
+shell history, or status output. Bot and Worker use `http://local-api:8081`.
 
-The first image build may still spend substantial time compiling Telegram Local Bot API. CI and
-release builds share the `telegram-media-downloader-bot-amd64` BuildKit cache, so later builds should
-restore that stage. Changing `TELEGRAM_BOT_API_REF`, its stage/toolchain/base image, or the relevant
-Dockerfile instructions intentionally invalidates it; application source and Python changes do not.
+CI and release builds share the `telegram-media-downloader-bot-amd64` BuildKit cache, and the only
+Telegram-related cost of a cold application build is pulling the pinned artifact; Telegram Bot API
+and TDLib are never compiled during an application build. The binary itself is compiled only by
+the manual-only dedicated artifact workflow from pinned `tdlib/telegram-bot-api` source. A future
+Telegram upgrade is an explicit `workflow_dispatch` run that publishes a new digest, which is then
+pinned in the application Dockerfile.
 
 For private Instagram Stories/Highlights, export a Netscape cookies file from an authorized account,
 place it below `data/cookies`, configure its container path, and restrict it to the runtime owner

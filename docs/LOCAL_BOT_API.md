@@ -1,7 +1,10 @@
 # Telegram Local Bot API
 
-The release Docker image compiles the official server from pinned
-`tdlib/telegram-bot-api` source and Compose can run it under the `local-api` profile. Set
+The release Docker image bundles the official server binary from the published immutable GHCR
+artifact `ghcr.io/hamedsanaei/telegram-bot-api`, pinned by full sha256 digest, and Compose can run
+it under the `local-api` profile. The binary itself is compiled from pinned `tdlib/telegram-bot-api`
+source only by the manual-only dedicated artifact workflow (`Dockerfile.telegram-bot-api`); normal
+application builds never compile Telegram Bot API or TDLib. Set
 `local_bot_api.lifecycle_owner: service`, bind the server to `0.0.0.0`, and use
 `local_api_base_url: http://local-api:8081`. Bare-metal managed/external modes remain supported.
 Credentials stay only in ignored YAML and are injected into the official child environment, never
@@ -151,11 +154,12 @@ only the ignored YAML and passes its path explicitly. Two supported optional dep
 
 - `external`: run the official server on a protected adjacent host/network and configure its URL in
   YAML;
-- `managed`: mount a compatible official executable into the application image and use absolute
-  writable paths below `/data` in YAML.
+- `managed`: use the official executable bundled at `/usr/local/bin/telegram-bot-api` inside the
+  application image and use absolute writable paths below `/data` in YAML.
 
-The project image does not bundle the official server. Do not place `api_id`, `api_hash`, or the bot
-token in Compose, Dockerfile, build arguments, image layers, or `.env`.
+The project image bundles the official server binary copied from the immutable GHCR artifact. Do
+not place `api_id`, `api_hash`, or the bot token in Compose, Dockerfile, build arguments, image
+layers, or `.env`.
 
 ## Health, limits, and delivery
 

@@ -58,21 +58,21 @@ CONTRACT_MEDIA_URL=https://example.invalid/replace-me \
 uv run pytest -m contract
 ```
 
-## Shared Docker build cache
+## Immutable Telegram Bot API artifact
+
+The normal application Dockerfile consumes the published immutable Telegram Bot API artifact
+(`ghcr.io/hamedsanaei/telegram-bot-api` pinned by full sha256 digest via
+`ARG TELEGRAM_BOT_API_IMAGE`) and copies `/telegram-bot-api` from it. It never clones,
+submodules, or compiles Telegram Bot API/TDLib, and it installs no compiler toolchain. The binary
+is built from pinned upstream source only by the manual-only dedicated workflow
+(`Dockerfile.telegram-bot-api` + `.github/workflows/build-telegram-bot-api.yml`, triggered
+explicitly by `workflow_dispatch` when an upgrade is intended), which publishes the digest-pinned
+artifact. A cold normal application build therefore never compiles Telegram Bot API or TDLib.
 
 The CI runtime-image build and the tag-only publication build both use the GitHub Actions BuildKit
-cache scope `telegram-media-downloader-bot-amd64`. The first build on an empty or evicted cache may
-still take a long time because it compiles the pinned official Telegram Local Bot API from source.
-Later CI and release builds should import the compiled `telegram-bot-api-build` stage from the
-shared GHA cache.
-
-The Telegram stage intentionally has no `COPY` or `ADD` from the application repository and does
-not consume `PYTHON_VERSION`. Changes under `src`, `tests`, `docs`, configuration files, application
-metadata, or the application Python version therefore invalidate runtime layers without rebuilding
-Telegram Local Bot API. Changing `TELEGRAM_BOT_API_REF`, the Telegram stage commands/toolchain, or
-its Debian base image intentionally causes a full Telegram API rebuild.
-
-In GitHub Actions, expand the `docker/build-push-action` step and inspect the BuildKit output. A
-successful restore shows the GHA cache import followed by `CACHED` entries for the
-`telegram-bot-api-build` package-install and source-build steps. The cache export at the end should
-also name the same scope.
+cache scope `telegram-media-downloader-bot-amd64`. The runtime image also bundles the official
+server binary, so the pull of the pinned artifact is the only Telegram-related cost; application
+changes never trigger a Telegram/TDLib rebuild. In GitHub Actions, expand the
+`docker/build-push-action` step and inspect the BuildKit output: a successful build shows the
+artifact image pull followed by `CACHED` entries for the Python dependency layers, with no
+`Building CXX object` / `cmake --build` output.

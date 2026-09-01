@@ -38,9 +38,23 @@ fail() {
 
 mkdir -p "$DATA/state" "$DATA/cookies" "$DATA/temp" "$DATA/downloads"
 
+# The bind-mounted fixture tree is host-owned, but the production image runs as the unprivileged
+# application user (10001:10001). Fixture preparation must therefore run as an explicit root user
+# to create/overwrite files on the host bind mount; the doctor/preflight containers under test
+# keep the normal application user and their existing read-only semantics.
+fixture_root() {
+  docker run --rm --user 0:0 "$@"
+}
+
+# Make the fixture tree owned by the production runtime user so the normal-user doctor/preflight
+# containers can traverse and (where the contract allows) write it exactly like production /data.
+fix_fixture_access() {
+  fixture_root -v "$DATA:/data" "$IMAGE" chown -R 10001:10001 /data
+}
+
 write_config() {
   local enabled="$1"
-  docker run --rm -i \
+  fixture_root -i \
     -e LOGGER_ENABLED="$enabled" \
     -v "$SOURCE_ROOT/config.example.yaml:/input/config.example.yaml:ro" \
     -v "$DATA:/data" \
@@ -63,6 +77,7 @@ raw["telegram"]["logger"] = {
 raw["yt_dlp"]["cookies_file"] = None
 path.write_text(yaml.safe_dump(raw), encoding="utf-8")
 PY
+  fix_fixture_access
 }
 
 ensure_image() {
@@ -83,7 +98,7 @@ preflight() {
     -v "$DATA:/data:ro" \
     "$IMAGE" \
     telegram-media-bot doctor --config /app/config.yaml --offline \
-      --expected-version "$RELEASE_VERSION" --read-only-runtime "$@"
+      --expected-version "$RELEASE_VERSION" --read-only-runtime
 }
 
 full_doctor() {
@@ -107,7 +122,7 @@ strong_doctor_readonly() {
 }
 
 init_database() {
-  docker run --rm -i -v "$DATA:/data" "$IMAGE" python - <<'PY'
+  fixture_root -i -v "$DATA:/data" "$IMAGE" python - <<'PY'
 from pathlib import Path
 from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
 repo = SqliteAuditRepository(Path("/data/state/jobs.sqlite3"))
@@ -116,6 +131,7 @@ repo.reconcile_config((-1001234567890,))
 snapshot = repo.health_snapshot()
 print(snapshot.active_destinations)
 PY
+  fix_fixture_access
 }
 
 main() {
@@ -172,8 +188,9 @@ main() {
     || fail "strong post-stop doctor did not validate the healthy snapshot: $(echo "$output" | grep operator_logger || true)"
 
   # Phase D: corrupt database must fail the strong post-stop verification.
-  docker run --rm -v "$DATA:/data" "$IMAGE" sh -c \
+  fixture_root -v "$DATA:/data" "$IMAGE" sh -c \
     "printf 'this is not a sqlite database\\0\\0\\0\\0' > /data/state/jobs.sqlite3"
+  fix_fixture_access
   set +e
   output="$(full_doctor 2>&1)"
   rc=$?
@@ -183,8 +200,9 @@ main() {
     || fail "corrupt DB did not fail strong verification"
 
   # Phase E: logger disabled -> read-only preflight passes without touching DB.
-  docker run --rm -v "$DATA:/data" "$IMAGE" \
+  fixture_root -v "$DATA:/data" "$IMAGE" \
     rm -f /data/state/jobs.sqlite3 /data/state/jobs.sqlite3-wal /data/state/jobs.sqlite3-shm
+  fix_fixture_access
   write_config false
   output="$(preflight 2>&1)"
   echo "$output" | grep -q "OK   operator_logger: disabled" \

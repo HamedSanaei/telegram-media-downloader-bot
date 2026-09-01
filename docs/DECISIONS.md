@@ -129,10 +129,11 @@ event per job makes accounting idempotent. The optional secret proxy is scoped s
 
 ## ADR-015: Docker-first installation and official Local API service
 
-**Status:** accepted
+**Status:** accepted (compile-from-source portion superseded by ADR-040)
 
 Production installation is Docker-first on Linux and Windows. The official Local API executable is
-compiled from pinned upstream source and can be owned by a dedicated Compose service. Bot and Worker
+bundled into the application image (see ADR-040 for the immutable-artifact replacement of the
+original compile-from-source step) and can be owned by a dedicated Compose service. Bot and Worker
 share the YAML-derived endpoint; API credentials enter only the official child environment.
 Cross-platform `tmb` commands provide lifecycle, logs, doctor, configuration, checksummed release
 updates with state-aware recovery, backup, and explicit uninstall.
@@ -694,3 +695,28 @@ alone is NOT a sufficient merge gate: a relevant heavy lane (for example `docker
 optionally, `quality` (required for visibility). `change-detection` does not need to be required
 separately because `final-ci-gate` already depends on it and fails whenever classification fails.
 No removed job name should remain required.
+
+## ADR-040: The application image consumes an immutable Telegram Bot API artifact
+
+**Status:** accepted
+
+The normal application Dockerfile no longer compiles Telegram Bot API or TDLib from source. It
+declares `ARG TELEGRAM_BOT_API_IMAGE=ghcr.io/hamedsanaei/telegram-bot-api@sha256:36f4813c3feeb09a09918caa8617d8e217784019065298c6ad1bca2ca2dea826`,
+uses that pinned digest as a `telegram-bot-api` build stage, and copies `/telegram-bot-api` to
+`/usr/local/bin/telegram-bot-api`. No compiler toolchain (`cmake`, `g++`, `gperf`, `libssl-dev`,
+`make`, `zlib1g-dev`, `git`) is installed and no `git clone` / `git submodule update` /
+`cmake --build` step exists, so a cold normal application build never compiles Telegram or TDLib.
+
+`Dockerfile.telegram-bot-api` remains the only allowed source-build location: it pins the full
+upstream parent commit (`adfd7f6a8e990272851777eeb3ae0def4216f161`) and the TDLib submodule
+revision, checks out the parent before synchronizing submodules, and verifies both hashes. Its
+`.github/workflows/build-telegram-bot-api.yml` workflow is manual-only (`workflow_dispatch`): it
+never runs on ordinary pushes, so workflow-only fixes cannot trigger artifact rebuild churn. A
+future intentional Telegram Bot API upgrade is an explicit manual run after changing the pinned
+upstream revision, followed by publishing a new digest and updating `TELEGRAM_BOT_API_IMAGE`.
+
+This supersedes the compile-from-source portion of ADR-015. Runtime compatibility was proven by
+the artifact workflow's ldd verification inside the application runtime package family
+(`libssl.so.3`, `libcrypto.so.3`, `libz.so.1`, `libstdc++.so.6`, `libm.so.6`, `libc.so.6`,
+`libzstd.so.1`, `libgcc_s.so.1`, no missing dependencies), and the application runtime's existing
+packages (`ca-certificates`, `ffmpeg`, `7zip`, `tini`) remain sufficient.

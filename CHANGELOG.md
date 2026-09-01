@@ -4,6 +4,18 @@
 
 ### Changed (targeting v1.4.0-rc.2)
 
+- The application Dockerfile now consumes the published immutable Telegram Bot API artifact
+  (`ghcr.io/hamedsanaei/telegram-bot-api` pinned by full sha256 digest) instead of compiling
+  Telegram Bot API/TDLib from source. The dedicated artifact workflow is manual-only
+  (`workflow_dispatch`), so ordinary application pushes never trigger a Telegram compile; the
+  source build exists only in `Dockerfile.telegram-bot-api`. Architecture tests assert the
+  application build never clones/submodules/cmakes Telegram and the artifact workflow never
+  auto-runs on pushes.
+- Repair the read-only logger preflight test harness: fixture preparation (config/database
+  creation, corruption, cleanup) runs through explicit root containers and chowns the fixture to
+  the runtime user, while the doctor/preflight containers under test keep the normal unprivileged
+  application user and read-only semantics. The preflight doctor helper no longer forwards `$@`,
+  keeping ShellCheck clean.
 - Remove the blocking per-user privacy acknowledgement from the submission-mirror acceptance path.
   Accepted submissions no longer require (or ask for) any user acknowledgement; the Persian privacy
 disclosure is informational only via the `/privacy` command and never blocks, delays, or rejects a

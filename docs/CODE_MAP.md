@@ -82,6 +82,9 @@
 | `scripts/ci_fast_quality.sh`, `scripts/ci_docs_quality.sh` | Fast-quality lane runners: full non-contract integrity/lint/type/secret suite for ordinary changes; a docs-only minimum integrity set for conclusively documentation-only changes |
 | `.github/workflows/ci.yml` | Tiered fast-feedback CI (T033): stable `change-detection`, always-reporting `quality`, conditional heavy lanes (dependency/package/plugin-sdk/docker-runtime/updater-integration/installer-linux/installer-windows), and an always-evaluated `final-ci-gate` that understands success/failure/cancelled/skipped; safe same-ref development concurrency; no workflow-level `paths:` filters. `final-ci-gate` is the aggregate merge-safety check required by branch protection (`quality` optional for visibility; `quality` + `change-detection` alone is not a sufficient gate) |
 | `.github/workflows/publish-container.yml` | Tag-only GHCR amd64 publication using the CI cache, runtime doctor/native-selector/remux/CLI/multipart smoke tests, and reproducible release assets |
+| `Dockerfile` | Normal application image: consumes the immutable `ghcr.io/hamedsanaei/telegram-bot-api` artifact (pinned sha256 digest) and copies `/telegram-bot-api` to `/usr/local/bin/telegram-bot-api`; never compiles Telegram Bot API/TDLib |
+| `Dockerfile.telegram-bot-api` | The ONLY allowed Telegram Bot API source-build location: pins the upstream parent + TDLib revisions, verifies both hashes, and produces the scratch artifact `/telegram-bot-api` |
+| `.github/workflows/build-telegram-bot-api.yml` | Manual-only (`workflow_dispatch`) artifact build/verify/publish workflow; never auto-runs on ordinary pushes |
 
 ## Upstream compatibility hot spots
 
