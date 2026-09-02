@@ -26,6 +26,9 @@ class PlanCatalogRepository(Protocol):
 
     def get_plan(self, plan_id: PlanId) -> SubscriptionPlan | None: ...
 
+    def list_plans(self) -> tuple[SubscriptionPlan, ...]:
+        """All catalog entries; a disabled plan keeps existing orders/grants untouched."""
+
 
 class SubscriptionRepository(Protocol):
     def initialize(self) -> None: ...
@@ -59,5 +62,15 @@ class SubscriptionRepository(Protocol):
         """Mark a grant reversed (retaining the row) and persist the recomputed subscription."""
 
     def get_subscription(self, user_id: int) -> Subscription | None: ...
+
+    def set_suspension(
+        self,
+        user_id: int,
+        *,
+        suspended_at: datetime | None,
+        reason: str | None,
+        now: datetime,
+    ) -> None:
+        """Operationally suspend/unsuspend access without touching payment history or grants."""
 
     def cancel_subscription(self, user_id: int, *, cancelled_at: datetime) -> None: ...

@@ -31,6 +31,7 @@ from telegram_media_bot.application.services.audit_destination_admin import (
 )
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.effect_ledger import EffectLedgerService
+from telegram_media_bot.application.services.entitlements import EntitlementService
 from telegram_media_bot.application.services.instagram_connection import InstagramConnectionService
 from telegram_media_bot.application.services.instagram_delivery import (
     instagram_default_bundle_option,
@@ -50,6 +51,7 @@ from telegram_media_bot.application.services.submission_audit import (
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.bootstrap.payments import PaymentRuntime
 from telegram_media_bot.domain.audit import TelegramSourceReference
 from telegram_media_bot.domain.errors import (
     AccessDeniedError,
@@ -75,6 +77,9 @@ from telegram_media_bot.domain.models import (
     SelectionToken,
     StoryDeliveryMode,
     UserProfile,
+)
+from telegram_media_bot.infrastructure.persistence.sqlite_subscriptions import (
+    SqliteSubscriptionRepository,
 )
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
 from telegram_media_bot.telegram.admin_handlers import ADMIN_MENU_TEXT, build_admin_router
@@ -138,6 +143,9 @@ def build_router(
     audit_admin: LoggerDestinationAdminService | None = None,
     submission_audit: AcceptedSubmissionAuditService | None = None,
     source_resolver: TelegramSourceResolver | None = None,
+    payment_runtime: PaymentRuntime | None = None,
+    subscription_store: SqliteSubscriptionRepository | None = None,
+    entitlements: EntitlementService | None = None,
 ) -> Router:
     router = Router(name="main")
     router.message.outer_middleware(CorrelationMiddleware())
@@ -1321,6 +1329,27 @@ def build_router(
             )
         return True
 
+    _vip_admin = None
+    if payment_runtime is not None and subscription_store is not None:
+        from telegram_media_bot.application.services.vip_admin import VipAdminService
+        from telegram_media_bot.telegram.vip_ux import build_vip_router
+
+        if entitlements is not None:
+            _vip_admin = VipAdminService(
+                entitlements=entitlements,
+                plans=subscription_store,
+                subscriptions=subscription_store,
+                logger=payment_runtime.logger,
+            )
+        router.include_router(
+            build_vip_router(
+                settings=settings,
+                payments=payment_runtime,
+                subscriptions=subscription_store,
+                connection=connection,
+            )
+        )
+
     router.include_router(
         build_admin_router(
             settings=settings,
@@ -1330,6 +1359,8 @@ def build_router(
             cookie_manager=cookie_manager,
             cookie_health_service=cookie_health_service,
             audit_admin=audit_admin,
+            vip_admin=_vip_admin,
+            payment_runtime=payment_runtime,
             recovery_service=JobRecoveryService(
                 repository,
                 queue,

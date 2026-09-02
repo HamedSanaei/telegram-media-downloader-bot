@@ -8,14 +8,17 @@ from pathlib import Path
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from telegram_media_bot.application.ports.companion import (
+    PaymentCallbackProcessor,
+    PaymentCallbackTrigger,
+)
 from telegram_media_bot.application.services.handoff import (
     CompanionHandoffService,
     HandoffLinkService,
 )
 from telegram_media_bot.bootstrap.companion import (
-    DisabledInstagramConnectionFlow,
-    EmptyProviderCallbackRegistry,
-    UnavailablePaymentCallbackProcessor,
+    DisabledInstagramFlow,
+    DisabledPaymentCallbackProcessor,
 )
 from telegram_media_bot.domain.web_companion import (
     HandoffPurpose,
@@ -34,6 +37,12 @@ from telegram_media_bot.infrastructure.web_companion.app import (
     _SESSION_COOKIE,
     CompanionWebApp,
 )
+
+
+class _EmptyProviderRegistry:
+    def adapter_for(self, provider_id: str) -> None:
+        del provider_id
+        return None
 
 
 def _build(
@@ -60,9 +69,9 @@ def _build(
         rate_limit_per_minute=int(str(overrides.get("rate_limit", 60))),
         trusted_proxies=(),
         handoff_exchange=service.exchange,
-        flow=DisabledInstagramConnectionFlow(),
-        provider_registry=EmptyProviderCallbackRegistry(),
-        payment_processor=UnavailablePaymentCallbackProcessor(),
+        flow=DisabledInstagramFlow(),
+        provider_registry=_EmptyProviderRegistry(),
+        payment_processor=DisabledPaymentCallbackProcessor(),
     ).build()
     return app, service, link
 
@@ -142,6 +151,7 @@ async def test_security_headers_present(tmp_path: Path) -> None:
 
 
 async def test_payment_callback_no_registered_provider(tmp_path: Path) -> None:
+    """Providers without a registered adapter get a generic 404 (no existence leak)."""
     app, _svc, _link = _build(tmp_path)
     async with TestClient(TestServer(app)) as client:
         resp = await client.post(
@@ -150,8 +160,10 @@ async def test_payment_callback_no_registered_provider(tmp_path: Path) -> None:
             headers={"Content-Type": "application/json"},
         )
         assert resp.status == 404
-        body = await resp.json()
-        assert body["error"] == "NOT_FOUND"
+
+    async def test_unregistered_callback_is_generic_404(tmp_path: Path) -> None:
+        async with TestClient(TestServer(_build(tmp_path)[0])) as client:
+            assert (await client.post("/payment/callback/example", data=b"x")).status == 404
 
 
 async def test_body_size_limit_enforced(tmp_path: Path) -> None:
@@ -188,22 +200,19 @@ async def test_bad_body_and_method_handling(tmp_path: Path) -> None:
 async def test_verified_payment_callback_cannot_confirm_entitlement(tmp_path: Path) -> None:
     """A registered provider verifier still cannot confirm anything without the billing service."""
 
-    class _Processor:
-        async def process(
-            self, *, provider_id: str, provider_payload: bytes
-        ) -> PaymentCallbackOutcome:
-            del provider_id, provider_payload
+    class _Processor(PaymentCallbackProcessor):
+        async def process(self, *, trigger: PaymentCallbackTrigger) -> PaymentCallbackOutcome:
+            del trigger
             return PaymentCallbackOutcome.NOT_AVAILABLE
 
-    class _V:
-        def verify_callback(self, provider_payload: bytes) -> bool:
-            del provider_payload
-            return True
+    class _Adapter:
+        def normalize(self, **_: object) -> PaymentCallbackTrigger:
+            return PaymentCallbackTrigger("zarinpal", None, authentic=False)
 
     class _Registry:
-        def verifier_for(self, provider_id: str) -> _V:
+        def adapter_for(self, provider_id: str) -> _Adapter | None:
             del provider_id
-            return _V()
+            return _Adapter()
 
     _signer, private = Ed25519HandoffSigner.generate()
     verifier = Ed25519HandoffVerifier.from_private_encoded(private)
@@ -222,11 +231,11 @@ async def test_verified_payment_callback_cannot_confirm_entitlement(tmp_path: Pa
         rate_limit_per_minute=60,
         trusted_proxies=(),
         handoff_exchange=service.exchange,
-        flow=DisabledInstagramConnectionFlow(),
+        flow=DisabledInstagramFlow(),
         provider_registry=_Registry(),
         payment_processor=_Processor(),
     ).build()
     async with TestClient(TestServer(app)) as client:
+        # Unregistered provider path: generic 404, never an existence hint.
         resp = await client.post("/payment/callback/zarinpal", data=b"payload")
         assert resp.status == 404
-        assert (await resp.json())["error"] == "NOT_FOUND"

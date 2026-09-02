@@ -44,7 +44,7 @@ _CSRF_HEADER = "X-TMB-CSRF"
 _GENERIC_SESSION_REJECTED = {"status": "session_invalid", "error": "SESSION_INVALID"}
 _SECURITY_HEADERS: dict[str, str] = {
     "Content-Security-Policy": "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
-    "form-action 'self'; img-src 'self'; style-src 'self'; connect-src 'self'",
+    "form-action 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -189,9 +189,14 @@ class CompanionWebApp:
             self._timeout_middleware,
         ]
         app = web.Application(middlewares=middlewares)
+        app.router.add_get("/instagram/connect", self._handle_connect_page)
+        app.router.add_get("/static/connect.js", self._handle_connect_js)
         app.router.add_post("/instagram/connect/exchange", self._handle_exchange)
         app.router.add_post("/instagram/connect/complete", self._handle_flow_step)
-        app.router.add_post("/payment/callback/{provider}", self._handle_payment_callback)
+        app.router.add_post("/payment/callback/uniquepay", self._handle_provider_callback)
+        app.router.add_post("/payment/callback/hooshpay", self._handle_provider_callback)
+        app.router.add_get("/payment/callback/tetraminator", self._handle_provider_callback)
+        app.router.add_get("/payment/return/{provider}", self._handle_browser_return)
         app.router.add_get("/health", self._liveness)
         app.router.add_get("/ready", self._readiness)
         self._app = app
@@ -254,6 +259,72 @@ class CompanionWebApp:
 
     # -- handlers ----------------------------------------------------------
 
+    async def _handle_connect_page(self, _request: web.Request) -> web.Response:
+        html = (
+            "<!doctype html><html lang='fa'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>اتصال اینستاگرام</title>"
+            "<style>body{font-family:sans-serif;max-width:360px;margin:2rem auto;padding:0 1rem}"
+            "label{display:block;margin:0.6rem 0 0.2rem}input{width:100%;padding:0.5rem;"
+            "border:1px solid #ccc;border-radius:6px;box-sizing:border-box}"
+            "button{margin-top:1rem;width:100%;padding:0.6rem;background:#1769e0;color:#fff;"
+            "border:0;border-radius:6px}#status{margin-top:1rem;white-space:pre-wrap}"
+            "</style></head><body>"
+            "<h2>اتصال حساب اینستاگرام</h2>"
+            "<form id='connect-form'>"
+            "<label for='username'>نام کاربری</label><input id='username' autocomplete='off'>"
+            "<label for='password'>رمز عبور</label>"
+            "<input id='password' type='password' autocomplete='off'>"
+            "<label id='code-label' for='code' hidden>کد تأیید دومرحله‌ای</label>"
+            "<input id='code' type='text' autocomplete='one-time-code' hidden>"
+            "<button type='submit'>ارسال</button></form>"
+            "<div id='status'></div>"
+            "<script src='/static/connect.js'></script></body></html>"
+        )
+        return web.Response(text=html, content_type="text/html")
+
+    async def _handle_connect_js(self, _request: web.Request) -> web.Response:
+        script = (
+            "const statusEl=document.getElementById('status');"
+            "const codeLabel=document.getElementById('code-label');"
+            "const codeEl=document.getElementById('code');"
+            "let csrf=null;let stage='need_credentials';"
+            "async function exchange(){"
+            "const token=(location.hash||'').replace(/^#handoff=/,'');"
+            "if(!token){statusEl.textContent='لینک نامعتبر است';return false;}"
+            "const res=await fetch('/instagram/connect/exchange',{"
+            "method:'POST',headers:{'Content-Type':'application/json'},"
+            "body:JSON.stringify({token})});"
+            "if(!res.ok){statusEl.textContent='لینک منقضی یا نامعتبر است';return false;}"
+            "const data=await res.json();csrf=data.csrf_token;return true;}"
+            "function showTwofa(){codeLabel.hidden=false;codeEl.hidden=false;}"
+            "document.getElementById('connect-form').addEventListener('submit',async(e)=>{"
+            "e.preventDefault();"
+            "if(csrf===null){statusEl.textContent='در حال بررسی لینک...';"
+            "const ok=await exchange();if(!ok)return;}"
+            "let payload;"
+            "if(stage==='need_2fa'){payload={code:codeEl.value};}"
+            "else{payload={username:document.getElementById('username').value,"
+            "password:document.getElementById('password').value};}"
+            "statusEl.textContent='در حال ارسال...';"
+            "const res=await fetch('/instagram/connect/complete',{"
+            "method:'POST',headers:{'Content-Type':'application/json','X-TMB-CSRF':csrf},"
+            "body:JSON.stringify({input:payload})});"
+            "const data=await res.json().catch(()=>({}));"
+            "stage=data.stage||'unknown_stage';"
+            "if(stage==='connected'){statusEl.textContent='✅ حساب متصل شد!';"
+            "document.getElementById('connect-form').hidden=true;}"
+            "else if(stage==='need_2fa'){statusEl.textContent='کد تأیید دومرحله‌ای را وارد کنید';"
+            "showTwofa();}"
+            "else if(stage==='denied'){statusEl.textContent='ورود ناموفق بود.';}"
+            "else if(stage==='need_credentials'){"
+            "statusEl.textContent='نام کاربری و رمز عبور را وارد کنید';}"
+            "else{statusEl.textContent='خطا؛ بعداً تلاش کنید.';}});"
+            "exchange().then(ok=>{if(!ok)return;"
+            "statusEl.textContent='نام کاربری و رمز عبور خود را وارد کنید';});"
+        )
+        return web.Response(text=script, content_type="application/javascript")
+
     async def _handle_exchange(self, request: web.Request) -> web.Response:
         self._rate_limit(request)
         raw = await self._read_json_body(request)
@@ -305,21 +376,57 @@ class CompanionWebApp:
             raise CompanionWebError(404, payload)
         return web.json_response(payload)
 
-    async def _handle_payment_callback(self, request: web.Request) -> web.Response:
+    async def _handle_provider_callback(self, request: web.Request) -> web.Response:
         self._rate_limit(request)
-        provider = str(request.match_info.get("provider", ""))[:128]
+        provider = str(request.match_info.get("provider", "") or request.path.rsplit("/", 1)[-1])
+        provider = provider[:128]
         body = await self._limit_body(request)
-        verifier = self._registry.verifier_for(provider)
-        if verifier is None:
+        adapter = self._registry.adapter_for(provider)
+        if adapter is None:
             raise CompanionWebError(404, {"status": "not_found", "error": "NOT_FOUND"})
-        if not verifier.verify_callback(body):
+        query = dict(request.query.items())
+        headers = dict(request.headers.items())
+        trigger = adapter.normalize(
+            method=request.method,
+            headers=headers,
+            query=query,
+            body=body,
+        )
+        if not trigger.authentic:
             raise CompanionWebError(403, {"status": "invalid", "error": "INVALID"})
-        outcome = await self._payment_processor.process(provider_id=provider, provider_payload=body)
+        outcome = await self._payment_processor.process(trigger=trigger)
         if outcome is PaymentCallbackOutcome.ACCEPTED:
             return web.json_response({"status": "accepted"})
         if outcome is PaymentCallbackOutcome.REJECTED:
             raise CompanionWebError(400, {"status": "rejected", "error": "REJECTED"})
         raise CompanionWebError(404, {"status": "not_found", "error": "NOT_FOUND"})
+
+    async def _handle_browser_return(self, request: web.Request) -> web.Response:
+        """Browser return page. NEVER confirms payment: it only reflects the durable server-side
+        status after a bounded authoritative query, and gives a generic response otherwise."""
+        self._rate_limit(request)
+        provider = str(request.match_info.get("provider", ""))[:128]
+        adapter = self._registry.adapter_for(provider)
+        if adapter is None:
+            raise CompanionWebError(404, {"status": "not_found", "error": "NOT_FOUND"})
+        query = dict(request.query.items())
+        trigger = adapter.normalize(method="GET", headers={}, query=query, body=b"")
+        outcome = PaymentCallbackOutcome.NOT_AVAILABLE
+        if trigger.authentic and trigger.order_reference is not None:
+            outcome = await self._payment_processor.process(trigger=trigger)
+        if outcome is PaymentCallbackOutcome.ACCEPTED:
+            message = (
+                "وضعیت پرداخت از سمت سرور بررسی شد؛ برای نتیجه نهایی وضعیت VIP خود را "
+                "در ربات با /vip بررسی کنید."
+            )
+        else:
+            message = "درخواست دریافت شد؛ وضعیت نهایی از طریق ربات با /vip قابل بررسی است."
+        html = (
+            "<!doctype html><html lang='fa'><head><meta charset='utf-8'>"
+            "<title>پرداخت</title></head><body style='font-family:sans-serif'>"
+            "<h2>پرداخت</h2><p>" + message + "</p></body></html>"
+        )
+        return web.Response(text=html, content_type="text/html")
 
     async def _liveness(self, _request: web.Request) -> web.Response:
         return web.json_response({"status": "ok"})
@@ -335,7 +442,7 @@ class CompanionWebApp:
 
     async def _authorize_browser_session(
         self, request: web.Request
-    ) -> tuple[BrowserSession, str | None]:
+    ) -> tuple[BrowserSession, object | None]:
         cookie = request.cookies.get(_SESSION_COOKIE)
         if cookie is None:
             raise CompanionWebError(401, _GENERIC_SESSION_REJECTED)
@@ -347,12 +454,23 @@ class CompanionWebApp:
             raise CompanionWebError(403, {"status": "csrf_failed", "error": "CSRF_FAILED"})
         raw = await self._read_json_body(request)
         input_value = raw.get("input")
-        if input_value is not None and (
+        if isinstance(input_value, dict):
+            for key, value in input_value.items():
+                if key not in {"username", "password", "code"} or (not isinstance(value, str)):
+                    raise CompanionWebError(400, {"status": "bad_request", "error": "BAD_REQUEST"})
+            if any(len(value) > 4096 for value in input_value.values()):
+                raise CompanionWebError(
+                    413, {"status": "payload_too_large", "error": "PAYLOAD_TOO_LARGE"}
+                )
+        elif input_value is not None and (
             not isinstance(input_value, str) or len(input_value) > 4096
         ):
             raise CompanionWebError(
                 413, {"status": "payload_too_large", "error": "PAYLOAD_TOO_LARGE"}
             )
+        else:
+            input_value = None
+        del raw
         return session, input_value
 
     async def _read_json_body(self, request: web.Request) -> dict[str, object]:

@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-09-01
+Last updated: 2026-09-02
 
 ## Release state
 
@@ -327,6 +327,53 @@ The in-dashboard connection/reconnect/disconnect actions land with the `/vip` da
   queries, and a bounded AST fallback without removing any architecture, testing, security,
   cleanup, cancellation, update, release, documentation, or completion safeguard.
 
+## T024/T025 runtime milestone
+
+The VIP/Billing/Instagram T024-T025 milestone is implemented end-to-end on the
+`feat/vip-payments-instagram` branch (merged for v1.4.0-rc.4):
+
+- Three real rial provider adapters under `infrastructure/payments/` — UniquePay
+  (`uniquepay.py`, DDBot create/check with deterministic `hashId` and fail-closed identity/
+  currency/fee-payer/amount/payable verification), Tetraminator (`tetraminator.py`, JSON
+  `invoice/create` + `X-API-KEY`, GET-with-no-body wake-up callback, authoritative
+  `payment/inquiry/{pay_id}`), and HooshPay (`hooshpay.py`, sorted-key HMAC-SHA256 signed IPN,
+  `POST /invoices/{uid}/verify`, 50,000-1,000,000 toman inclusive policy). Money contract: integer
+  whole toman, `currency = IRT`, with unit-mismatch tests.
+- Exactly-once creation: the single provider create POST is durably reserved
+  (`payment_creation_reservations`, `begin_creation_attempt`) before any network byte; a
+  timeout/5xx/disconnect resolves AMBIGUOUS and recovery is inquiry-only. No adapter ever retries
+  a create POST; only read-only inquiries retry transient failures within the operator bound.
+- Callback model: provider-specific `PaymentCallbackAdapter`s normalize wake-ups (unsigned form,
+  GET-with-no-body, signed IPN) into bounded `PaymentCallbackTrigger`s (`authentic` for signed
+  only, local `order-` reference only). `CompanionPaymentCallbackProcessor` →
+  `PaymentReconciliationService.check_order` → `PaymentGateway.query_payment` →
+  `BillingService.handle_verified_result` (one SQLite transaction with the unique
+  `provider_transaction_claims` row). Duplicated/concurrent callbacks, webhook replays, manual
+  "check payment" presses, races and restarts produce at most one grant.
+- Strict additive `payments:` config (all OFF by default; unknown keys fail fast), provider
+  availability gates new checkout only (existing pending orders stay queryable/confirmable),
+  bounded worker reconciliation cron, and `telegram.logger.payment_events_enabled` (independent of
+  submission mirroring; `logger.enabled` remains the master switch).
+- Successful purchases and admin gift/revoke/suspend/plan actions emit safe, idempotent
+  Operator-Logger events (PAYMENT_CONFIRMED / payment-confirmed:<order-id>, ADMIN_*); no provider
+  reference, pay_id, UID, tracking code, signature, or credential is ever logged. Emit-after-
+  commit and exception isolation guarantee a Logger failure never rolls back a settlement.
+- `/vip` purchase UX (plan select → gateway select → durable checkout → provider link → بررسی
+  پرداخت) is wired into the bot runtime; Telegram UX failures never re-issue a provider POST (the
+  durable order and checkout URL are reopened from `/vip`).
+- Admin ⭐ مدیریت VIP panel: user inspect (sanitized), gift grant (source_type `admin_grant`,
+  calendar-month stacking, idempotent, audited), gift revoke (admin-issued only; paid time
+  remains), operational suspend/unsuspend (never mutates payment history), Instagram-session
+  revoke, plan catalog CRUD (list/create/edit price/duration/currency/enable/capabilities), and
+  payment status counts.
+- Real Instagram session acquisition: the production composition no longer uses the fake
+  acquirer. `RealInstagramSessionAcquirer` performs a real HTTPS login (username/password/2FA
+  transient; bounded in-memory two-factor identifier), requires `sessionid`/`ds_user_id`/`rur`
+  before claiming CONNECTED, produces normalized Netscape cookie bytes for the gallery-dl/yt-dlp
+  pipeline, and fails closed on any protocol anomaly (no fake success fallback).
+- Private-Instagram gating wired at job acceptance and in the worker credential resolver:
+  free → VIP required, VIP without own valid session → connect prompt, VIP with own session →
+  USER_ONLY resolution from the vault; zero operator fallback for private content.
 ## Verification
 
 The v1.3.3 Python suites passed 528 Linux non-contract tests (one destructive opt-in skip) at 83%

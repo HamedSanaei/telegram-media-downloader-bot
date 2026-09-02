@@ -24,6 +24,7 @@ from telegram_media_bot.domain.errors import (
 )
 from telegram_media_bot.domain.payments import (
     CheckoutResult,
+    PaymentCreationState,
     PaymentOrder,
     PaymentOrderId,
     PaymentProviderId,
@@ -57,29 +58,72 @@ def _utc(
 
 
 class FakeGateway:
-    """Deterministic test-only gateway adapter (never used in production business logic)."""
+    """Deterministic test-only gateway adapter (never used in production business logic).
 
-    def __init__(self, *, provider_id: PaymentProviderId, scenario: str = "success") -> None:
+    Mirrors the provider adapter contract: the single create mutation is reserved durably before
+    the POST (``begin_creation_attempt``) and the external checkout identity is attached before
+    returning (``attach_checkout``).
+    """
+
+    def __init__(
+        self,
+        *,
+        provider_id: PaymentProviderId,
+        scenario: str = "success",
+        payments: PaymentRepository | None = None,
+        clock: _Clock | None = None,
+    ) -> None:
         self.provider_id = provider_id
         self.scenario = scenario
+        self._payments = payments
+        self._clock = clock
 
-    def create_payment(self, order: object, **_: object) -> CheckoutResult:
+    def available_for_new_checkout(self) -> bool:
+        return self.scenario not in {"provider_disabled"}
+
+    def create_payment(self, order: PaymentOrder) -> CheckoutResult:
         if self.scenario == "checkout_failure":
             raise RuntimeError("provider unavailable")
+        order_id = order.order_id
+        now = self._clock.now() if self._clock is not None else order.created_at
+        if self._payments is not None:
+            self._payments.begin_creation_attempt(
+                order_id=order_id,
+                provider_id=self.provider_id,
+                merchant_reference=f"merchant-{order_id!s}",
+                attempted_at=now,
+            )
+            self._payments.attach_checkout(
+                order_id=order_id,
+                provider_id=self.provider_id,
+                external_checkout_reference=f"fake-txn-{order_id!s}",
+                checkout_url=f"https://pay.example/checkout/{order_id!s}",
+                now=now,
+            )
+            self._payments.resolve_creation_attempt(
+                order_id=order_id,
+                state=PaymentCreationState.CREATED,
+                error_code=None,
+                resolved_at=now,
+            )
         return CheckoutResult(
             provider_id=self.provider_id,
-            order_id=order.order_id,  # type: ignore[attr-defined]
-            external_checkout_reference=f"fake-txn-{order.order_id}",  # type: ignore[attr-defined]
-            created_at=order.created_at,  # type: ignore[attr-defined]
-            expires_at=order.expires_at,  # type: ignore[attr-defined]
+            order_id=order_id,
+            external_checkout_reference=f"fake-txn-{order_id!s}",
+            created_at=now,
+            expires_at=order.expires_at,
+            checkout_url=f"https://pay.example/checkout/{order_id!s}",
         )
 
-    def verify_callback(
-        self, order: PaymentOrder, provider_payload: object
+    def query_payment(
+        self,
+        order: PaymentOrder,
+        provider_transaction_reference: ProviderTransactionReference | str | None,
     ) -> VerifiedPaymentResult:
-        # A real adapter would strip everything except a normalized project result; the fake never
-        # leaks the raw payload back to the service.
-        assert provider_payload is not None  # adversarial input never reaches the service
+        if provider_transaction_reference is None:
+            provider_transaction_reference = ProviderTransactionReference(
+                f"fake-txn-{order.order_id!s}"
+            )
         return VerifiedPaymentResult(
             provider_id=self.provider_id,
             provider_transaction_reference=ProviderTransactionReference(
@@ -90,13 +134,6 @@ class FakeGateway:
             currency=order.currency,
             status=PaymentStatus.PAID if self.scenario == "success" else PaymentStatus.PENDING,
         )
-
-    def query_payment(
-        self,
-        order: PaymentOrder,
-        provider_transaction_reference: ProviderTransactionReference | None,
-    ) -> VerifiedPaymentResult:
-        return self.verify_callback(order, {})
 
 
 class _Clock:
@@ -142,7 +179,7 @@ def _make_service(
     plan = _plan()
     sub_store.save_plan(plan)
     service = BillingService(payments=payment_repo, clock=clock)
-    service.register_gateway(FakeGateway(provider_id=FAKE))
+    service.register_gateway(FakeGateway(provider_id=FAKE, payments=payment_repo, clock=clock))
     return service, payment_repo, clock, plan
 
 
@@ -267,7 +304,11 @@ def test_billing_service_never_receives_raw_callback(tmp_path: Path) -> None:
     service, _, _, plan = _make_service(tmp_path)
     order = service.create_order(7, plan, provider_id=FAKE, expires_at=_utc(2026, 2, 1))
     gateway = FakeGateway(provider_id=FAKE)
-    verified = gateway.verify_callback(order, _raw_callback_sample())
+    verified = gateway.query_payment(
+        order,
+        order.external_checkout_reference
+        and ProviderTransactionReference(order.external_checkout_reference),
+    )
     assert verified.provider_id == FAKE
     raw = [f for f in verified.__dataclass_fields__ if f in _raw_callback_sample()]
     assert raw == []  # signature/raw_amount are never surfaced on the verified result

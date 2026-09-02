@@ -19,11 +19,14 @@ class InstagramSessionAcquirer(Protocol):
     def step(
         self,
         *,
+        username: str | None,
         password: str | None,
         twofa_code: str | None,
     ) -> InstagramLoginResult:
-        """Advance the login: submit a password and/or 2FA/checkpoint code.
+        """Advance the login: submit the login identifier and/or a 2FA/checkpoint code.
 
-        Returns a normalized result; ``session_bytes`` carries the user-session cookie material
-        exactly once and is encrypted into the vault by the caller before returning.
+        All three values are transient bounded strings: the caller releases them after the call
+        and nothing here may persist, log, or label them. Returns a normalized result;
+        ``session_bytes`` carries the user-session cookie material exactly once and is encrypted
+        into the vault by the caller before returning.
         """

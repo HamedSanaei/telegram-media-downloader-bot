@@ -118,7 +118,9 @@ class SqliteSubscriptionRepository(SubscriptionRepository):
                     user_id INTEGER PRIMARY KEY,
                     authorized_until TEXT,
                     cancelled_at TEXT,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    suspended_at TEXT,
+                    suspension_reason TEXT
                 );
                 CREATE INDEX IF NOT EXISTS subscriptions_authorized_until_idx
                     ON subscriptions(authorized_until);
@@ -142,6 +144,14 @@ class SqliteSubscriptionRepository(SubscriptionRepository):
                     ON entitlement_grants(user_id, confirmed_at);
                 """
             )
+            subscription_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(subscriptions)").fetchall()
+            }
+            if "suspended_at" not in subscription_columns:
+                connection.execute("ALTER TABLE subscriptions ADD COLUMN suspended_at TEXT")
+            if "suspension_reason" not in subscription_columns:
+                connection.execute("ALTER TABLE subscriptions ADD COLUMN suspension_reason TEXT")
 
     def save_plan(self, plan: SubscriptionPlan) -> None:
         with self._connect() as connection:
@@ -182,6 +192,19 @@ class SqliteSubscriptionRepository(SubscriptionRepository):
                 return None
             capabilities = _load_plan_capabilities(connection, plan_id)
         return _plan_from_row(row, capabilities)
+
+    def list_plans(self) -> tuple[SubscriptionPlan, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM subscription_plans ORDER BY enabled DESC, created_at ASC"
+            ).fetchall()
+            plans = [
+                _plan_from_row(
+                    row, _load_plan_capabilities(connection, PlanId(str(row["plan_id"])))
+                )
+                for row in rows
+            ]
+        return tuple(plans)
 
     def get_grants(self, user_id: int) -> tuple[EntitlementGrant, ...]:
         with self._connect() as connection:
@@ -296,7 +319,36 @@ class SqliteSubscriptionRepository(SubscriptionRepository):
                 _load_datetime(str(row["cancelled_at"])) if row["cancelled_at"] else None
             ),
             updated_at=_load_datetime(str(row["updated_at"])),
+            suspended_at=(
+                _load_datetime(str(row["suspended_at"])) if row["suspended_at"] else None
+            ),
+            suspension_reason=(str(row["suspension_reason"]) if row["suspension_reason"] else None),
         )
+
+    def set_suspension(
+        self,
+        user_id: int,
+        *,
+        suspended_at: datetime | None,
+        reason: str | None,
+        now: datetime,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE subscriptions
+                SET suspended_at = ?, suspension_reason = ?, updated_at = ?
+                WHERE user_id = ?
+                """,
+                (
+                    _dump_datetime(suspended_at) if suspended_at else None,
+                    reason,
+                    _dump_datetime(now),
+                    user_id,
+                ),
+            )
+            connection.execute("COMMIT")
 
     def cancel_subscription(self, user_id: int, *, cancelled_at: datetime) -> None:
         with self._connect() as connection:
@@ -333,12 +385,16 @@ def _load_plan_capabilities(
 def _save_subscription(connection: sqlite3.Connection, subscription: Subscription) -> None:
     connection.execute(
         """
-        INSERT INTO subscriptions (user_id, authorized_until, cancelled_at, updated_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO subscriptions (
+            user_id, authorized_until, cancelled_at, updated_at, suspended_at, suspension_reason
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
             authorized_until = excluded.authorized_until,
             cancelled_at = excluded.cancelled_at,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            suspended_at = excluded.suspended_at,
+            suspension_reason = excluded.suspension_reason
         """,
         (
             subscription.user_id,
@@ -347,6 +403,8 @@ def _save_subscription(connection: sqlite3.Connection, subscription: Subscriptio
             else None,
             _dump_datetime(subscription.cancelled_at) if subscription.cancelled_at else None,
             _dump_datetime(subscription.updated_at),
+            _dump_datetime(subscription.suspended_at) if subscription.suspended_at else None,
+            subscription.suspension_reason,
         ),
     )
 

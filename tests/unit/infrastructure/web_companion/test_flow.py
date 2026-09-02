@@ -51,7 +51,9 @@ async def test_first_empty_step_prompts_credentials(tmp_path: Path) -> None:
 
 async def test_password_connects_and_stores(tmp_path: Path) -> None:
     _repo, vault, flow = _flow(tmp_path)
-    result = await flow.step(owner_user_id=7, session_id="s1", input_value="pw")
+    result = await flow.step(
+        owner_user_id=7, session_id="s1", input_value={"username": "user", "password": "pw"}
+    )
     assert result.stage is InstagramConnectStage.CONNECTED
     view = vault.get_view(7)
     assert view is not None and view.state is InstagramCredentialState.CONNECTED
@@ -59,9 +61,11 @@ async def test_password_connects_and_stores(tmp_path: Path) -> None:
 
 async def test_challenge_then_2fa(tmp_path: Path) -> None:
     _repo, vault, flow = _flow(tmp_path, challenge=True)
-    prompted = await flow.step(owner_user_id=7, session_id="s1", input_value="pw")
+    prompted = await flow.step(
+        owner_user_id=7, session_id="s1", input_value={"username": "user", "password": "pw"}
+    )
     assert prompted.stage is InstagramConnectStage.NEED_2FA
-    done = await flow.step(owner_user_id=7, session_id="s1", input_value="123456")
+    done = await flow.step(owner_user_id=7, session_id="s1", input_value={"code": "123456"})
     assert done.stage is InstagramConnectStage.CONNECTED
     view = vault.get_view(7)
     assert view is not None and view.state is InstagramCredentialState.CONNECTED
@@ -69,13 +73,17 @@ async def test_challenge_then_2fa(tmp_path: Path) -> None:
 
 async def test_denied_stage(tmp_path: Path) -> None:
     _repo, _vault, flow = _flow(tmp_path, reject=True)
-    result = await flow.step(owner_user_id=7, session_id="s1", input_value="pw")
+    result = await flow.step(
+        owner_user_id=7, session_id="s1", input_value={"username": "user", "password": "pw"}
+    )
     assert result.stage is InstagramConnectStage.DENIED
 
 
 async def test_wrong_owner_cannot_store(tmp_path: Path) -> None:
     _repo, vault, flow = _flow(tmp_path)
-    result = await flow.step(owner_user_id=7, session_id="s1", input_value="pw")
+    result = await flow.step(
+        owner_user_id=7, session_id="s1", input_value={"username": "user", "password": "pw"}
+    )
     assert result.stage is InstagramConnectStage.CONNECTED
     # A different owner id cannot see the stored session.
     assert vault.get_view(999) is None

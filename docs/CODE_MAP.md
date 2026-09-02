@@ -106,7 +106,25 @@
   terminal-failure administrator alerts, and cleanup;
 - `telegram/handlers.py`: owner validation, admin controls, and safe enqueue ordering.
 
-## Milestone 4 ownership (T014/T015/T016/T017/T018 implemented; the rest still planned)
+## Milestone 6 ownership (T024/T025 implemented)
+
+| Area | Ownership |
+|---|---|
+| `infrastructure/payments/uniquepay.py` | UniquePay DDBot adapter: deterministic `hashId` create reservation, `Authorization: Bearer`, fail-closed check-invoice verifier (identity/currency/fee-payer/amount/payable), terminal-state mapping (implemented) |
+| `infrastructure/payments/tetraminator.py` | Tetraminator adapter: JSON `invoice/create` (no create retry; durable reservation), GET wake-up callback, authoritative `payment/inquiry/{pay_id}` with bounded transient inquiry retries (implemented) |
+| `infrastructure/payments/hooshpay.py` | HooshPay adapter: sorted-key canonical HMAC-SHA256 signature, `POST /invoices/{uid}/verify`, buyer fee-mode, 50,000-1,000,000 toman inclusive amount policy (implemented) |
+| `infrastructure/payments/base.py` | Shared bounded HTTP transport, strict create-vs-inquiry retry separation, never logs raw bodies or credentials (implemented) |
+| `infrastructure/payments/callbacks.py` | Provider callback normalizers (unsigned form, GET-no-body, signed IPN) into bounded `PaymentCallbackTrigger`s; never payment proof (implemented) |
+| `bootstrap/payments.py` | Payment runtime composition: providers, registry, reconciliation, logger switch, `available_providers` (implemented) |
+| `application/services/payment_reconciliation.py` | Query-before-settle core shared by worker cron/callbacks/manual checks; bounded attempts and backoff; never creates invoices; emits the single idempotent purchase event after commit (implemented) |
+| `application/services/payment_callbacks.py` | Companion processor: trigger → locate local order → authoritative query → atomic settle (implemented) |
+| `application/services/payment_logger.py` | Safe idempotent PAYMENT/ADMIN_VIP events with deterministic keys (`payment-confirmed:<order-id>`); never logs provider refs/secrets (implemented) |
+| `application/services/vip_admin.py` | Role-authorized admin panel service: inspect, gift grant (admin_grant source), gift revoke, suspend/unsuspend, plan catalog, payment counts (implemented) |
+| `telegram/vip_ux.py`, `telegram/admin_vip.py` | Persian `/vip` purchase flow (plan → gateway → checkout → بررسی پرداخت) and ⭐ مدیریت VIP panel with FSM reauthorization (implemented) |
+| `infrastructure/instagram_login/real.py` | Real HTTPS Instagram session acquirer (username/password/2FA transient, session cookie normalization, fail-closed; test-only fake stays in `fake.py`) (implemented) |
+| worker/bot/companion wiring | Entitlement-aware private gating, USER_ONLY vault resolution, worker reconciliation cron, companion per-provider callback routes/browser return (implemented) |
+
+## Milestone 4 ownership (T014-T018 foundations implemented; T019-T025 runtime implemented via Milestone 6)
 
 T014's entitlement foundation is implemented (`domain/subscriptions.py`,
 `application/services/entitlements.py`, `application/ports/subscriptions.py`,

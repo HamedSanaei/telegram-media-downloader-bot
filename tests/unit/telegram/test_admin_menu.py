@@ -14,6 +14,7 @@ from telegram_media_bot.telegram.admin_menu import (
     ADMIN_LOGGER_BUTTON,
     ADMIN_MONTHLY_REPORT_BUTTON,
     ADMIN_REFRESH_MENU_BUTTON,
+    ADMIN_VIP_BUTTON,
     ADMIN_WEEKLY_REPORT_BUTTON,
     build_admin_cookie_health_inline_keyboard,
     build_admin_cookie_health_keyboard,
@@ -36,6 +37,7 @@ def test_admin_main_keyboard_is_persistent_selective_and_complete() -> None:
         ADMIN_COOKIE_HEALTH_BUTTON,
         ADMIN_COOKIE_MANAGEMENT_BUTTON,
         ADMIN_LOGGER_BUTTON,
+        ADMIN_VIP_BUTTON,
         ADMIN_REFRESH_MENU_BUTTON,
     ]
     assert keyboard.resize_keyboard is True

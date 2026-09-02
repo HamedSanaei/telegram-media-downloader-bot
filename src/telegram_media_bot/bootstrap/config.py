@@ -122,6 +122,9 @@ class TelegramLoggerSection(StrictModel):
     submission_mirror_enabled: bool = False
     operator_privacy_attested: bool = False
     privacy_notice_version: str = Field(default="logger-v1", min_length=1, max_length=32)
+    #: Independent switch: successful VIP purchases go to the Operator Logger without affecting
+    #: (or depending on) submission mirroring. ``logger.enabled`` remains the master kill switch.
+    payment_events_enabled: bool = True
 
     @field_validator("privacy_notice_version")
     @classmethod
@@ -569,6 +572,123 @@ class RecoverySection(StrictModel):
         return max(1, queue_max_jobs * self.queue_backlog_per_worker_slot)
 
 
+class PaymentReconciliationSection(StrictModel):
+    """Bounded pending-order reconciliation policy (T025)."""
+
+    enabled: bool = True
+    interval_seconds: int = Field(default=300, ge=30, le=86400)
+    batch_size: int = Field(default=20, ge=1, le=500)
+    max_query_attempts: int = Field(default=10, ge=1, le=1000)
+
+
+def _validate_absolute_http_url(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    cleaned = value.strip().rstrip("/")
+    parsed = urlsplit(cleaned)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("URL must be an absolute HTTP(S) URL")
+    return cleaned
+
+
+def _validate_absolute_https_url(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    cleaned = value.strip().rstrip("/")
+    parsed = urlsplit(cleaned)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("URL must be an absolute HTTPS URL")
+    return cleaned
+
+
+class PaymentGatewayBaseSection(StrictModel):
+    """Shared provider-adapter settings. Every provider defaults to OFF."""
+
+    enabled: bool = False
+    base_url: str | None = None
+    callback_url: str | None = None
+    request_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+    inquiry_retry_count: int = Field(default=2, ge=0, le=10)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str | None) -> str | None:
+        return _validate_absolute_http_url(value)
+
+    @field_validator("callback_url")
+    @classmethod
+    def validate_callback_url(cls, value: str | None) -> str | None:
+        return _validate_absolute_https_url(value)
+
+    def effective_base_url(self) -> str | None:
+        return self.base_url.rstrip("/") if self.base_url else None
+
+
+class UniquePaySection(PaymentGatewayBaseSection):
+    """UniquePay DDBot invoice provider (https://uniquepay.top)."""
+
+    business_token: SecretStr | None = None
+    return_url: str | None = None
+
+    @field_validator("return_url")
+    @classmethod
+    def validate_return_url(cls, value: str | None) -> str | None:
+        return _validate_absolute_https_url(value)
+
+
+class TetraminatorSection(PaymentGatewayBaseSection):
+    """Tetraminator invoice provider (https://api.tetraminator.com/v1)."""
+
+    api_key: SecretStr | None = None
+
+
+class HooshPaySection(PaymentGatewayBaseSection):
+    """HooshPay invoice provider (https://pay.hooshnet.com)."""
+
+    api_key: SecretStr | None = None
+    ipn_secret_key: SecretStr | None = None
+    return_url: str | None = None
+
+    @field_validator("return_url")
+    @classmethod
+    def validate_return_url(cls, value: str | None) -> str | None:
+        return _validate_absolute_https_url(value)
+
+
+class PaymentsSection(StrictModel):
+    """Strict additive rial-payment configuration (T024/T025).
+
+    Everything defaults to OFF so pre-payment config.yaml files remain valid. ``enabled`` is the
+    master switch for NEW checkout creation; existing pending orders can always be queried and
+    confirmed even while new checkout is disabled.
+    """
+
+    enabled: bool = False
+    order_expiry_minutes: int = Field(default=30, ge=5, le=10080)
+    reconciliation: PaymentReconciliationSection = Field(
+        default_factory=PaymentReconciliationSection
+    )
+    uniquepay: UniquePaySection = Field(default_factory=UniquePaySection)
+    tetraminator: TetraminatorSection = Field(default_factory=TetraminatorSection)
+    hooshpay: HooshPaySection = Field(default_factory=HooshPaySection)
+
+    @model_validator(mode="after")
+    def validate_master_switch(self) -> PaymentsSection:
+        if self.enabled:
+            providers = (
+                (self.uniquepay, "uniquepay"),
+                (self.tetraminator, "tetraminator"),
+                (self.hooshpay, "hooshpay"),
+            )
+            enabled_providers = [name for provider, name in providers if provider.enabled]
+            if not enabled_providers:
+                raise ValueError(
+                    "payments.enabled requires at least one provider enabled: "
+                    "payments.uniquepay/tetraminator/hooshpay.enabled"
+                )
+        return self
+
+
 class WebCompanionSection(StrictModel):
     """Separate least-privilege browser/callback boundary (T016), disabled by default.
 
@@ -697,6 +817,7 @@ class Settings(StrictModel):
     cookie_health: CookieHealthSection = Field(default_factory=CookieHealthSection)
     recovery: RecoverySection = Field(default_factory=RecoverySection)
     web_companion: WebCompanionSection = Field(default_factory=WebCompanionSection)
+    payments: PaymentsSection = Field(default_factory=PaymentsSection)
     vault: VaultKeyRingSection = Field(default_factory=VaultKeyRingSection)
 
     @model_validator(mode="after")

@@ -720,3 +720,76 @@ the artifact workflow's ldd verification inside the application runtime package 
 (`libssl.so.3`, `libcrypto.so.3`, `libz.so.1`, `libstdc++.so.6`, `libm.so.6`, `libc.so.6`,
 `libzstd.so.1`, `libgcc_s.so.1`, no missing dependencies), and the application runtime's existing
 packages (`ca-certificates`, `ffmpeg`, `7zip`, `tini`) remain sufficient.
+
+## ADR-041: One rial money contract: integer whole toman, currency IRT
+
+**Status:** accepted
+
+All three rial gateway adapters (UniquePay, Tetraminator, HooshPay) use one explicit project
+contract: `currency = "IRT"` and integer whole-toman amounts in `amount_minor`. No ×10 or ÷10
+conversion exists anywhere. The domain field keeps its generic historical name (`amount_minor`)
+but every rial plan/order stores whole toman; adapter unit-mismatch tests fail if a provider ever
+reports a different monetary unit. For fee-payer gateways the adapter separately proves the
+provider fee/payable equation, and Billing's verified amount must equal the local order snapshot
+(base price) — the buyer's fee-inclusive payable is never compared against the plan price.
+
+## ADR-042: Provider callbacks are triggers, never payment proof
+
+**Status:** accepted
+
+A provider callback (UniquePay unsigned wake-up, Tetraminator GET with no body, HooshPay signed
+IPN) only locates the local order. `PaymentCallbackAdapter` implementations normalize the
+untrusted request into a bounded `PaymentCallbackTrigger` (`order-` prefixed local reference;
+`signed` only marks `authentic`). Every confirmation path — webhook, browser return, worker
+reconciliation, manual "check payment" — runs the same query-before-settle core: resolve the
+registered provider adapter → read-only `query_payment` → `BillingService.handle_verified_result`
+in ONE SQLite transaction. Browser returns and `paymentLink` creation never confirm. Unknown or
+guessed order references answer generically (never reveal existence).
+
+## ADR-043: The single create POST is durably reserved exactly once
+
+**Status:** accepted
+
+Before any network byte, the adapter durably records a `payment_creation_reservations` row
+(`begin_creation_attempt`) with a deterministic merchant identity derived from the local order
+(for UniquePay the `hashId` is a SHA-256 of `tmb:uniquepay:<order-id>`). A timeout/5xx/disconnect/
+malformed ambiguous response resolves the reservation to AMBIGUOUS; recovery is inquiry-only and
+no state permits a second create POST. Definitive rejection resolves to FAILED. Only read-only
+inquires may retry transient failures, within the operator-configured `inquiry_retry_count`.
+There is no create idempotency key on the provider side, so the durable reservation is the
+idempotency mechanism.
+
+## ADR-044: Admin gift VIP is an `admin_grant` economic source, not a fake payment
+
+**Status:** accepted
+
+Admin gift/test grants never create a payment order or a provider reference. They use
+`source_type = "admin_grant"` with a unique `source_reference`, stack via the existing
+calendar-month entitlement rules, are immutable, idempotent, and audited to the Operator Logger.
+Revoking a gift reverses only admin-issued grants; paid time remains. Operational suspension is a
+separate subscription state that never mutates payment history.
+
+## ADR-045: Purchase events go through the durable Operator Logger with an independent switch
+
+**Status:** accepted
+
+Successful VIP purchases are logged by `PaymentAuditLogger` ONLY after the atomic settlement
+commits, with deterministic idempotency keys (`payment-confirmed:<order-id>`) so callbacks/
+reconciliation replays never duplicate the event. `telegram.logger.payment_events_enabled`
+(default true) is independent of `submission_mirror_enabled`; `logger.enabled` remains the master
+kill switch. The event carries only safe fields (user_id, provider, plan id/name, duration,
+amount, currency, authorized_until, confirmed_at) — never provider transaction references,
+invoice UIDs, pay_ids, tracking codes, signatures, callbacks, or credentials. Logger storage or
+delivery failure never rolls back a settled payment (emit-after-commit + exception isolation).
+
+## ADR-046: Real Instagram session acquisition replaces the test-only fake in production
+
+**Status:** accepted
+
+The production acquirer is `RealInstagramSessionAcquirer` — a real HTTPS login against
+Instagram's web endpoints with transient username/password/2FA handling (bounded in-memory
+two-factor identifiers, never persisted or logged). CONNECTED is claimed only after the actual
+authenticated session cookies (`sessionid`, `ds_user_id`, `rur`) are present and normalized into
+Netscape cookie bytes; any protocol anomaly, missing cookie, or transport failure fails closed
+with a typed denial. `FakeInstagramSessionAcquirer` remains test-only and is never composed into
+runtime.

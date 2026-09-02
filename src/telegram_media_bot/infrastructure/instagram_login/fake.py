@@ -32,15 +32,18 @@ class FakeInstagramSessionAcquirer:
     def step(
         self,
         *,
+        username: str | None,
         password: str | None,
         twofa_code: str | None,
     ) -> InstagramLoginResult:
+        del username
         if self._reject:
             return InstagramLoginResult(
                 InstagramConnectStage.DENIED, LoginFailureCategory.WRONG_CREDENTIALS
             )
-        # A login is valid when a password (first step) or a 2FA code (checkpoint completion) is
-        # present; submitting neither is always denied. Secrets are never retained by the acquirer.
+        # A login is valid only when BOTH the identity (first step) and a password are present;
+        # a 2FA code completes a checkpoint. Never CONNECTED from password alone, and secrets
+        # are never retained by the fake.
         if not password and not twofa_code:
             return InstagramLoginResult(
                 InstagramConnectStage.DENIED, LoginFailureCategory.WRONG_CREDENTIALS

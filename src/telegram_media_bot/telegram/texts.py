@@ -68,3 +68,16 @@ INSTAGRAM_DISCONNECTED_TEXT = (
 INSTAGRAM_CONNECT_STATUS_FREE_NOTICE = (
     "اتصال حساب برای همهٔ کاربران (رایگان و VIP) ممکن است، اما خودِ اتصال به‌تنهایی دسترسی VIP نمی‌دهد."
 )
+
+# Private Instagram content gating (T021/T025). Persian, secret-free.
+PRIVATE_VIP_REQUIRED_TEXT = (
+    "🔒 دانلود محتوای خصوصی مخصوص کاربران VIP است.\nبرای استفاده از این قابلیت، VIP را فعال کنید."  # noqa: RUF001
+)
+PRIVATE_CONNECT_REQUIRED_TEXT = (
+    "🔐 برای دانلود محتوای خصوصی ابتدا حساب اینستاگرام خود را متصل کنید."
+)
+PRIVATE_RECONNECT_REQUIRED_TEXT = "⚠️ نشست اینستاگرام شما نیاز به ورود مجدد دارد."
+PRIVATE_NO_ACCESS_TEXT = (
+    "این محتوا با حساب متصل‌شده شما قابل مشاهده نیست.\n"
+    "برای محتوای خصوصی، حساب متصل باید از قبل دسترسی قانونی داشته باشد."
+)

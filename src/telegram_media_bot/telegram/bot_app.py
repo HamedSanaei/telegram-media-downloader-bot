@@ -14,6 +14,7 @@ from telegram_media_bot.application.services.audit_service import AuditService
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.durable_update_inbox import DurableUpdateInbox
 from telegram_media_bot.application.services.effect_ledger import EffectLedgerService
+from telegram_media_bot.application.services.entitlements import EntitlementService
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.application.services.submission_audit import (
     AcceptedSubmissionAuditService,
@@ -22,6 +23,7 @@ from telegram_media_bot.application.services.submission_audit import (
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.bootstrap.instagram import build_instagram_connection_service
+from telegram_media_bot.bootstrap.payments import build_payment_runtime
 from telegram_media_bot.infrastructure.analytics.usage_chart_renderer import PngUsageChartRenderer
 from telegram_media_bot.infrastructure.cookies.health import (
     MissingCookieChecker,
@@ -92,6 +94,15 @@ async def run_bot(settings: Settings) -> None:
             audit_store, TelegramAuditDestinationVerifier(bot)
         )
         audit = AuditService(audit_store, enabled=settings.telegram.logger.enabled)
+        payment_runtime = build_payment_runtime(
+            payments=settings.payments,
+            database_path=settings.database_path(),
+            audit=audit,
+            payment_events_enabled=settings.telegram.logger.payment_events_enabled,
+        )
+        entitlements = EntitlementService(
+            subscriptions=subscription_store, plans=subscription_store
+        )
         mirror_enabled = mirroring_enabled(
             logger_enabled=settings.telegram.logger.enabled,
             submission_mirror_enabled=settings.telegram.logger.submission_mirror_enabled,
@@ -169,6 +180,9 @@ async def run_bot(settings: Settings) -> None:
                 audit_admin=audit_admin,
                 submission_audit=submission_audit,
                 source_resolver=inbox_store,
+                payment_runtime=payment_runtime,
+                subscription_store=subscription_store,
+                entitlements=entitlements,
             )
         )
         inbox = DurableUpdateInbox(inbox_store)

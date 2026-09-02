@@ -42,6 +42,7 @@ from telegram_media_bot.domain.cookie_health import (
     StaticCookieCheck,
 )
 from telegram_media_bot.domain.cookies import CookieService
+from telegram_media_bot.domain.credential_resolution import CredentialContext
 from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
     DeliveryError,
@@ -202,7 +203,8 @@ class FakeDelivery:
 
 
 class FakeInspectionService:
-    def inspect(self, url: str) -> MediaInfo:
+    def inspect(self, url: str, credential: object | None = None) -> MediaInfo:
+        del credential
         return MediaInfo(
             media_id="DbQqWqBDLXS",
             title="Instagram Reel",
@@ -497,6 +499,29 @@ async def test_instagram_auto_download_create_and_enqueue_share_native_policy(
     assert len(bot.messages) == 1
 
 
+class _StubCredentialResolver:
+    """Test-only resolver: yields an operator-less USER credential without touching a vault."""
+
+    def resolve(
+        self, *, owner_user_id: int, context: CredentialContext, workspace: Path
+    ) -> _StubResolution:
+        from telegram_media_bot.domain.credential_resolution import ResolvedCredential
+
+        del owner_user_id, workspace
+        return _StubResolution(ResolvedCredential(context, materialized_cookie_path=None))
+
+
+class _StubResolution:
+    def __init__(self, credential: object) -> None:
+        self._credential = credential
+
+    def __enter__(self) -> object:
+        return self._credential
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
 async def test_instagram_auto_download_inherits_parent_entitlement_snapshot(
     settings: Settings,
     tmp_path: Path,
@@ -545,6 +570,7 @@ async def test_instagram_auto_download_inherits_parent_entitlement_snapshot(
         "queue": queue,
         "job_id": str(parent.job_id),
         "job_try": 1,
+        "credential_resolver": _StubCredentialResolver(),
     }
 
     await process_inspection_job(

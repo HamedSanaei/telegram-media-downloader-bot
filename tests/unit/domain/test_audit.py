@@ -41,6 +41,7 @@ def test_categories_and_severities_are_closed_typed_sets() -> None:
         "cookie_health",
         "user_submission",
         "system",
+        "payment",
     }
     assert {item.value for item in AuditSeverity} == {
         "info",
