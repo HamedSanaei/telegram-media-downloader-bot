@@ -38,6 +38,7 @@ class SubscriptionStatus(StrEnum):
     EXPIRED = "expired"
     CANCELLED = "cancelled"
     INACTIVE = "inactive"
+    SUSPENDED = "suspended"
 
 
 def add_calendar_months(value: datetime, months: int) -> datetime:
@@ -127,12 +128,19 @@ class EntitlementGrant:
 
 @dataclass(frozen=True, slots=True)
 class Subscription:
-    """Durable per-user subscription/account projection derived from valid grants."""
+    """Durable per-user subscription/account projection derived from valid grants.
+
+    An operational admin suspension sets ``suspended_at``/``suspension_reason`` WITHOUT touching
+    payment history or grants: the projection keeps its authorized expiry and the suspension is a
+    separate, reversible state. Access fails closed while suspended.
+    """
 
     user_id: int
     authorized_until: datetime | None
     cancelled_at: datetime | None
     updated_at: datetime
+    suspended_at: datetime | None = None
+    suspension_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

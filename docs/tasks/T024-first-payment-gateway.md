@@ -1,6 +1,10 @@
 # T024 - First real payment gateway adapter
 
-**Status:** blocked - payment provider not selected
+**Status:** implemented (UniquePay, Tetraminator, HooshPay adapters + callback boundary; see
+`infrastructure/payments/`, `bootstrap/payments.py`, `application/services/payment_reconciliation.py`,
+and tests under `tests/unit/infrastructure/payments/`). Live production billing still requires
+operator credentials and callback URLs in the ignored local configuration; provider gateways are
+OFF by default.
 
 ## Goal
 

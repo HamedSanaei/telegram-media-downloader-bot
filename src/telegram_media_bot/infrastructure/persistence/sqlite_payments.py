@@ -21,6 +21,7 @@ from telegram_media_bot.domain.errors import (
     InvalidPaymentTransitionError,
     PaymentAmountMismatchError,
     PaymentBackendError,
+    PaymentCreationReservedError,
     PaymentCurrencyMismatchError,
     PaymentOrderExpiredError,
     PaymentOrderMismatchError,
@@ -32,6 +33,8 @@ from telegram_media_bot.domain.errors import (
 )
 from telegram_media_bot.domain.payments import (
     PaymentAttempt,
+    PaymentCreationReservation,
+    PaymentCreationState,
     PaymentOrder,
     PaymentOrderId,
     PaymentProviderId,
@@ -133,6 +136,22 @@ class SqlitePaymentRepository(PaymentRepository):
                 CREATE INDEX IF NOT EXISTS payment_orders_created_idx ON payment_orders(created_at);
                 CREATE INDEX IF NOT EXISTS payment_orders_expires_idx ON payment_orders(expires_at);
 
+                CREATE TABLE IF NOT EXISTS payment_creation_reservations (
+                    order_id TEXT PRIMARY KEY,
+                    provider_id TEXT NOT NULL,
+                    merchant_reference TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    error_code TEXT,
+                    attempted_at TEXT,
+                    resolved_at TEXT,
+                    inquiry_attempts INTEGER NOT NULL DEFAULT 0,
+                    last_inquiry_at TEXT,
+                    next_inquiry_at TEXT,
+                    FOREIGN KEY (order_id) REFERENCES payment_orders(order_id)
+                );
+                CREATE INDEX IF NOT EXISTS payment_creation_state_idx
+                    ON payment_creation_reservations(state);
+
                 CREATE TABLE IF NOT EXISTS payment_attempts (
                     attempt_id TEXT PRIMARY KEY,
                     order_id TEXT NOT NULL,
@@ -155,8 +174,19 @@ class SqlitePaymentRepository(PaymentRepository):
                     PRIMARY KEY (provider_id, provider_transaction_reference),
                     FOREIGN KEY (order_id) REFERENCES payment_orders(order_id)
                 );
+
                 """
             )
+            payment_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(payment_orders)").fetchall()
+            }
+            if "external_checkout_reference" not in payment_columns:
+                connection.execute(
+                    "ALTER TABLE payment_orders ADD COLUMN external_checkout_reference TEXT"
+                )
+            if "checkout_url" not in payment_columns:
+                connection.execute("ALTER TABLE payment_orders ADD COLUMN checkout_url TEXT")
 
     # -- read/write primitives ----------------------------------------------
 
@@ -167,8 +197,9 @@ class SqlitePaymentRepository(PaymentRepository):
                 """
                 INSERT OR REPLACE INTO payment_orders (
                     order_id, user_id, plan_id, duration_months, capabilities_json,
-                    amount_minor, currency, created_at, expires_at, status, provider_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    amount_minor, currency, created_at, expires_at, status, provider_id,
+                    external_checkout_reference, checkout_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(order.order_id),
@@ -182,6 +213,8 @@ class SqlitePaymentRepository(PaymentRepository):
                     _dump_datetime(order.expires_at),
                     order.status.value,
                     str(order.provider_id) if order.provider_id else None,
+                    order.external_checkout_reference,
+                    order.checkout_url,
                 ),
             )
             connection.execute("COMMIT")
@@ -221,6 +254,16 @@ class SqlitePaymentRepository(PaymentRepository):
                 (user_id,),
             ).fetchall()
         return tuple(_order_from_row(row) for row in rows)
+
+    def find_pending_order_for_user(self, user_id: int, now: datetime) -> PaymentOrder | None:
+        """The user's newest non-terminal order (recovery anchor for /vip)."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM payment_orders WHERE user_id = ? AND status IN (?, ?) "
+                "ORDER BY created_at DESC LIMIT 1",
+                (user_id, PaymentStatus.CREATED.value, PaymentStatus.PENDING.value),
+            ).fetchone()
+        return _order_from_row(row) if row is not None else None
 
     def list_pending_orders(self, *, before: datetime) -> tuple[PaymentOrder, ...]:
         """Durable CREATED/PENDING orders created before ``before`` (reconciliation foundation).
@@ -285,6 +328,146 @@ class SqlitePaymentRepository(PaymentRepository):
                 (str(provider_id), str(provider_transaction_reference)),
             ).fetchone()
         return PaymentOrderId(str(row["order_id"])) if row is not None else None
+
+    # -- exactly-once provider create mutation ----------------------------------
+
+    def get_creation_reservation(
+        self, order_id: PaymentOrderId
+    ) -> PaymentCreationReservation | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM payment_creation_reservations WHERE order_id = ?",
+                (str(order_id),),
+            ).fetchone()
+        return _creation_reservation_from_row(row) if row is not None else None
+
+    def begin_creation_attempt(
+        self,
+        *,
+        order_id: PaymentOrderId,
+        provider_id: PaymentProviderId,
+        merchant_reference: str,
+        attempted_at: datetime,
+    ) -> PaymentCreationReservation:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = connection.execute(
+                    "SELECT * FROM payment_creation_reservations WHERE order_id = ?",
+                    (str(order_id),),
+                ).fetchone()
+                if existing is not None and _creation_reservation_from_row(existing).state.started:
+                    raise PaymentCreationReservedError(
+                        "A provider create attempt is already reserved for this order"
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO payment_creation_reservations (
+                        order_id, provider_id, merchant_reference, state, error_code,
+                        attempted_at, resolved_at, inquiry_attempts, last_inquiry_at, next_inquiry_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(order_id),
+                        str(provider_id),
+                        merchant_reference,
+                        PaymentCreationState.ATTEMPTING.value,
+                        None,
+                        _dump_datetime(attempted_at),
+                        None,
+                        0,
+                        None,
+                        None,
+                    ),
+                )
+                connection.execute("COMMIT")
+            except sqlite3.Error as exc:
+                connection.execute("ROLLBACK")
+                raise PersistenceError("Payment store operation failed") from exc
+        reservation = self.get_creation_reservation(order_id)
+        assert reservation is not None
+        return reservation
+
+    def resolve_creation_attempt(
+        self,
+        *,
+        order_id: PaymentOrderId,
+        state: PaymentCreationState,
+        error_code: str | None,
+        resolved_at: datetime,
+    ) -> None:
+        if state in {PaymentCreationState.NOT_STARTED, PaymentCreationState.ATTEMPTING}:
+            raise ValueError("create resolution must be a surviving state")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE payment_creation_reservations
+                SET state = ?, error_code = ?, resolved_at = ?,
+                    attempted_at = COALESCE(attempted_at, ?)
+                WHERE order_id = ?
+                """,
+                (
+                    state.value,
+                    error_code,
+                    _dump_datetime(resolved_at),
+                    _dump_datetime(resolved_at),
+                    str(order_id),
+                ),
+            )
+            connection.execute("COMMIT")
+
+    def attach_checkout(
+        self,
+        *,
+        order_id: PaymentOrderId,
+        provider_id: PaymentProviderId,
+        external_checkout_reference: str,
+        checkout_url: str,
+        now: datetime,
+    ) -> None:
+        del now
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE payment_orders
+                SET external_checkout_reference = ?, checkout_url = ?, provider_id = ?
+                WHERE order_id = ? AND external_checkout_reference IS NULL
+                """,
+                (
+                    external_checkout_reference,
+                    checkout_url,
+                    str(provider_id),
+                    str(order_id),
+                ),
+            )
+            connection.execute("COMMIT")
+
+    def record_creation_inquiry(
+        self,
+        *,
+        order_id: PaymentOrderId,
+        now: datetime,
+        next_inquiry_at: datetime | None,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE payment_creation_reservations
+                SET inquiry_attempts = inquiry_attempts + 1,
+                    last_inquiry_at = ?,
+                    next_inquiry_at = ?
+                WHERE order_id = ?
+                """,
+                (
+                    _dump_datetime(now),
+                    _dump_datetime(next_inquiry_at) if next_inquiry_at is not None else None,
+                    str(order_id),
+                ),
+            )
+            connection.execute("COMMIT")
 
     # -- atomic confirmation / reversal --------------------------------------
 
@@ -478,6 +661,25 @@ class SqlitePaymentRepository(PaymentRepository):
         return None
 
 
+def _creation_reservation_from_row(row: sqlite3.Row) -> PaymentCreationReservation:
+    return PaymentCreationReservation(
+        order_id=PaymentOrderId(str(row["order_id"])),
+        provider_id=PaymentProviderId(str(row["provider_id"])),
+        merchant_reference=str(row["merchant_reference"]),
+        state=PaymentCreationState(str(row["state"])),
+        error_code=str(row["error_code"]) if row["error_code"] else None,
+        attempted_at=_load_datetime(str(row["attempted_at"])) if row["attempted_at"] else None,
+        resolved_at=_load_datetime(str(row["resolved_at"])) if row["resolved_at"] else None,
+        inquiry_attempts=int(row["inquiry_attempts"]),
+        last_inquiry_at=(
+            _load_datetime(str(row["last_inquiry_at"])) if row["last_inquiry_at"] else None
+        ),
+        next_inquiry_at=(
+            _load_datetime(str(row["next_inquiry_at"])) if row["next_inquiry_at"] else None
+        ),
+    )
+
+
 def _order_from_row(row: sqlite3.Row) -> PaymentOrder:
     return PaymentOrder(
         order_id=PaymentOrderId(str(row["order_id"])),
@@ -491,6 +693,10 @@ def _order_from_row(row: sqlite3.Row) -> PaymentOrder:
         expires_at=_load_datetime(str(row["expires_at"])),
         status=PaymentStatus(str(row["status"])),
         provider_id=PaymentProviderId(str(row["provider_id"])) if row["provider_id"] else None,
+        external_checkout_reference=(
+            str(row["external_checkout_reference"]) if row["external_checkout_reference"] else None
+        ),
+        checkout_url=str(row["checkout_url"]) if row["checkout_url"] else None,
     )
 
 

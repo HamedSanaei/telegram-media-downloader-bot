@@ -177,8 +177,11 @@ must not reveal whether content exists.
   and are removed after success, failure, cancellation, timeout, and cleanup.
 - One user's credential failure/recovery never changes another user or global operator health.
 
-Implementation is decomposed into T014 through T025. T024 remains blocked until the operator
-selects and supplies a real payment provider.
+Implementation is decomposed into T014 through T025. T024/T025 are implemented end-to-end with
+the three rial gateways (UniquePay, Tetraminator, HooshPay), the `/vip` purchase flow, the admin
+VIP panel, the real Instagram session acquirer, USER_ONLY private gating, and the safe idempotent
+payment Logger; production billing remains OFF until the operator supplies credentials and
+callback URLs and sets `payments.enabled: true`.
 
 ## Operator Logger and private audit channels
 

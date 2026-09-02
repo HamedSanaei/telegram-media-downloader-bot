@@ -25,6 +25,7 @@ ADMIN_CANCEL_DOWNLOAD_BUTTON = "❌ لغو"
 ADMIN_BACK_TO_MENU_BUTTON = "🏠 منوی مدیریت"
 ADMIN_REFRESH_REPORT_BUTTON = "🔄 تازه‌سازی گزارش"
 ADMIN_LOGGER_BUTTON = "🧾 کانال‌های لاگر"
+ADMIN_VIP_BUTTON = "⭐ مدیریت VIP"
 ADMIN_LOGGER_ADD_BUTTON = "➕ افزودن کانال"  # noqa: RUF001
 ADMIN_LOGGER_REFRESH_BUTTON = "🔄 تازه‌سازی وضعیت کانال‌ها"  # noqa: RUF001
 ADMIN_LOGGER_TEST_BUTTON = "🔍 آزمایش"
@@ -50,6 +51,7 @@ ADMIN_MANAGEMENT_BUTTONS = frozenset(
         ADMIN_BACK_TO_MENU_BUTTON,
         ADMIN_LOGGER_BUTTON,
         ADMIN_LOGGER_ADD_BUTTON,
+        ADMIN_VIP_BUTTON,
     }
 )
 
@@ -79,7 +81,10 @@ def build_admin_main_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=ADMIN_COOKIE_HEALTH_BUTTON),
                 KeyboardButton(text=ADMIN_COOKIE_MANAGEMENT_BUTTON),
             ],
-            [KeyboardButton(text=ADMIN_LOGGER_BUTTON)],
+            [
+                KeyboardButton(text=ADMIN_LOGGER_BUTTON),
+                KeyboardButton(text=ADMIN_VIP_BUTTON),
+            ],
             [KeyboardButton(text=ADMIN_REFRESH_MENU_BUTTON)],
         ],
         resize_keyboard=True,

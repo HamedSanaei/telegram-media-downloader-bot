@@ -28,7 +28,9 @@ from telegram_media_bot.application.services.audit_destination_admin import (
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
 from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
+from telegram_media_bot.application.services.vip_admin import VipAdminService
 from telegram_media_bot.bootstrap.config import Settings
+from telegram_media_bot.bootstrap.payments import PaymentRuntime
 from telegram_media_bot.domain.analytics import UsageReport, UsageReportPeriod
 from telegram_media_bot.domain.audit import (
     DestinationProbeOutcome,
@@ -165,6 +167,8 @@ def build_admin_router(
     cookie_health_service: CookieHealthService | None = None,
     recovery_service: JobRecoveryService | None = None,
     audit_admin: LoggerDestinationAdminService | None = None,
+    vip_admin: VipAdminService | None = None,
+    payment_runtime: PaymentRuntime | None = None,
 ) -> Router:
     router = Router(name="admin")
     reports = AdminReportCoordinator()
@@ -643,6 +647,17 @@ def build_admin_router(
             return
         await state.clear()
         await message.answer(ACCESS_DENIED_TEXT)
+
+    if vip_admin is not None and payment_runtime is not None:
+        from telegram_media_bot.telegram.admin_vip import build_admin_vip_router
+
+        router.include_router(
+            build_admin_vip_router(
+                settings=settings,
+                vip_admin=vip_admin,
+                payments=payment_runtime,
+            )
+        )
 
     return router
 

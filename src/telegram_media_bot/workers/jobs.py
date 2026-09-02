@@ -60,7 +60,12 @@ from telegram_media_bot.domain.cookie_health import (
     CookieHealthState,
 )
 from telegram_media_bot.domain.cookies import CookieService
-from telegram_media_bot.domain.credential_resolution import ResolvedCredential
+from telegram_media_bot.domain.credential_resolution import (
+    CredentialContext,
+    CredentialKind,
+    CredentialPolicy,
+    ResolvedCredential,
+)
 from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
     BatchDeliveryFailedError,
@@ -80,6 +85,7 @@ from telegram_media_bot.domain.errors import (
     NativeFormatUnavailableError,
     PlaylistNotAllowedError,
     PostProcessingError,
+    PrivateMediaAuthorizationError,
     RateLimitedError,
     TranscodeRejectedError,
 )
@@ -97,6 +103,7 @@ from telegram_media_bot.domain.models import (
     DeliveryProgressEvent,
     DeliveryStage,
     DownloadMode,
+    DownloadResult,
     ErrorCategory,
     HighlightTrayRecord,
     ImageDeliveryMode,
@@ -112,6 +119,7 @@ from telegram_media_bot.domain.models import (
     SelectionToken,
     StoryDeliveryMode,
 )
+from telegram_media_bot.domain.subscriptions import Capability
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
 from telegram_media_bot.infrastructure.storage.workspace import (
@@ -135,6 +143,7 @@ from telegram_media_bot.telegram.texts import (
     MEDIA_TOO_LARGE_TEXT,
     MEDIA_UNAVAILABLE_TEXT,
     NATIVE_FORMAT_UNAVAILABLE_TEXT,
+    PRIVATE_VIP_REQUIRED_TEXT,
     PROVIDER_RATE_LIMIT_TEXT,
     TRANSCODE_REJECTED_TEXT,
     UNSUPPORTED_GALLERY_URL_TEXT,
@@ -199,11 +208,26 @@ async def process_inspection_job(
         if repository.is_cancel_requested(job_id):
             raise JobCancelledError("Inspection was cancelled")
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
-        credential = cast(ResolvedCredential | None, ctx.get("credential_context"))
-        if credential is None:
-            info = await asyncio.to_thread(service.inspect, url)
+        workspace = settings.storage.downloads_path() / str(job_id)
+        user_context = _private_job_user_context(record)
+        if user_context is None:
+            operator_credential = cast(ResolvedCredential | None, ctx.get("credential_context"))
+            if operator_credential is None:
+                info = await asyncio.to_thread(service.inspect, url)
+            else:
+                info = await asyncio.to_thread(service.inspect, url, credential=operator_credential)
         else:
-            info = await asyncio.to_thread(service.inspect, url, credential=credential)
+            resolver = ctx.get("credential_resolver")
+            if resolver is None:
+                raise PrivateMediaAuthorizationError(
+                    "User-only credential resolver is unavailable for private media"
+                )
+            with resolver.resolve(
+                owner_user_id=record.user_id,
+                context=user_context,
+                workspace=workspace,
+            ) as resolved:
+                info = await asyncio.to_thread(service.inspect, url, credential=resolved)
         await asyncio.to_thread(
             repository.transition, job_id, JobStatus.RUNNING, source=info.source, attempt=attempt
         )
@@ -815,12 +839,28 @@ async def process_download_job(
                 container_policy=selected_policy,
                 native_video_codec=selected_native_video_codec,
             )
-        credential = cast(ResolvedCredential | None, ctx.get("credential_context"))
-        if credential is not None:
-            common_download_arguments["credential"] = credential
-        download_task = asyncio.create_task(
-            asyncio.to_thread(service.download, **common_download_arguments)
-        )
+        user_context = _private_job_user_context(record)
+        if user_context is None:
+            operator_credential = cast(ResolvedCredential | None, ctx.get("credential_context"))
+            if operator_credential is not None:
+                common_download_arguments["credential"] = operator_credential
+
+        def _run_download() -> DownloadResult:
+            if user_context is None:
+                return service.download(**common_download_arguments)
+            resolver = ctx.get("credential_resolver")
+            if resolver is None:
+                raise PrivateMediaAuthorizationError(
+                    "User-only credential resolver is unavailable for private media"
+                )
+            with resolver.resolve(
+                owner_user_id=record.user_id,
+                context=user_context,
+                workspace=output_directory,
+            ) as resolved:
+                return service.download(**common_download_arguments, credential=resolved)
+
+        download_task = asyncio.create_task(asyncio.to_thread(_run_download))
         try:
             result = await asyncio.shield(download_task)
         except asyncio.CancelledError:
@@ -1257,6 +1297,29 @@ async def maintenance_job(ctx: dict[str, Any]) -> int:
                 failure_class=safe_failure_class(exc),
             )
 
+    # Bounded pending-payment reconciliation (T025): durable orders are queried read-only;
+    # paid orders settle atomically exactly once. Never creates a new provider invoice.
+    payment_runtime = ctx.get("payment_runtime")
+    if payment_runtime is not None:
+        from telegram_media_bot.bootstrap.payments import PaymentRuntime
+
+        runtime = cast(PaymentRuntime, payment_runtime)
+        try:
+            report = await asyncio.to_thread(
+                runtime.reconciliation.reconcile_batch,
+                batch_size=settings.payments.reconciliation.batch_size,
+            )
+            log_context["payments_scanned"] = report.scanned
+            log_context["payments_confirmed"] = report.confirmed
+            log_context["payments_terminal"] = report.terminal
+            log_context["payments_pending"] = report.pending
+            log_context["payments_skipped"] = report.skipped
+        except Exception as exc:
+            await logger.aerror(
+                "payment_reconciliation_failed",
+                failure_class=safe_failure_class(exc),
+            )
+
     await logger.ainfo("maintenance_completed", **log_context)
     return total_removed
 
@@ -1507,6 +1570,8 @@ async def _record_failed_usage(
 
 
 def _controlled_failure_text(exc: MediaBotError) -> str:
+    if isinstance(exc, PrivateMediaAuthorizationError):
+        return PRIVATE_VIP_REQUIRED_TEXT
     if isinstance(exc, InstagramCookiesUnavailableError):
         return INSTAGRAM_COOKIES_BLOCKED_TEXT
     if isinstance(exc, GalleryDlCookiesExpiredError):
@@ -1706,6 +1771,24 @@ def _instagram_username_from_url(url: str) -> str | None:
     ):
         return None
     return username
+
+
+def _private_job_user_context(record: JobRecord | None) -> CredentialContext | None:
+    """Return a USER_ONLY context when the accepted job snapshot demands private media.
+
+    PUBLIC job records carry no snapshot (or one without the private capability) and keep the
+    operator/public path exactly as before. PRIVATE jobs force ``USER_INSTAGRAM`` with
+    ``USER_ONLY`` policy: the worker never resolves an operator credential for them, and any
+    failure at this seam fails the job rather than falling back.
+    """
+    snapshot = record.entitlement_snapshot if record is not None else None
+    if snapshot is None or snapshot.capability != Capability.INSTAGRAM_PRIVATE_MEDIA:
+        return None
+    return CredentialContext(
+        kind=CredentialKind.USER_INSTAGRAM,
+        policy=CredentialPolicy.USER_ONLY,
+        user_generation=None,
+    )
 
 
 def _gate_collection_cookies(ctx: dict[str, Any], mode: DownloadMode) -> None:

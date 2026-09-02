@@ -22,22 +22,51 @@ from pydantic import (
     model_validator,
 )
 
+from telegram_media_bot.application.ports.companion import (
+    InstagramConnectFlow,
+    PaymentCallbackProcessor,
+    PaymentCallbackTrigger,
+)
+from telegram_media_bot.application.services.credential_vault import CredentialVault
 from telegram_media_bot.application.services.handoff import CompanionHandoffService
-from telegram_media_bot.bootstrap.config import _validate_ip_or_cidr
+from telegram_media_bot.application.services.instagram_connection import (
+    InstagramConnectionService,
+)
+from telegram_media_bot.bootstrap.config import (
+    PaymentsSection,
+    VaultKeyRingSection,
+    _validate_ip_or_cidr,
+)
 from telegram_media_bot.domain.errors import ConfigurationError
 from telegram_media_bot.domain.web_companion import (
     InstagramConnectResult,
     InstagramConnectStage,
     PaymentCallbackOutcome,
 )
+from telegram_media_bot.infrastructure.credentials.key_ring import (
+    CredentialCryptor,
+    VaultKeyRing,
+)
+from telegram_media_bot.infrastructure.instagram_login.real import RealInstagramSessionAcquirer
+from telegram_media_bot.infrastructure.payments.callbacks import (
+    HooshPayCallbackAdapter,
+    PaymentCallbackAdapter,
+    RegistryPaymentCallbacks,
+    TetraminatorCallbackAdapter,
+    UniquePayCallbackAdapter,
+)
 from telegram_media_bot.infrastructure.persistence.sqlite_handoff import (
     SqliteHandoffNonceRepository,
+)
+from telegram_media_bot.infrastructure.persistence.sqlite_instagram_credentials import (
+    SqliteInstagramCredentialRepository,
 )
 from telegram_media_bot.infrastructure.security.handoff import (
     Ed25519HandoffVerifier,
     HandoffCryptoError,
 )
 from telegram_media_bot.infrastructure.web_companion.app import CompanionWebApp
+from telegram_media_bot.infrastructure.web_companion.flow import CompanionInstagramConnectionFlow
 
 #: Exact set of ``web_companion`` YAML keys the companion may consume. Deliberately excludes
 #: ``handoff_signing_key`` (bot surface) and every ``telegram`` key (bot token).
@@ -76,6 +105,10 @@ class CompanionSettings(BaseModel):
     trusted_proxies: tuple[str, ...] = ()
     handoff_clock_skew_seconds: int = Field(default=30, ge=0, le=300)
     handoff_verification_key: SecretStr | None = None
+    #: Least-privilege subset: payment providers (never the Telegram section).
+    payments: PaymentsSection | None = None
+    #: Vault key ring for encrypted Instagram sessions (never the signer).
+    vault: VaultKeyRingSection | None = None
     #: Derived, never operator-supplied: shared WAL path for the nonce store.
     database_path: Path | None = None
 
@@ -104,32 +137,6 @@ class CompanionSettings(BaseModel):
         return self
 
 
-class DisabledInstagramConnectionFlow:
-    async def step(
-        self,
-        *,
-        owner_user_id: int,
-        session_id: str,
-        input_value: str | None,
-    ) -> InstagramConnectResult:
-        del owner_user_id, session_id, input_value
-        return InstagramConnectResult(stage=InstagramConnectStage.NOT_AVAILABLE, message="")
-
-
-class EmptyProviderCallbackRegistry:
-    """No payment provider adapter is registered (T024 blocked). Returns None always."""
-
-    def verifier_for(self, provider_id: str):  # type: ignore[no-untyped-def]
-        del provider_id
-        return None
-
-
-class UnavailablePaymentCallbackProcessor:
-    async def process(self, *, provider_id: str, provider_payload: bytes) -> PaymentCallbackOutcome:
-        del provider_id, provider_payload
-        return PaymentCallbackOutcome.NOT_AVAILABLE
-
-
 def load_companion_settings(path: Path | str | None = None) -> CompanionSettings:
     from telegram_media_bot.bootstrap.config import default_config_path
 
@@ -154,6 +161,12 @@ def load_companion_settings(path: Path | str | None = None) -> CompanionSettings
                 subset[key] = web[key]
 
     subset["database_path"] = _resolve_database_path(raw, config_path.parent)
+    raw_payments = raw.get("payments")
+    if isinstance(raw_payments, dict):
+        subset["payments"] = PaymentsSection.model_validate(raw_payments)
+    raw_vault = raw.get("vault")
+    if isinstance(raw_vault, dict):
+        subset["vault"] = VaultKeyRingSection.model_validate(raw_vault)
     try:
         return CompanionSettings.model_validate(subset)
     except ValidationError as exc:
@@ -190,6 +203,7 @@ def build_companion_app(settings: CompanionSettings) -> web.Application:
     nonce_repo = SqliteHandoffNonceRepository(settings.database_path)
     nonce_repo.initialize()
     service = CompanionHandoffService(verifier=verifier, nonce_repository=nonce_repo)
+    flow, provider_registry, payment_processor = _build_feature_services(settings, service)
     app = CompanionWebApp(
         host=settings.host,
         port=settings.port,
@@ -201,11 +215,88 @@ def build_companion_app(settings: CompanionSettings) -> web.Application:
         rate_limit_per_minute=settings.rate_limit_per_minute,
         trusted_proxies=settings.trusted_proxies,
         handoff_exchange=service.exchange,
-        flow=DisabledInstagramConnectionFlow(),
-        provider_registry=EmptyProviderCallbackRegistry(),
-        payment_processor=UnavailablePaymentCallbackProcessor(),
+        flow=flow,
+        provider_registry=provider_registry,
+        payment_processor=payment_processor,
     )
     return app.build()
+
+
+class DisabledPaymentCallbackProcessor(PaymentCallbackProcessor):
+    async def process(self, *, trigger: PaymentCallbackTrigger) -> PaymentCallbackOutcome:
+        del trigger
+        return PaymentCallbackOutcome.NOT_AVAILABLE
+
+
+class DisabledInstagramFlow(InstagramConnectFlow):
+    async def step(
+        self, *, owner_user_id: int, session_id: str, input_value: object | None
+    ) -> InstagramConnectResult:
+        del owner_user_id, session_id, input_value
+        return InstagramConnectResult(stage=InstagramConnectStage.NOT_AVAILABLE)
+
+
+def _build_feature_services(
+    settings: CompanionSettings, service: CompanionHandoffService
+) -> tuple[InstagramConnectFlow, RegistryPaymentCallbacks, PaymentCallbackProcessor]:
+    """Wire optional feature services with least privilege; every piece defaults off."""
+    from telegram_media_bot.bootstrap.payments import build_payment_runtime
+
+    fallback_processor: PaymentCallbackProcessor = DisabledPaymentCallbackProcessor()
+    registry_adapters: dict[str, PaymentCallbackAdapter] = {}
+    flow: InstagramConnectFlow = DisabledInstagramFlow()
+
+    if settings.payments is not None and settings.database_path is not None:
+        payment_runtime = build_payment_runtime(
+            payments=settings.payments,
+            database_path=settings.database_path,
+        )
+        if payment_runtime is not None:
+            from telegram_media_bot.application.services.payment_callbacks import (
+                CompanionPaymentCallbackProcessor,
+            )
+            from telegram_media_bot.bootstrap.payments import (
+                HOOSHPAY_ID,
+                TETRAMINATOR_ID,
+                UNIQUEPAY_ID,
+            )
+
+            if UNIQUEPAY_ID in payment_runtime.gateways:
+                registry_adapters[UNIQUEPAY_ID] = UniquePayCallbackAdapter()
+            if TETRAMINATOR_ID in payment_runtime.gateways:
+                registry_adapters[TETRAMINATOR_ID] = TetraminatorCallbackAdapter()
+            if HOOSHPAY_ID in payment_runtime.gateways:
+                hooshpay_section = settings.payments.hooshpay
+                ipn = hooshpay_section.ipn_secret_key
+                if ipn is not None:
+                    registry_adapters[HOOSHPAY_ID] = HooshPayCallbackAdapter(
+                        ipn_secret=ipn.get_secret_value()
+                    )
+            fallback_processor = CompanionPaymentCallbackProcessor(
+                reconciliation=payment_runtime.reconciliation,
+                payments=payment_runtime.repository,
+            )
+
+    if (
+        settings.vault is not None
+        and settings.vault.has_keys()
+        and settings.database_path is not None
+    ):
+        repo = SqliteInstagramCredentialRepository(settings.database_path)
+        repo.initialize()
+        ring = VaultKeyRing.from_config(settings.vault)
+        vault = CredentialVault(repo, CredentialCryptor(ring))
+        connection = InstagramConnectionService(
+            vault=vault,
+            acquirer=RealInstagramSessionAcquirer(),
+        )
+        flow = CompanionInstagramConnectionFlow(
+            connection=connection,
+            max_age_seconds=settings.interactive_flow_max_seconds,
+            max_sessions=settings.interactive_flow_max_sessions,
+        )
+
+    return flow, RegistryPaymentCallbacks(registry_adapters), fallback_processor
 
 
 def _verifier_from_settings(settings: CompanionSettings) -> Ed25519HandoffVerifier:

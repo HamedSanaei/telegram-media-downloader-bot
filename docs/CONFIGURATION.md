@@ -196,3 +196,53 @@ may remove unreferenced old images only from
 `ghcr.io/hamedsanaei/telegram-media-downloader-bot`. Run `tmb cleanup --dry-run` to preview
 workspace, stopped-project-container, and old-image candidates. This command never invokes
 `docker system prune`, `docker image prune`, `docker volume prune`, or build-cache pruning.
+
+## Payments (rial VIP billing)
+
+`payments` is strict and additive: older config.yaml files without it remain valid and
+everything defaults OFF. `payments.enabled` gates NEW checkout creation only; existing pending
+orders stay queryable, confirmable, and reconcilable. `payments.reconciliation` bounds the worker
+cron (interval/batch/query attempts) and never creates new invoices. Each provider section is
+`enabled: false` by default and requires its credentials plus a public `callback_url`
+(HTTPS) before new checkout is offered; `business_token`/`api_key`/`ipn_secret_key` are
+secret-typed values that never appear in logs, doctor output, exceptions, audit, or metrics. The
+money contract is integer whole toman with `currency = IRT` for all three providers.
+
+```yaml
+payments:
+  enabled: false
+  order_expiry_minutes: 30
+  reconciliation:
+    enabled: true
+    interval_seconds: 300
+    batch_size: 20
+    max_query_attempts: 10
+  uniquepay:
+    enabled: false
+    base_url: https://uniquepay.top
+    business_token: null
+    callback_url: null
+    return_url: null
+    request_timeout_seconds: 15.0
+    inquiry_retry_count: 2
+  tetraminator:
+    enabled: false
+    base_url: https://api.tetraminator.com/v1
+    api_key: null
+    callback_url: null
+    request_timeout_seconds: 15.0
+    inquiry_retry_count: 2
+  hooshpay:
+    enabled: false
+    base_url: https://pay.hooshnet.com
+    api_key: null
+    ipn_secret_key: null
+    callback_url: null
+    return_url: null
+    request_timeout_seconds: 15.0
+    inquiry_retry_count: 2
+```
+
+`telegram.logger.payment_events_enabled` (default `true`) independently controls purchase/admin
+payment events on the Operator Logger; `logger.enabled` remains the master kill switch, and
+payment events never depend on `submission_mirror_enabled`.

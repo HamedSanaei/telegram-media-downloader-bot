@@ -55,6 +55,9 @@ telegram:
     channels: []
     alerts_enabled: false
     submission_mirror_enabled: false
+    # Independent switch: successful VIP purchases are written to the Operator Logger even when
+    # submission mirroring is off. The global logger.enabled above remains the master kill switch.
+    payment_events_enabled: true
     # Set true only after the operator has reviewed the private-channel access/retention policy.
     operator_privacy_attested: false
     # Kept for backward compatibility. Since v1.4.0-rc.2 no per-user
@@ -259,3 +262,46 @@ vault:
   active_key_id: ""
   active_key: null
   retained_keys: {}
+
+# rial VIP billing (T024/T025). Strict and additive: every switch defaults OFF, so older
+# config.yaml files without this section remain valid. `enabled` is the master switch for NEW
+# checkout creation only; existing pending orders can always be queried, confirmed and
+# reconciled (read-only) even when checkout is disabled.
+payments:
+  enabled: false
+  order_expiry_minutes: 30
+  reconciliation:
+    enabled: true
+    interval_seconds: 300
+    batch_size: 20
+    max_query_attempts: 10
+
+  # UniquePay (https://uniquepay.top) - Authorization: Bearer <business_token>
+  uniquepay:
+    enabled: false
+    base_url: https://uniquepay.top
+    business_token: null
+    callback_url: null
+    return_url: null
+    request_timeout_seconds: 15.0
+    inquiry_retry_count: 2
+
+  # Tetraminator (https://api.tetraminator.com/v1)
+  tetraminator:
+    enabled: false
+    base_url: https://api.tetraminator.com/v1
+    api_key: null
+    callback_url: null
+    request_timeout_seconds: 15.0
+    inquiry_retry_count: 2
+
+  # HooshPay (https://pay.hooshnet.com) - signed IPN webhook
+  hooshpay:
+    enabled: false
+    base_url: https://pay.hooshnet.com
+    api_key: null
+    ipn_secret_key: null
+    callback_url: null
+    return_url: null
+    request_timeout_seconds: 15.0
+    inquiry_retry_count: 2

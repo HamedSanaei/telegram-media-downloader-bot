@@ -1,11 +1,19 @@
-"""Billing/payment persistence and gateway contracts (T015).
+"""Billing/payment persistence and gateway contracts (T015/T024/T025).
 
 Keeps the domain and application layers free of ``sqlite3`` and provider implementation details.
 The gateway is resolved through composition/infrastructure, never a provider ``if/elif`` chain in
 domain or application code. ``BillingService`` accepts only a ``VerifiedPaymentResult``; it never
-receives a raw provider callback. The atomic confirmation/reversal methods hide the single SQLite
-transaction so order transition, transaction claim, entitlement grant creation/reversal, and
-subscription recomputation share one commit (or roll back together).
+receives a raw provider callback.
+
+Callback contract: providers call the companion with provider-specific bodies (signed JSON IPN,
+unsigned form POST, or a GET with no body). None of them is payment proof. A registered
+``PaymentCallbackAdapter`` normalizes the untrusted trigger, then the reconciliation service runs a
+point-in-time ``PaymentGateway.query_payment`` and ``BillingService`` settles only the normalized
+``VerifiedPaymentResult`` inside one SQLite transaction.
+
+Creation contract: the one permitted provider create POST is durably reserved before any network
+byte leaves the process (``begin_creation_attempt``), and surviving states (``created``,
+``ambiguous``) resolve only through read-only inquiry — never by issuing another create.
 """
 
 from __future__ import annotations
@@ -16,6 +24,8 @@ from typing import Protocol
 from telegram_media_bot.domain.payments import (
     CheckoutResult,
     PaymentAttempt,
+    PaymentCreationReservation,
+    PaymentCreationState,
     PaymentOrder,
     PaymentOrderId,
     PaymentProviderId,
@@ -26,27 +36,33 @@ from telegram_media_bot.domain.subscriptions import EntitlementGrant, Subscripti
 
 
 class PaymentGateway(Protocol):
-    """Provider-neutral gateway adapter contract implemented at the infrastructure boundary."""
+    """Provider-neutral gateway adapter contract implemented at the infrastructure boundary.
+
+    ``create_payment`` must follow the durable creation-reservation protocol defined on the
+    payment repository: the single create mutation is reserved before the POST and resolved
+    (created/ambiguous/failed) after it. ``query_payment`` is read-only and is the only path that
+    may retry transient failures. Callbacks are handled by separate callback adapters, never here.
+    """
 
     #: Stable provider identity owned by the adapter/registry (a bounded operator-controlled set).
     provider_id: PaymentProviderId
 
     def create_payment(self, order: PaymentOrder) -> CheckoutResult:
-        """Create an external checkout. The returned result is a redirect, never proof of payment."""
-
-    def verify_callback(
-        self,
-        order: PaymentOrder,
-        provider_payload: object,
-    ) -> VerifiedPaymentResult:
-        """Verify an untrusted provider message and normalize it into a project-owned result."""
+        """Create exactly one external checkout. The returned result is a redirect, never proof."""
 
     def query_payment(
         self,
         order: PaymentOrder,
         provider_transaction_reference: ProviderTransactionReference | None,
     ) -> VerifiedPaymentResult:
-        """Query a pending order's provider state (used by future reconciliation)."""
+        """Pop point-in-time payment state. Read-only; may retry only transient failures."""
+
+    def available_for_new_checkout(self) -> bool:
+        """Whether NEW checkout creation is currently allowed (credentials/URL/switch valid).
+
+        Disabling a provider blocks new checkout only; existing pending orders remain queryable
+        and confirmable through ``query_payment``.
+        """
 
 
 class PaymentRepository(Protocol):
@@ -87,6 +103,61 @@ class PaymentRepository(Protocol):
         provider_id: PaymentProviderId,
         provider_transaction_reference: ProviderTransactionReference,
     ) -> PaymentOrderId | None: ...
+
+    # -- exactly-once provider create mutation (T024) --------------------------
+
+    def get_creation_reservation(
+        self, order_id: PaymentOrderId
+    ) -> PaymentCreationReservation | None:
+        """Load the durable create-reservation row, if any."""
+
+    def begin_creation_attempt(
+        self,
+        *,
+        order_id: PaymentOrderId,
+        provider_id: PaymentProviderId,
+        merchant_reference: str,
+        attempted_at: datetime,
+    ) -> PaymentCreationReservation:
+        """Durably reserve the ONE create POST and classify everything before the network call.
+
+        Raises ``PaymentCreationReservedError`` when the order already has a started creation
+        attempt; recovery from any surviving state is inquiry-only.
+        """
+
+    def resolve_creation_attempt(
+        self,
+        *,
+        order_id: PaymentOrderId,
+        state: PaymentCreationState,
+        error_code: str | None,
+        resolved_at: datetime,
+    ) -> None:
+        """Persist the single-attempt outcome. A definitive failure stops automatic inquiry."""
+
+    def record_creation_inquiry(
+        self,
+        *,
+        order_id: PaymentOrderId,
+        now: datetime,
+        next_inquiry_at: datetime | None,
+    ) -> None:
+        """Record one read-only recovery inquiry and its bounded backoff."""
+
+    def attach_checkout(
+        self,
+        *,
+        order_id: PaymentOrderId,
+        provider_id: PaymentProviderId,
+        external_checkout_reference: str,
+        checkout_url: str,
+        now: datetime,
+    ) -> None:
+        """Durably persist the provider checkout identity/URL before ``create_payment`` returns.
+
+        A crash after a successful provider response must never lose the external reference;
+        recovery re-displays the same checkout instead of creating another invoice.
+        """
 
     def confirm_order_atomic(
         self,

@@ -20,13 +20,17 @@ from telegram_media_bot.application.ports.download_engine import DownloadEngine
 from telegram_media_bot.application.services.audit_outbox import AuditOutboxProcessor
 from telegram_media_bot.application.services.audit_service import AuditService
 from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
+from telegram_media_bot.application.services.credential_resolution import CredentialResolver
+from telegram_media_bot.application.services.credential_vault import CredentialVault
 from telegram_media_bot.application.services.delivery_output_audit import (
     DeliveredOutputAuditService,
 )
 from telegram_media_bot.application.services.download_service import DownloadService
+from telegram_media_bot.application.services.entitlements import EntitlementService
 from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
 from telegram_media_bot.application.services.submission_audit import mirroring_enabled
 from telegram_media_bot.bootstrap.config import Settings, load_settings
+from telegram_media_bot.bootstrap.payments import build_payment_runtime
 from telegram_media_bot.domain.audit import LoggerHealthSnapshot
 from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.models import (
@@ -43,6 +47,11 @@ from telegram_media_bot.infrastructure.cookies.health import (
     NetscapeStaticCookieChecker,
 )
 from telegram_media_bot.infrastructure.cookies.manager import NetscapeCookieManager
+from telegram_media_bot.infrastructure.credentials.key_ring import (
+    CredentialCryptor,
+    VaultKeyRing,
+)
+from telegram_media_bot.infrastructure.credentials.materializer import RestrictedCookieMaterializer
 from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
 from telegram_media_bot.infrastructure.media_engine_router import RoutedMediaEngine
 from telegram_media_bot.infrastructure.observability.health_server import HealthServer
@@ -54,6 +63,9 @@ from telegram_media_bot.infrastructure.persistence.sqlite_cookie_health import (
 from telegram_media_bot.infrastructure.persistence.sqlite_effects import SqliteEffectLedger
 from telegram_media_bot.infrastructure.persistence.sqlite_inbound_updates import (
     SqliteInboundUpdateRepository,
+)
+from telegram_media_bot.infrastructure.persistence.sqlite_instagram_credentials import (
+    SqliteInstagramCredentialRepository,
 )
 from telegram_media_bot.infrastructure.persistence.sqlite_payments import SqlitePaymentRepository
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
@@ -87,6 +99,24 @@ from telegram_media_bot.workers.jobs import (
 logger = structlog.get_logger(__name__)
 
 RecoveryNotifier = Callable[[JobRecord], Awaitable[None]]
+
+
+def _build_credential_resolver(settings: Settings) -> CredentialResolver | None:
+    """Compose the user-credential resolver ONLY when vault keys exist (least privilege).
+
+    Public jobs keep the operator context; private USER_ONLY jobs need the vault. When vault
+    keys are absent the resolver is None and private jobs fail closed in jobs.py.
+    """
+    if not settings.vault.has_keys():
+        return None
+    repo = SqliteInstagramCredentialRepository(settings.database_path())
+    repo.initialize()
+    ring = VaultKeyRing.from_config(settings.vault)
+    cryptor = CredentialCryptor(ring)
+    return CredentialResolver(
+        vault=CredentialVault(repo, cryptor),
+        materializer=RestrictedCookieMaterializer(repo, cryptor),
+    )
 
 
 async def startup(ctx: dict[str, Any]) -> None:
@@ -214,8 +244,21 @@ async def startup(ctx: dict[str, Any]) -> None:
             output_audit=output_audit,
             audit_store=audit_store,
             audit_processor=audit_processor,
-            # The current public path remains operator-backed; this explicit project-owned
-            # context is the seam used by later authenticated routing tasks.
+            subscription_store=SqliteSubscriptionRepository(settings.database_path()),
+            entitlements=EntitlementService(
+                subscriptions=SqliteSubscriptionRepository(settings.database_path()),
+                plans=SqliteSubscriptionRepository(settings.database_path()),
+            ),
+            credential_resolver=_build_credential_resolver(settings),
+            payment_runtime=build_payment_runtime(
+                payments=settings.payments,
+                database_path=settings.database_path(),
+                audit=audit,
+                payment_events_enabled=settings.telegram.logger.payment_events_enabled,
+            ),
+            # Public-Instagram jobs use the attested operator public credential; PRIVATE
+            # Instagram jobs resolve USER_ONLY credentials from the job's accepted snapshot
+            # (see jobs.py) and NEVER fall back to the operator account.
             credential_context=ResolvedCredential.operator_public(),
         )
         cutoff = datetime.now(UTC)

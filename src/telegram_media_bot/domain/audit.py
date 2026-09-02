@@ -16,6 +16,7 @@ class AuditCategory(StrEnum):
     COOKIE_HEALTH = "cookie_health"
     USER_SUBMISSION = "user_submission"
     SYSTEM = "system"
+    PAYMENT = "payment"
 
 
 class AuditSeverity(StrEnum):
@@ -31,6 +32,13 @@ class AuditEventType(StrEnum):
     USER_SUBMISSION_RECEIVED = "user_submission_received"
     DOWNLOAD_OUTPUT_DELIVERED = "download_output_delivered"
     SYSTEM_HEALTH = "system_health"
+    PAYMENT_CONFIRMED = "payment_confirmed"
+    PAYMENT_REFUNDED = "payment_refunded"
+    ADMIN_VIP_GRANTED = "admin_vip_granted"
+    ADMIN_VIP_REVOKED = "admin_vip_revoked"
+    ADMIN_VIP_SUSPENDED = "admin_vip_suspended"
+    ADMIN_VIP_UNSUSPENDED = "admin_vip_unsuspended"
+    ADMIN_PLAN_CHANGED = "admin_plan_changed"
 
 
 class LoggerDestinationSource(StrEnum):
@@ -77,6 +85,13 @@ _EVENT_CATEGORIES = {
     AuditEventType.USER_SUBMISSION_RECEIVED: AuditCategory.USER_SUBMISSION,
     AuditEventType.DOWNLOAD_OUTPUT_DELIVERED: AuditCategory.USER_SUBMISSION,
     AuditEventType.SYSTEM_HEALTH: AuditCategory.SYSTEM,
+    AuditEventType.PAYMENT_CONFIRMED: AuditCategory.PAYMENT,
+    AuditEventType.PAYMENT_REFUNDED: AuditCategory.PAYMENT,
+    AuditEventType.ADMIN_VIP_GRANTED: AuditCategory.PAYMENT,
+    AuditEventType.ADMIN_VIP_REVOKED: AuditCategory.PAYMENT,
+    AuditEventType.ADMIN_VIP_SUSPENDED: AuditCategory.PAYMENT,
+    AuditEventType.ADMIN_VIP_UNSUSPENDED: AuditCategory.PAYMENT,
+    AuditEventType.ADMIN_PLAN_CHANGED: AuditCategory.PAYMENT,
 }
 
 

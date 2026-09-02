@@ -22,6 +22,7 @@ from telegram_media_bot.domain.errors import (
     EntitlementGrantNotFoundError,
     EntitlementInactiveError,
     EntitlementNoValidGrantError,
+    EntitlementSuspendedError,
     PersistenceError,
 )
 from telegram_media_bot.domain.subscriptions import (
@@ -71,6 +72,10 @@ class EntitlementService:
         if known is None:
             raise EntitlementInactiveError("User has no subscription history")
         subscription, grants = known
+        if subscription.suspended_at is not None:
+            raise EntitlementSuspendedError(
+                "Subscription is operationally suspended; access fails closed"
+            )
         if subscription.cancelled_at is not None:
             raise EntitlementCancelledError("Subscription is cancelled")
         valid = grant_windows(grants)
@@ -242,6 +247,8 @@ def subscription_status(subscription: Subscription | None, now: datetime) -> Sub
         return SubscriptionStatus.INACTIVE
     if subscription.cancelled_at is not None:
         return SubscriptionStatus.CANCELLED
+    if subscription.suspended_at is not None:
+        return SubscriptionStatus.SUSPENDED
     if subscription.authorized_until is None:
         return SubscriptionStatus.INACTIVE
     if subscription.authorized_until <= now:

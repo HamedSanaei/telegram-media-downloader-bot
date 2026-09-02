@@ -20,11 +20,13 @@ class InstagramConnectionService:
     def __init__(
         self,
         *,
-        link_service: HandoffLinkService,
-        connect_base_url: str,
         vault: CredentialVault,
         acquirer: InstagramSessionAcquirer,
+        link_service: HandoffLinkService | None = None,
+        connect_base_url: str = "",
     ) -> None:
+        # The companion process composes this service WITHOUT the bot-side signer (least
+        # privilege, T016): link minting is then unavailable, which is exactly right.
         self._link_service = link_service
         self._base_url = connect_base_url.rstrip("/")
         self._vault = vault
@@ -32,6 +34,8 @@ class InstagramConnectionService:
 
     def create_connect_link(self, owner_user_id: int) -> str:
         """Mint a signed, single-use link with the handoff token in the URL fragment."""
+        if self._link_service is None:
+            raise RuntimeError("link minting is unavailable in this composition")
         token = self._link_service.create(
             purpose=HandoffPurpose.INSTAGRAM_CONNECT, owner_user_id=owner_user_id
         )
@@ -41,11 +45,17 @@ class InstagramConnectionService:
         self,
         owner_user_id: int,
         *,
+        username: str | None = None,
         password: str | None = None,
         twofa_code: str | None = None,
     ) -> InstagramLoginResult:
-        """Submit one transient login step and, on success, store the encrypted session."""
-        result = self._acquirer.step(password=password, twofa_code=twofa_code)
+        """Submit one transient login step and, on success, store the encrypted session.
+
+        The acquirer's success already proves a real authenticated session; the plaintext
+        credential material (username/password/2FA plus the one-shot session bytes) is held by
+        the caller and immediately released after this call returns.
+        """
+        result = self._acquirer.step(username=username, password=password, twofa_code=twofa_code)
         if result.connected and result.session_bytes is not None:
             self._vault.store_session(owner_user_id, result.session_bytes)
         return result

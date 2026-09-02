@@ -285,6 +285,10 @@ class EntitlementCapabilityMissingError(EntitlementDeniedError):
     """The user has active time but the requested capability is not covered by those grants."""
 
 
+class EntitlementSuspendedError(EntitlementDeniedError):
+    """VIP access is operationally suspended (admin suspension, not a refund)."""
+
+
 class EntitlementBackendError(MediaBotError):
     """The entitlement backend is unavailable; authorization FAILS CLOSED (never Free/VIP)."""
 
@@ -345,6 +349,14 @@ class PaymentAlreadyRefundedError(PaymentError):
 
 class InvalidPaymentTransitionError(PaymentError):
     """A payment order state transition is not allowed."""
+
+
+class PaymentCreationReservedError(PaymentError):
+    """A provider create mutation was already reserved; recovery is inquiry-only."""
+
+
+class CheckoutAlreadyStartedError(PaymentError):
+    """The order already has an active external checkout; do not create another."""
 
 
 class PaymentBackendError(PaymentError):
@@ -411,6 +423,15 @@ class CredentialKeyMissingError(CredentialError):
 
 class CredentialMaterializationError(CredentialError):
     """Local plaintext materialization into the job workspace failed."""
+
+
+class PrivateMediaAuthorizationError(MediaBotError):
+    """A private-media job cannot be authorized (fail closed, T021/T025).
+
+    Raised at acceptance (bot) when the user lacks VIP/no session/no legitimate visibility, and
+    at execution (worker) when USER_ONLY resolution is impossible. NEVER used to fall back to the
+    operator credential.
+    """
 
 
 class CredentialResolutionError(MediaBotError):

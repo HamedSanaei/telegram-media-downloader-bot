@@ -96,6 +96,11 @@ class PaymentOrder:
     expires_at: datetime
     status: PaymentStatus
     provider_id: PaymentProviderId | None = None
+    #: Provider-owned durable checkout identity (pay_id / invoice UID / refId) persisted when the
+    #: external checkout is created. Never a secret; used for point-in-time queries.
+    external_checkout_reference: str | None = None
+    #: Presentation-only checkout URL persisted for recovery from ``/vip``. Never payment proof.
+    checkout_url: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.duration_months, bool) or not isinstance(self.duration_months, int):
@@ -111,6 +116,53 @@ class PaymentOrder:
             raise ValueError("currency must be a 3-letter alphabetic code")
         object.__setattr__(self, "currency", currency)
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
+
+
+class PaymentCreationState(StrEnum):
+    """Durable lifecycle of the ONE permitted provider invoice-creation mutation.
+
+    The create POST is reserved durably before any network byte leaves the process. Surviving
+    states classify the single attempt: ``CREATED``/``AMBIGUOUS``/``FAILED`` and recovery is
+    GET-only inquiry. It is intentional that no state permits a second create POST.
+    """
+
+    NOT_STARTED = "not_started"
+    ATTEMPTING = "attempting"
+    CREATED = "created"
+    AMBIGUOUS = "ambiguous"
+    FAILED = "failed"
+    MANUAL_REVIEW = "manual_review"
+
+    @property
+    def inquiry_allowed(self) -> bool:
+        """Explicit read-only inquiry is allowed for every state except a definitive failure."""
+        return self is not PaymentCreationState.FAILED
+
+    @property
+    def started(self) -> bool:
+        return self is not PaymentCreationState.NOT_STARTED
+
+
+@dataclass(frozen=True, slots=True)
+class PaymentCreationReservation:
+    """Durable exactly-once reservation for one provider create mutation (per order).
+
+    ``merchant_reference`` is the deterministic local identity presented to the provider
+    (for example the UniquePay hashId) and is generated and persisted BEFORE the POST so that a
+    timeout or crash can never authorize a second create. ``inquiry_attempts`` counts bounded
+    read-only recovery queries only.
+    """
+
+    order_id: PaymentOrderId
+    provider_id: PaymentProviderId
+    merchant_reference: str
+    state: PaymentCreationState = PaymentCreationState.NOT_STARTED
+    error_code: str | None = None
+    attempted_at: datetime | None = None
+    resolved_at: datetime | None = None
+    inquiry_attempts: int = 0
+    last_inquiry_at: datetime | None = None
+    next_inquiry_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,9 +187,10 @@ class PaymentAttempt:
 class CheckoutResult:
     """Safe, provider-neutral result of opening an external checkout.
 
-    Contains provider identity, an opaque external reference/token, and the order identity. It must
-    not be treated as payment proof and may carry no provider secret. A redirect/return URL is
-    presentation state only; it never confirms payment.
+    Contains provider identity, an opaque external reference/token, the order identity, and a
+    presentation-only checkout URL. It must not be treated as payment proof and may carry no
+    provider secret. ``checkout_url`` is bounded to HTTPS or an explicitly allowed Telegram deep
+    link and never embeds a provider credential or raw callback data.
     """
 
     provider_id: PaymentProviderId
@@ -145,6 +198,22 @@ class CheckoutResult:
     external_checkout_reference: str
     created_at: datetime
     expires_at: datetime
+    checkout_url: str
+
+    def __post_init__(self) -> None:
+        from urllib.parse import urlsplit
+
+        if not isinstance(self.checkout_url, str) or not self.checkout_url.strip():
+            raise ValueError("checkout_url is required")
+        cleaned = self.checkout_url.strip()
+        parsed = urlsplit(cleaned)
+        if parsed.scheme == "https" and parsed.netloc:
+            object.__setattr__(self, "checkout_url", cleaned)
+            return
+        if parsed.scheme == "tg" and parsed.netloc:
+            object.__setattr__(self, "checkout_url", cleaned)
+            return
+        raise ValueError("checkout_url must be an absolute HTTPS URL or an allowed Telegram link")
 
     @property
     def redirect_only(self) -> bool:

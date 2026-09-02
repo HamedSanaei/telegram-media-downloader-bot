@@ -429,11 +429,12 @@ arbitrary documentation size ceiling.
 
 ## Milestone 4 architecture: VIP and authenticated Instagram
 
-**Status:** T014-T019 are **implemented locally**: entitlement and provider-neutral billing/payment
-foundations, the disabled secure companion, encrypted credential vault, account connection flow, and
-the explicit credential/attestation boundary. VIP fallback/private authorization, purchasing UX, and
-the first real payment gateway remain planned or blocked (T020-T025); nothing below those boundaries
-should be read as live.
+**Status:** T014-T025 are **implemented** end-to-end (see also `docs/STATUS.md` "T024/T025 runtime
+milestone"): entitlement and billing foundations, the least-privilege companion with per-provider
+payment callbacks, encrypted credential vault, account connection, credential resolution,
+VipAdminService, the real payment gateways (UniquePay/Tetraminator/HooshPay), and the
+USER_ONLY private-media policy with zero operator fallback. `FakeInstagramSessionAcquirer` is
+test-only; production uses `RealInstagramSessionAcquirer`.
 
 ### Planned system view
 

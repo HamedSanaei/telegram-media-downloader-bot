@@ -19,9 +19,11 @@ from typing import Protocol
 
 from telegram_media_bot.application.ports.payments import PaymentGateway, PaymentRepository
 from telegram_media_bot.domain.errors import (
+    CheckoutAlreadyStartedError,
     CheckoutUnavailableError,
     PaymentAlreadyRefundedError,
     PaymentBackendError,
+    PaymentCreationReservedError,
     PaymentOrderExpiredError,
     PaymentOrderNotFoundError,
     PersistenceError,
@@ -126,10 +128,23 @@ class BillingService:
     def start_checkout(
         self, order_id: PaymentOrderId, *, provider_id: PaymentProviderId
     ) -> CheckoutResult:
-        """Route a created order to a provider and persist a PENDING attempt (redirect only)."""
+        """Route a created order to a provider and persist a PENDING attempt (redirect only).
+
+        Economic-safety contract (T024): the adapter durably reserves the single provider create
+        mutation before the POST (``begin_creation_attempt``) and persists the external checkout
+        identity before returning (``attach_checkout``). If the order already carries an external
+        checkout, recovery re-displays the SAME checkout; another provider invoice is never
+        created.
+        """
         order = self._load_order(order_id)
+        if order.status is PaymentStatus.PENDING and order.external_checkout_reference:
+            raise CheckoutAlreadyStartedError(
+                "This order already has an external checkout; recover from /vip"
+            )
         payment_status_transition(order.status, PaymentStatus.PENDING)
         gateway = self._gateway(provider_id)
+        if not gateway.available_for_new_checkout():
+            raise CheckoutUnavailableError("Provider cannot accept new checkouts")
         attempt_id = PaymentAttemptId(f"attempt-{uuid.uuid4().hex}")
         now = self._now()
         try:
@@ -143,16 +158,24 @@ class BillingService:
                     updated_at=now,
                 )
             )
-            checkout = gateway.create_payment(
-                _with_status(order, PaymentStatus.PENDING, provider_id)
-            )
+            checkout = gateway.create_payment(order)
         except PaymentBackendError:
             raise
+        except PaymentCreationReservedError as exc:
+            raise CheckoutAlreadyStartedError(
+                "This order already has an external checkout; recover from /vip"
+            ) from exc
         except Exception as exc:
             raise CheckoutUnavailableError("Provider could not create a checkout") from exc
 
-        # Persist the PENDING order transition after a successful external checkout.
-        self._update_order_status(order_id, PaymentStatus.PENDING, provider_id)
+        # Persist the PENDING order transition after a successful external checkout. The adapter
+        # already attached the external reference; reload to carry it forward.
+        attached = self._load_order(order_id)
+        pending = _with_status(attached, PaymentStatus.PENDING, provider_id)
+        try:
+            self._payments.save_order(pending)
+        except PersistenceError as exc:
+            raise PaymentBackendError("Payment backend is unavailable") from exc
         return checkout
 
     def cancel_order(self, order_id: PaymentOrderId) -> PaymentOrder:
@@ -174,6 +197,29 @@ class BillingService:
         except Exception:
             return None
         return self._update_order_status(order_id, PaymentStatus.EXPIRED, order.provider_id)
+
+    def fail_order(
+        self, order_id: PaymentOrderId, *, failure_code: str | None = None
+    ) -> PaymentOrder:
+        """Terminally fail an un-paid order (provider rejection). Never revisits the provider."""
+        order = self._load_order(order_id)
+        payment_status_transition(order.status, PaymentStatus.FAILED)
+        failed = self._update_order_status(order_id, PaymentStatus.FAILED, order.provider_id)
+        assert failed is not None
+        # Keep the failure classification on the durable attempt row when one exists.
+        if failure_code is not None:
+            self._payments.save_attempt(
+                PaymentAttempt(
+                    attempt_id=PaymentAttemptId(f"attempt-{order_id!s}-failed"),
+                    order_id=order.order_id,
+                    provider_id=order.provider_id,
+                    status=PaymentStatus.FAILED,
+                    created_at=self._now(),
+                    updated_at=self._now(),
+                    failure_code=failure_code[:64],
+                )
+            )
+        return failed
 
     # -- verified result handling ----------------------------------------------
 
@@ -299,6 +345,8 @@ def _with_status(
         expires_at=order.expires_at,
         status=status,
         provider_id=provider_id,
+        external_checkout_reference=order.external_checkout_reference,
+        checkout_url=order.checkout_url,
     )
 
 

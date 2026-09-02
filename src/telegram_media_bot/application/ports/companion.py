@@ -10,6 +10,8 @@ registry. No port here can ever receive a bot token.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
@@ -69,18 +71,45 @@ class InteractiveFlowStore(Protocol):
     def drop(self, key: str) -> None: ...
 
 
-class ProviderCallbackVerifier(Protocol):
-    """Companion-side verifier for one registered payment provider's machine callbacks."""
+@dataclass(frozen=True, slots=True)
+class PaymentCallbackTrigger:
+    """Normalized provider-neutral callback trigger produced by a callback adapter.
 
-    def verify_callback(self, provider_payload: bytes) -> bool:
-        """Verify provider signature/freshness/replay and return whether it is trustworthy."""
+    A trigger locates the LOCAL order reference only. It is NEVER payment proof: the companion
+    processor follows it with a point-in-time ``query_payment`` and only ``BillingService``
+    settles the verified result. ``authentic`` records signature/credential checks for signed
+    providers; unsigned wake-up callbacks stay authentic-as-trigger and are equally powerless.
+    """
+
+    provider_id: str
+    order_reference: str | None
+    authentic: bool = True
+
+
+class PaymentCallbackAdapter(Protocol):
+    """Companion-side, provider-specific normalizer of one untrusted callback request.
+
+    Implementations parse the provider's own contract (signed JSON IPN, unsigned form POST, or a
+    GET with no body) into a bounded ``PaymentCallbackTrigger``. They never settle anything and
+    never expose provider secrets.
+    """
+
+    def normalize(
+        self,
+        *,
+        method: str,
+        headers: Mapping[str, str],
+        query: Mapping[str, str],
+        body: bytes,
+    ) -> PaymentCallbackTrigger:
+        """Normalize one untrusted callback request into a bounded local trigger."""
 
 
 class ProviderCallbackRegistry(Protocol):
-    """Composition-resolved lookup of registered payment callback verifiers."""
+    """Composition-resolved lookup of registered payment callback adapters."""
 
-    def verifier_for(self, provider_id: str) -> ProviderCallbackVerifier | None:
-        """Return the registered verifier for a provider, or None when none is registered."""
+    def adapter_for(self, provider_id: str) -> PaymentCallbackAdapter | None:
+        """Return the registered adapter for a provider, or None when none is registered."""
 
 
 class InstagramConnectFlow(Protocol):
@@ -96,21 +125,22 @@ class InstagramConnectFlow(Protocol):
         *,
         owner_user_id: int,
         session_id: str,
-        input_value: str | None,
+        input_value: object | None,
     ) -> InstagramConnectResult:
-        """Advance the flow one step and return a sanitized domain view."""
+        """Advance the flow one step and return a sanitized domain view.
+
+        ``input_value`` is a transient bounded value (a JSON object for identity+password+2FA
+        steps); the flow never persists or logs secrets.
+        """
 
 
 class PaymentCallbackProcessor(Protocol):
-    """Handles a cryptographically-verified payment callback by handing it to the billing service."""
+    """Handles a normalized callback trigger with a server-side authoritative query + settle."""
 
     async def process(
         self,
         *,
-        provider_id: str,
-        provider_payload: bytes,
+        trigger: PaymentCallbackTrigger,
     ) -> PaymentCallbackOutcome:
-        """Return a normalized outcome after server-side economic handling.
-
-        Must never confirm/activate an entitlement itself; the billing service does that.
-        """
+        """Locate the local order, run the authoritative provider query, and settle ONLY a
+        verified paid result. Never confirms from the callback payload itself."""

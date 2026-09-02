@@ -14,7 +14,7 @@ from telegram_media_bot.infrastructure.credentials.key_ring import (
     CredentialCryptor,
     VaultKeyRing,
 )
-from telegram_media_bot.infrastructure.instagram_login.fake import FakeInstagramSessionAcquirer
+from telegram_media_bot.infrastructure.instagram_login.real import RealInstagramSessionAcquirer
 from telegram_media_bot.infrastructure.persistence.sqlite_instagram_credentials import (
     SqliteInstagramCredentialRepository,
 )
@@ -50,7 +50,7 @@ def build_instagram_connection_service(settings: Settings) -> InstagramConnectio
         link_service=link_service,
         connect_base_url=settings.web_companion.public_base_url or "",
         vault=vault,
-        acquirer=FakeInstagramSessionAcquirer(),
+        acquirer=RealInstagramSessionAcquirer(),
     )
 
 

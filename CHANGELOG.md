@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Added (targeting v1.4.0-rc.4)
+
+- Three real rial payment gateways behind the provider-neutral boundary: UniquePay
+  (`infrastructure/payments/uniquepay.py`), Tetraminator (`infrastructure/payments/tetraminator.py`),
+  and HooshPay (`infrastructure/payments/hooshpay.py`). One money contract (integer whole toman,
+  `currency = IRT`), no hidden conversions. The single provider create POST is durably reserved
+  before any network byte and never retried (AMBIGUOUS recovers through inquiry only); only
+  read-only inquiries retry transient failures within the operator bound. Provider specific
+  callback adapters normalize unsigned form wake-ups, GET-with-no-body triggers, and the signed
+  HooshPay IPN into bounded local triggers — callbacks are never payment proof; every settle runs
+  query-before-settle through `PaymentReconciliationService` and the atomic BillingService
+  transaction with an exactly-once provider-transaction claim.
+- Strict additive `payments:` configuration (all OFF by default; unknown keys fail fast). Provider
+  availability gates NEW checkout only; existing pending orders stay queryable/confirmable/
+  reconcilable. Bounded worker reconciliation cron with backoff; never creates new invoices.
+- Persian `/vip` purchase UX (plan select, gateway select, durable checkout, provider link,
+  بررسی پرداخت) wired into the bot runtime; Telegram UX failures never re-issue a provider POST.
+- Admin ⭐ مدیریت VIP panel: sanitized user inspection, gift grant (distinct `admin_grant`
+  economic source with calendar-month stacking), gift revoke (admin-issued only), operational
+  suspend/unsuspend (never touches payment history), Instagram-session revoke, plan catalog
+  management (list/create/edit/duration/price/currency/enable/capabilities), and payment status
+  counts. Every mutation reauthorizes and records actor/target/action/UTC time.
+- Successful purchases and admin VIP actions emit safe, idempotent Operator-Logger events
+  (`AuditCategory.PAYMENT`, `PAYMENT_CONFIRMED`/`PAYMENT_REFUNDED`/`ADMIN_VIP_*`) with
+  deterministic idempotency keys; provider transaction references, pay_ids, UIDs, tracking codes,
+  signatures, and credentials are never logged. `telegram.logger.payment_events_enabled` is an
+  independent switch (default true); `logger.enabled` remains the master kill switch. A Logger
+  failure never rolls back a settled payment.
+- Real Instagram session acquisition replaces the test-only fake in production: real HTTPS login
+  with transient username/password/2FA, normalized Netscape cookie material, fail-closed on any
+  anomaly. Private-Instagram gating enforces Free → VIP required, VIP without session → connect
+  prompt, VIP with own session → USER_ONLY (zero operator fallback).
+
+
 ### Changed (targeting v1.4.0-rc.3)
 
 - The application Dockerfile now consumes the published immutable Telegram Bot API artifact

@@ -1,6 +1,11 @@
 # T025 - VIP security, migration, operations, and end-to-end rollout
 
-**Status:** implemented locally; production billing activation blocked by T024
+**Status:** implemented with the T024/T025 milestone (fake-provider purchase E2E, admin VIP
+panel, real Instagram acquisition, USER_ONLY private gating, payment Logger, reconciliation, and
+migration/additive-schema coverage all green locally). Production billing activation remains
+operator-gated: configure `payments.*` credentials/callback URLs and set
+`payments.enabled: true`.
+
 
 ## Goal
 
