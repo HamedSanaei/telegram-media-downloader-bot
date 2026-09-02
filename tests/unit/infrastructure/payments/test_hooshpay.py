@@ -96,7 +96,7 @@ def _repo(tmp_path: Path) -> SqlitePaymentRepository:
 def _gateway(repo: SqlitePaymentRepository, requester: ScriptedRequester) -> HooshPayGateway:
     return HooshPayGateway(
         base_url="https://pay.hooshpay.test",
-        api_key="test-api-key",
+        api_key="test-api-key",  # pragma: allowlist secret
         callback_url="https://companion.test/payment/callback/hooshpay",
         return_url="https://companion.test/return/hooshpay",
         timeout_seconds=5.0,

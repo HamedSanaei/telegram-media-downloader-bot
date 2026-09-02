@@ -89,7 +89,7 @@ def _repo(tmp_path: Path) -> SqlitePaymentRepository:
 def _gateway(repo: SqlitePaymentRepository, requester: ScriptedRequester) -> TetraminatorGateway:
     return TetraminatorGateway(
         base_url="https://api.tetraminator.test/v1",
-        api_key="test-api-key",
+        api_key="test-api-key",  # pragma: allowlist secret
         callback_url="https://companion.test/payment/callback/tetraminator",
         timeout_seconds=5.0,
         inquiry_retry_count=2,
