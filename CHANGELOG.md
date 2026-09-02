@@ -36,7 +36,7 @@
   prompt, VIP with own session → USER_ONLY (zero operator fallback).
 
 
-### Changed (targeting v1.4.0-rc.3)
+### Changed (targeting v1.4.0-rc.4)
 
 - The application Dockerfile now consumes the published immutable Telegram Bot API artifact
   (`ghcr.io/hamedsanaei/telegram-bot-api` pinned by full sha256 digest) instead of compiling
