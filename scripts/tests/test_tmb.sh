@@ -605,7 +605,9 @@ check_not_contains "bundle doctor output has no token" "TESTtoken" "$bundle_doct
 # --------------------------------------------------------------------------- #
 # shellcheck source=scripts/lib/common.sh
 ROOT_DIR="$FIXTURE" source "$SCRIPT_DIR/../lib/common.sh"
-redacted="$(printf 'INFO everything fine\nERROR bot_token=123456:TESTtoken\napi_hash=deadbeef\nhttps://user:pass@example.com/x\n' | sanitize_stream)"
+# Fixture credentials are intentionally non-functional and must never reach real logs.
+# shellcheck disable=SC2016
+redacted="$(printf 'INFO everything fine\nERROR bot_token=123456:TESTtoken\napi_hash=deadbeef\nhttps://user:pass@example.com/x\n' | sanitize_stream)"  # pragma: allowlist secret
 check_contains "redaction keeps safe lines" "everything fine" "$redacted"
 check_not_contains "redaction hides bot token" "TESTtoken" "$redacted"
 check_not_contains "redaction hides api hash" "deadbeef" "$redacted"
