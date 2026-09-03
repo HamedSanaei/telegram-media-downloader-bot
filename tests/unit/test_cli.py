@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import sys
@@ -670,3 +671,339 @@ def test_interactive_configure_removes_secret_temporary_file_on_error(
     output = capsys.readouterr()
     assert "BOT_TOKEN_SECRET" not in output.out + output.err
     assert "API_HASH_SECRET" not in output.out + output.err
+
+
+# --------------------------------------------------------------------------- #
+# Operator control-plane configuration editing (config-edit)
+# --------------------------------------------------------------------------- #
+
+
+def _config_edit_args(arguments: list[str], *, config: Path | None = None) -> argparse.Namespace:
+    if config is not None:
+        arguments = [arguments[0], "--config", str(config), *arguments[1:]]
+    return cli.build_parser().parse_args(["config-edit", *arguments])
+
+
+def _write_example_config(path: Path) -> None:
+    shutil.copyfile("config.example.yaml", path)
+    path.chmod(0o600)
+
+
+def test_config_edit_parser_supports_all_actions() -> None:
+    assert _config_edit_args(["get", "telegram.admin_ids"]).config_edit_action == "get"
+    assert _config_edit_args(["set", "queue.max_jobs", "5"]).config_edit_action == "set"
+    assert (
+        _config_edit_args(["list-add", "telegram.admin_ids", "1"]).config_edit_action == "list-add"
+    )
+    assert (
+        _config_edit_args(
+            ["channel-add", "--chat-id", "-1001", "--title", "t", "--join-url", "https://t.me/x"]
+        ).chat_id
+        == -1001
+    )
+    assert _config_edit_args(["logger-add", "-1001234567890"]).chat_id == -1001234567890
+    assert _config_edit_args(["channel-status", "--probe"]).probe is True
+    assert _config_edit_args(["telegram-status"]).probe is False
+
+
+def test_config_edit_set_is_atomic_and_preserves_unrelated_keys(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = tmp_path / "config.yaml"
+    _write_example_config(target)
+    before = yaml.safe_load(target.read_text(encoding="utf-8"))
+
+    cli._config_edit_set(
+        _config_edit_args(["set", "queue.max_jobs", "5"], config=target), "queue.max_jobs", "5"
+    )
+
+    after = yaml.safe_load(target.read_text(encoding="utf-8"))
+    assert after["queue"]["max_jobs"] == 5
+    assert after["telegram"] == before["telegram"]
+    assert after["yt_dlp"] == before["yt_dlp"]
+    assert not target.with_suffix(".yaml.tmp").exists()
+    rollback = sorted(tmp_path.glob("config.yaml.tmb-rollback-*"))
+    assert len(rollback) == 1
+    if os.name != "nt":
+        assert rollback[0].stat().st_mode & 0o777 == 0o600
+    assert yaml.safe_load(rollback[0].read_text(encoding="utf-8")) == before
+    output = capsys.readouterr().out
+    assert "queue.max_jobs: 5" in output
+
+
+def test_config_edit_set_validation_failure_preserves_original(tmp_path: Path) -> None:
+    target = tmp_path / "config.yaml"
+    _write_example_config(target)
+    original = target.read_text(encoding="utf-8")
+
+    with pytest.raises(ConfigurationError):
+        cli._config_edit_set(
+            _config_edit_args(["set", "telegram.max_upload_size_mb", "99999"], config=target),
+            "telegram.max_upload_size_mb",
+            "99999",
+        )
+
+    assert target.read_text(encoding="utf-8") == original
+    assert not target.with_suffix(".yaml.tmp").exists()
+
+
+def test_config_edit_secret_requires_stdin_and_never_prints_value(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import io
+
+    target = tmp_path / "config.yaml"
+    _write_example_config(target)
+    with pytest.raises(ConfigurationError):
+        cli._config_edit_set(
+            _config_edit_args(["set", "telegram.bot_token", "literal"], config=target),
+            "telegram.bot_token",
+            "literal",
+        )
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO("123456:STDIN_TOKEN_SECRET\n"))
+    cli._config_edit_set(
+        _config_edit_args(["set", "telegram.bot_token", "-"], config=target),
+        "telegram.bot_token",
+        "-",
+    )
+    settings = Settings.model_validate(yaml.safe_load(target.read_text(encoding="utf-8")))
+    assert settings.telegram.token() == "123456:STDIN_TOKEN_SECRET"
+    output = capsys.readouterr().out
+    assert "STDIN_TOKEN_SECRET" not in output
+    assert "bot_token: configured" in output
+
+
+def test_config_edit_get_never_prints_secrets(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = tmp_path / "config.yaml"
+    _write_example_config(target)
+
+    cli._config_edit_get(
+        _config_edit_args(["get", "telegram.bot_token"], config=target), "telegram.bot_token"
+    )
+    cli._config_edit_get(
+        _config_edit_args(["get", "telegram.local_bot_api.api_hash"], config=target),
+        "telegram.local_bot_api.api_hash",
+    )
+    cli._config_edit_get(
+        _config_edit_args(["get", "telegram.admin_ids"], config=target), "telegram.admin_ids"
+    )
+
+    output = capsys.readouterr().out
+    assert "bot_token: not configured" in output
+    assert "api_hash: not configured" in output
+    assert "admin_ids: (none)" in output
+    assert "CHANGE_ME" not in output
+
+
+def test_config_edit_get_rejects_unsupported_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = tmp_path / "config.yaml"
+    _write_example_config(target)
+    with pytest.raises(ConfigurationError):
+        cli._config_edit_get(
+            _config_edit_args(["get", "telegram.caption_template"], config=target),
+            "telegram.caption_template",
+        )
+
+
+def test_config_edit_list_add_and_remove_admin_ids(tmp_path: Path) -> None:
+    target = tmp_path / "config.yaml"
+    _write_example_config(target)
+    cli._config_edit_list(
+        _config_edit_args(["list-add", "telegram.admin_ids", "111"], config=target),
+        "telegram.admin_ids",
+        "111",
+        add=True,
+    )
+    cli._config_edit_list(
+        _config_edit_args(["list-add", "telegram.admin_ids", "222"], config=target),
+        "telegram.admin_ids",
+        "222",
+        add=True,
+    )
+    settings = Settings.model_validate(yaml.safe_load(target.read_text(encoding="utf-8")))
+    assert settings.telegram.admin_ids == (111, 222)
+
+    cli._config_edit_list(
+        _config_edit_args(["list-remove", "telegram.admin_ids", "111"], config=target),
+        "telegram.admin_ids",
+        "111",
+        add=False,
+    )
+    settings = Settings.model_validate(yaml.safe_load(target.read_text(encoding="utf-8")))
+    assert settings.telegram.admin_ids == (222,)
+
+
+def test_config_edit_channel_add_and_remove_validate_through_model(tmp_path: Path) -> None:
+    target = tmp_path / "config.yaml"
+    _write_example_config(target)
+    cli._config_edit_channel_add(
+        _config_edit_args(
+            [
+                "channel-add",
+                "--chat-id",
+                "-1001",
+                "--title",
+                "One",
+                "--join-url",
+                "https://t.me/one",
+            ],
+            config=target,
+        ),
+        -1001,
+        "One",
+        "https://t.me/one",
+    )
+    settings = Settings.model_validate(yaml.safe_load(target.read_text(encoding="utf-8")))
+    added = [c for c in settings.telegram.required_channels.channels if c.chat_id == -1001]
+    assert len(added) == 1
+    assert added[0].title == "One"
+
+    with pytest.raises(ConfigurationError):
+        cli._config_edit_channel_add(
+            _config_edit_args(
+                [
+                    "channel-add",
+                    "--chat-id",
+                    "-1002",
+                    "--title",
+                    "Bad",
+                    "--join-url",
+                    "https://evil.example/join",
+                ],
+                config=target,
+            ),
+            -1002,
+            "Bad",
+            "https://evil.example/join",
+        )
+    settings = Settings.model_validate(yaml.safe_load(target.read_text(encoding="utf-8")))
+    assert len(settings.telegram.required_channels.channels) == 2
+
+    with pytest.raises(ConfigurationError):
+        cli._config_edit_channel_add(
+            _config_edit_args(
+                [
+                    "channel-add",
+                    "--chat-id",
+                    "-1001",
+                    "--title",
+                    "Dup",
+                    "--join-url",
+                    "https://t.me/one",
+                ],
+                config=target,
+            ),
+            -1001,
+            "Dup",
+            "https://t.me/one",
+        )
+    cli._config_edit_channel_update(
+        _config_edit_args(
+            ["channel-update", "-1001", "--title", "Renamed", "--join-url", "https://t.me/renamed"],
+            config=target,
+        ),
+        -1001,
+        "Renamed",
+        "https://t.me/renamed",
+    )
+    settings = Settings.model_validate(yaml.safe_load(target.read_text(encoding="utf-8")))
+    updated = [c for c in settings.telegram.required_channels.channels if c.chat_id == -1001]
+    assert updated[0].title == "Renamed"
+    assert updated[0].join_url == "https://t.me/renamed"
+
+    cli._config_edit_channel_remove(
+        _config_edit_args(["channel-remove", "-1001"], config=target), -1001
+    )
+    settings = Settings.model_validate(yaml.safe_load(target.read_text(encoding="utf-8")))
+    assert all(channel.chat_id != -1001 for channel in settings.telegram.required_channels.channels)
+
+
+def test_config_edit_logger_channel_rejects_public_chat_ids(tmp_path: Path) -> None:
+    target = tmp_path / "config.yaml"
+    _write_example_config(target)
+    with pytest.raises(ConfigurationError):
+        cli._config_edit_logger_channel(
+            _config_edit_args(["logger-add", "12345"], config=target),
+            12345,
+            add=True,
+        )
+
+    cli._config_edit_logger_channel(
+        _config_edit_args(["logger-add", "-1001234567890"], config=target),
+        -1001234567890,
+        add=True,
+    )
+    settings = Settings.model_validate(yaml.safe_load(target.read_text(encoding="utf-8")))
+    assert settings.telegram.logger.channels == (-1001234567890,)
+
+
+def test_config_edit_logger_status_shows_safe_aggregates(
+    settings: Settings, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    raw["telegram"]["logger"]["enabled"] = True
+    raw["telegram"]["logger"]["channels"] = [-1001234567890]
+    configured = Settings.model_validate(raw)
+
+    cli._config_edit_logger_status(configured)
+    output = capsys.readouterr().out
+    assert "enabled: true" in output
+    assert "outbox: durable_state=missing" in output
+    assert "-1001234567890" not in output
+
+    repository = SqliteAuditRepository(configured.database_path())
+    repository.initialize()
+    repository.reconcile_config(configured.telegram.logger.channels)
+    cli._config_edit_logger_status(configured)
+    output = capsys.readouterr().out
+    assert "effective_destinations: 1" in output
+    assert "active_destinations: 1" in output
+    assert "oldest_pending_age_seconds: 0" in output
+
+
+async def test_config_edit_telegram_status_never_prints_token(
+    settings: Settings, capsys: pytest.CaptureFixture[str]
+) -> None:
+    await cli._config_edit_telegram_status(settings, probe=False)
+    output = capsys.readouterr().out
+    assert settings.telegram.token() not in output
+    assert "bot_token: configured" in output
+    assert "api_mode: cloud" in output
+    assert "connection: (not probed)" in output
+
+
+def test_config_edit_cookie_status_is_passive_and_safe(
+    settings: Settings, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    raw["yt_dlp"]["cookies_file"] = None
+    configured = Settings.model_validate(raw)
+    cli._config_edit_cookie_status(configured)
+    assert "cookie_file: (not configured)" in capsys.readouterr().out
+
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    raw["yt_dlp"]["cookies_file"] = str(cookie)
+    configured = Settings.model_validate(raw)
+    cli._config_edit_cookie_status(configured)
+    output = capsys.readouterr().out
+    assert "exists: true" in output
+    assert "providers: " in output
+
+
+def test_config_edit_local_api_status_is_safe(
+    settings: Settings, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli._config_edit_local_api_status(settings)
+    output = capsys.readouterr().out
+    assert "migration_phase: cloud" in output
+    assert settings.telegram.token() not in output

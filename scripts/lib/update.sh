@@ -1,0 +1,571 @@
+# shellcheck shell=bash
+# --------------------------------------------------------------------------- #
+# Transactional verified release updater. This is the production update path;
+# the exact ordering, stage names, rollback semantics, redaction, and service
+# restoration are covered by scripts/tests/test_tmb_update.sh and the
+# privileged updater integration matrix.
+# --------------------------------------------------------------------------- #
+
+RELEASE_BASH_FILES=(
+  install.sh
+  manage.sh
+  scripts/tmb.sh
+  scripts/lib/common.sh
+  scripts/lib/ui.sh
+  scripts/lib/services.sh
+  scripts/lib/update.sh
+  scripts/lib/backup.sh
+  scripts/lib/restore.sh
+  scripts/lib/status.sh
+  scripts/lib/storage.sh
+  scripts/lib/docker.sh
+  scripts/lib/logs.sh
+  scripts/lib/telegram.sh
+  scripts/lib/diagnostics.sh
+  scripts/lib/config.sh
+  scripts/build_release_archives.sh
+  scripts/tests/test_tmb_update.sh
+  scripts/tests/test_tmb_upgrade_integration.sh
+  scripts/tests/test_local_api_readiness.sh
+  scripts/tests/test_readonly_logger_preflight.sh
+  scripts/tests/test_tmb.sh
+)
+
+assert_release_allowed() {
+  local version="${1:-}" normalized blocked
+  [[ -n "$version" ]] || return 0
+  normalized="${version#v}"
+  for blocked in "${BLOCKED_RELEASE_VERSIONS[@]}"; do
+    if [[ "$normalized" == "$blocked" ]]; then
+      echo "Release $normalized is blocked because it contains a critical Telegram durable-polling crash bug. Use v1.3.8 or newer instead." >&2
+      return 1
+    fi
+  done
+}
+
+release_url() {
+  if [[ -n "${TMB_RELEASE_TAG:-}" ]]; then
+    printf '%s/download/%s/%s' "$RELEASE_ROOT" "$TMB_RELEASE_TAG" "$1"
+  else
+    printf '%s/latest/download/%s' "$RELEASE_ROOT" "$1"
+  fi
+}
+
+print_sanitized_diagnostics() {
+  local stage="$1" output_file="$2"
+  echo "Update stage failed: $stage" >&2
+  if [[ -s "$output_file" ]]; then
+    echo "Sanitized diagnostic output (last 40 lines):" >&2
+    tail -n 40 "$output_file" | sanitize_stream >&2
+  fi
+}
+
+run_update_stage() {
+  local stage="$1" output_file status
+  shift
+  output_file="$(mktemp "${RELEASE_TEMPORARY_DIRECTORY:-${TMPDIR:-/tmp}}/tmb-stage.XXXXXX")" || return 1
+  if "$@" >"$output_file" 2>&1; then
+    rm -f -- "$output_file"
+    return 0
+  else
+    status=$?
+  fi
+  print_sanitized_diagnostics "$stage" "$output_file"
+  rm -f -- "$output_file"
+  return "$status"
+}
+
+prepare_verified_release() {
+  RELEASE_TEMPORARY_DIRECTORY="$(mktemp -d)" || return 1
+  [[ -n "$RELEASE_TEMPORARY_DIRECTORY" ]] || return 1
+  RELEASE_STAGING_DIRECTORY="$RELEASE_TEMPORARY_DIRECTORY/extracted"
+  mkdir -p "$RELEASE_STAGING_DIRECTORY" || return 1
+  curl -fsSL "$(release_url "$ARCHIVE_NAME")" \
+    -o "$RELEASE_TEMPORARY_DIRECTORY/$ARCHIVE_NAME" || return 1
+  curl -fsSL "$(release_url "$ARCHIVE_NAME.sha256")" \
+    -o "$RELEASE_TEMPORARY_DIRECTORY/$ARCHIVE_NAME.sha256" || return 1
+  if ! (
+    cd "$RELEASE_TEMPORARY_DIRECTORY"
+    sha256sum --check --status "$ARCHIVE_NAME.sha256"
+  ); then
+    echo "Release checksum verification failed." >&2
+    return 1
+  fi
+  tar --force-local -xzf "$RELEASE_TEMPORARY_DIRECTORY/$ARCHIVE_NAME" \
+    -C "$RELEASE_STAGING_DIRECTORY" --strip-components=1 || return 1
+  RELEASE_VERSION="$(
+    sed -n 's/^version = "\([^"]*\)"/\1/p' \
+      "$RELEASE_STAGING_DIRECTORY/pyproject.toml" | head -n 1
+  )"
+  [[ -n "$RELEASE_VERSION" ]] || {
+    echo "Unable to determine verified release version." >&2
+    return 1
+  }
+  assert_release_allowed "$RELEASE_VERSION" || return 1
+  [[ -f "$RELEASE_STAGING_DIRECTORY/docker-compose.yml" ]] || {
+    echo "Verified release is missing docker-compose.yml." >&2
+    return 1
+  }
+  local script
+  for script in "${RELEASE_BASH_FILES[@]}"; do
+    [[ -f "$RELEASE_STAGING_DIRECTORY/$script" ]] || {
+      echo "Verified release is missing $script." >&2
+      return 1
+    }
+    bash -n "$RELEASE_STAGING_DIRECTORY/$script" || {
+      echo "Verified release contains invalid Bash syntax in $script." >&2
+      return 1
+    }
+  done
+  chmod 755 \
+    "$RELEASE_STAGING_DIRECTORY/install.sh" \
+    "$RELEASE_STAGING_DIRECTORY/manage.sh" \
+    "$RELEASE_STAGING_DIRECTORY/scripts/tmb.sh" \
+    "$RELEASE_STAGING_DIRECTORY/scripts/build_release_archives.sh" \
+    "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_tmb_update.sh" \
+    "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_tmb_upgrade_integration.sh" \
+    "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_local_api_readiness.sh" \
+    "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_readonly_logger_preflight.sh" \
+    "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_tmb.sh" || return 1
+}
+
+validate_prepared_release() {
+  local prepared_image="$IMAGE_REPOSITORY:$RELEASE_VERSION" uid gid
+  uid="$(runtime_identity APP_UID 10001)"
+  gid="$(runtime_identity APP_GID 10001)"
+  run_update_stage "candidate Compose validation" docker compose \
+    --project-directory "$ROOT_DIR" \
+    --env-file "$ROOT_DIR/.env" \
+    -f "$RELEASE_STAGING_DIRECTORY/docker-compose.yml" \
+    --profile local-api config || return 1
+  run_update_stage "candidate image pull" docker pull "$prepared_image" || return 1
+  run_update_stage "candidate configuration preflight" docker run \
+    --rm --read-only --user "$uid:$gid" \
+    --tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777 \
+    -v "$ROOT_DIR/config.yaml:/app/config.yaml:ro" \
+    -v "$ROOT_DIR/data:/data:ro" \
+    "$prepared_image" \
+    telegram-media-bot config-check --config /app/config.yaml \
+      --read-only-runtime || return 1
+  run_update_stage "candidate offline prerequisite verification" docker run \
+    --rm --read-only --user "$uid:$gid" \
+    --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+    -v "$ROOT_DIR/config.yaml:/app/config.yaml:ro" \
+    -v "$ROOT_DIR/data:/data:ro" \
+    "$prepared_image" \
+    telegram-media-bot doctor --config /app/config.yaml --offline \
+      --expected-version "$RELEASE_VERSION" --read-only-runtime || return 1
+}
+
+prepare_application_transaction() {
+  APPLICATION_TRANSACTION_DIRECTORY="$(mktemp -d "$ROOT_DIR/.tmb-update.XXXXXX")" || return 1
+  APPLICATION_ROLLBACK_DIRECTORY="$APPLICATION_TRANSACTION_DIRECTORY/rollback-application"
+  APPLICATION_NEXT_DIRECTORY="$APPLICATION_TRANSACTION_DIRECTORY/next-application"
+  mkdir -p "$APPLICATION_ROLLBACK_DIRECTORY" "$APPLICATION_NEXT_DIRECTORY"
+  cp -a "$RELEASE_STAGING_DIRECTORY/." "$APPLICATION_NEXT_DIRECTORY/"
+  APPLICATION_ENTRIES=()
+}
+
+is_persistent_entry() {
+  case "$1" in
+    .env|config.yaml|data|backups) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+install_prepared_release() {
+  local source name
+  while IFS= read -r -d '' source; do
+    name="${source##*/}"
+    is_persistent_entry "$name" && continue
+    [[ "$name" != "." && "$name" != ".." && "$name" != */* ]] || return 1
+    if [[ -e "$ROOT_DIR/$name" || -L "$ROOT_DIR/$name" ]]; then
+      if ! mv "$ROOT_DIR/$name" "$APPLICATION_ROLLBACK_DIRECTORY/$name"; then
+        cp -a "$ROOT_DIR/$name" "$APPLICATION_ROLLBACK_DIRECTORY/$name" || return 1
+        rm -rf -- "${ROOT_DIR:?}/$name" || return 1
+      fi
+    fi
+    if ! mv "$source" "$ROOT_DIR/$name"; then
+      if [[ -e "$APPLICATION_ROLLBACK_DIRECTORY/$name" ]]; then
+        mv "$APPLICATION_ROLLBACK_DIRECTORY/$name" "$ROOT_DIR/$name" || true
+      fi
+      return 1
+    fi
+    APPLICATION_ENTRIES+=("$name")
+  done < <(find "$APPLICATION_NEXT_DIRECTORY" -mindepth 1 -maxdepth 1 -print0)
+  chmod 755 \
+    "$ROOT_DIR/install.sh" \
+    "$ROOT_DIR/manage.sh" \
+    "$ROOT_DIR/scripts/tmb.sh" \
+    "$ROOT_DIR/scripts/build_release_archives.sh" \
+    "$ROOT_DIR/scripts/tests/test_tmb_update.sh" \
+    "$ROOT_DIR/scripts/tests/test_tmb_upgrade_integration.sh" \
+    "$ROOT_DIR/scripts/tests/test_local_api_readiness.sh" \
+    "$ROOT_DIR/scripts/tests/test_readonly_logger_preflight.sh" \
+    "$ROOT_DIR/scripts/tests/test_tmb.sh"
+}
+
+rollback_application_files() {
+  local index name
+  for ((index=${#APPLICATION_ENTRIES[@]} - 1; index >= 0; index--)); do
+    name="${APPLICATION_ENTRIES[$index]}"
+    [[ "$name" != "." && "$name" != ".." && "$name" != */* ]] || continue
+    rm -rf -- "${ROOT_DIR:?}/$name"
+    if [[ -e "$APPLICATION_ROLLBACK_DIRECTORY/$name" || \
+      -L "$APPLICATION_ROLLBACK_DIRECTORY/$name" ]]; then
+      mv "$APPLICATION_ROLLBACK_DIRECTORY/$name" "$ROOT_DIR/$name"
+    fi
+  done
+  APPLICATION_ENTRIES=()
+}
+
+cleanup_prepared_release() {
+  if [[ -n "${RELEASE_TEMPORARY_DIRECTORY:-}" ]]; then
+    rm -rf -- "$RELEASE_TEMPORARY_DIRECTORY" || true
+  fi
+  case "${APPLICATION_TRANSACTION_DIRECTORY:-}" in
+    "$ROOT_DIR"/.tmb-update.*)
+      rm -rf -- "$APPLICATION_TRANSACTION_DIRECTORY" || true
+      ;;
+  esac
+}
+
+set_configured_image() {
+  local image="$1" env_path="$ROOT_DIR/.env" owner="" mode="" current_owner
+  if [[ -e "$env_path" ]]; then
+    owner="$(stat -c '%u:%g' "$env_path")" || return 1
+    mode="$(stat -c '%a' "$env_path")" || return 1
+  fi
+  if grep -q '^TMB_IMAGE=' "$env_path"; then
+    sed -i "s|^TMB_IMAGE=.*|TMB_IMAGE=$image|" "$env_path"
+  else
+    echo "TMB_IMAGE=$image" >>"$env_path"
+  fi
+  if [[ -n "$owner" ]]; then
+    current_owner="$(stat -c '%u:%g' "$env_path")" || return 1
+    if [[ "$current_owner" != "$owner" ]]; then
+      chown "$owner" "$env_path" || return 1
+    fi
+    chmod "$mode" "$env_path" || return 1
+  fi
+}
+
+normalize_runtime_permissions() {
+  local image="$1" uid gid
+  uid="$(runtime_identity APP_UID 10001)"
+  gid="$(runtime_identity APP_GID 10001)"
+  if ! docker run --rm --user 0 --entrypoint sh \
+    -e "APP_UID=$uid" -e "APP_GID=$gid" \
+    -v "$ROOT_DIR:/workspace" "$image" -c '
+      set -eu
+      for path in \
+        /workspace/data/state \
+        /workspace/data/downloads \
+        /workspace/data/temp \
+        /workspace/data/cookies \
+        /workspace/data/telegram-bot-api \
+        /workspace/backups; do
+        mkdir -p "$path"
+      done
+      chown -R "$APP_UID:$APP_GID" \
+        /workspace/data /workspace/backups
+      find /workspace/data /workspace/backups -type d -exec chmod 700 {} +
+      find /workspace/data /workspace/backups -type f -exec chmod 600 {} +
+    '; then
+    echo "Update cannot safely continue: runtime ownership/permission repair failed." >&2
+    return 1
+  fi
+}
+
+probe_runtime_writes() {
+  local image="$1" uid gid database
+  uid="$(runtime_identity APP_UID 10001)"
+  gid="$(runtime_identity APP_GID 10001)"
+  database="/data/state/jobs.sqlite3"
+  docker run --rm --user "$uid:$gid" --entrypoint sh \
+    -v "$ROOT_DIR/data:/data" "$image" -c '
+      set -eu
+      test -w /data/state
+      touch /data/state/.permission-probe
+      rm /data/state/.permission-probe
+      python - "$1" <<'"'"'PY'"'"'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+try:
+    mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()
+    if mode is None or str(mode[0]).casefold() != "wal":
+        raise SystemExit(f"unable to enable SQLite WAL mode: {mode!r}")
+finally:
+    connection.close()
+PY
+    ' sh "$database" || {
+    echo "Runtime write/SQLite WAL permission probe failed." >&2
+    return 1
+  }
+}
+
+repair_tmb_command() {
+  local target="$ROOT_DIR/scripts/tmb.sh" link="$TMB_BIN_DIR/tmb"
+  chmod 755 "$target" || return 1
+  mkdir -p "$TMB_BIN_DIR" 2>/dev/null || true
+  if [[ -d "$TMB_BIN_DIR" && -w "$TMB_BIN_DIR" ]]; then
+    ln -sfn "$target" "$link"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo mkdir -p "$TMB_BIN_DIR" && sudo ln -sfn "$target" "$link"
+  else
+    echo "Unable to repair the global tmb command at $link." >&2
+    return 1
+  fi
+  [[ "$(readlink -f "$link")" == "$(readlink -f "$target")" ]] || return 1
+  PATH="$TMB_BIN_DIR:$PATH" command -v tmb >/dev/null || return 1
+  [[ -x "$(readlink -f "$(PATH="$TMB_BIN_DIR:$PATH" command -v tmb)")" ]] || return 1
+  PATH="$TMB_BIN_DIR:$PATH" tmb status >/dev/null
+}
+
+project_image_cleanup_enabled() {
+  local configured
+  configured="$(
+    docker run --rm \
+      -v "$ROOT_DIR/config.yaml:/app/config.yaml:ro" \
+      "$(configured_image)" \
+      python -c '
+from telegram_media_bot.bootstrap.config import load_settings
+print(str(load_settings("/app/config.yaml").operations.update.prune_old_project_images_after_success).lower())
+      ' 2>/dev/null
+  )" || configured="true"
+  [[ "${configured##*$'\n'}" != "false" ]]
+}
+
+cleanup_project_resources() {
+  local dry_run="${1:-false}" current_image current_id container state image_id
+  local repository image_size
+  local -a project_containers=()
+  local -a referenced_ids=()
+  local -a project_ids=()
+  local -a foreign_ids=()
+  local -a candidate_ids=()
+  local reclaimed=0
+
+  current_image="$(configured_image)"
+  current_id="$(docker image inspect --format '{{.Id}}' "$current_image")" || return 1
+
+  while IFS= read -r container; do
+    [[ -n "$container" ]] && project_containers+=("$container")
+  done < <(compose --profile local-api ps -a -q)
+  for container in "${project_containers[@]}"; do
+    state="$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)"
+    image_id="$(docker inspect --format '{{.Image}}' "$container" 2>/dev/null || true)"
+    if [[ "$state" != "running" && -n "$image_id" && "$image_id" != "$current_id" ]]; then
+      if [[ "$dry_run" == "true" ]]; then
+        echo "Would remove stopped project container: $container"
+      else
+        docker rm "$container" >/dev/null || return 1
+      fi
+    fi
+  done
+
+  while IFS= read -r container; do
+    [[ -n "$container" ]] || continue
+    image_id="$(docker inspect --format '{{.Image}}' "$container" 2>/dev/null || true)"
+    [[ -n "$image_id" ]] && referenced_ids+=("$image_id")
+  done < <(docker ps -aq)
+
+  while IFS='|' read -r repository image_id; do
+    [[ -n "$image_id" ]] || continue
+    if [[ "$repository" == "$IMAGE_REPOSITORY" ]]; then
+      project_ids+=("$image_id")
+    else
+      foreign_ids+=("$image_id")
+    fi
+  done < <(docker image ls --no-trunc --format '{{.Repository}}|{{.ID}}')
+
+  for image_id in "${project_ids[@]}"; do
+    [[ "$image_id" == "$current_id" ]] && continue
+    if printf '%s\n' "${referenced_ids[@]}" | grep -Fxq -- "$image_id"; then
+      continue
+    fi
+    if printf '%s\n' "${foreign_ids[@]}" | grep -Fxq -- "$image_id"; then
+      continue
+    fi
+    if ! printf '%s\n' "${candidate_ids[@]}" | grep -Fxq -- "$image_id"; then
+      candidate_ids+=("$image_id")
+    fi
+  done
+
+  for image_id in "${candidate_ids[@]}"; do
+    image_size="$(docker image inspect --format '{{.Size}}' "$image_id" 2>/dev/null || printf '0')"
+    [[ "$image_size" =~ ^[0-9]+$ ]] || image_size=0
+    reclaimed=$((reclaimed + image_size))
+    if [[ "$dry_run" == "true" ]]; then
+      echo "Would remove old project image: $image_id"
+    else
+      docker image rm "$image_id" >/dev/null || return 1
+    fi
+  done
+  echo "Project cleanup candidates: ${#candidate_ids[@]} image(s); approximate bytes: $reclaimed"
+}
+
+rollback_update() {
+  local previous_image="$1"
+  compose --profile local-api stop "${FILESYSTEM_WRITER_SERVICES[@]}" >/dev/null 2>&1 || true
+  if [[ "$UPDATE_APPLICATION_MUTATED" == "true" ]]; then
+    set_configured_image "$previous_image" || return 1
+    rollback_application_files || return 1
+    normalize_runtime_permissions "$previous_image" || {
+      echo "Rollback could not restore usable runtime permissions; services remain stopped." >&2
+      return 1
+    }
+    repair_tmb_command || {
+      echo "Rollback could not restore the tmb command; services remain stopped." >&2
+      return 1
+    }
+  fi
+  start_services false "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
+  verify_services_healthy "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
+  verify_exact_project_service_state "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
+}
+
+handle_update_interrupt() {
+  trap - INT
+  echo "Update interrupted by operator." >&2
+  if [[ "${UPDATE_SERVICE_STATE_TOUCHED:-false}" == "true" ]]; then
+    echo "Restoring the pre-update release and exact service state." >&2
+    rollback_update "$UPDATE_PREVIOUS_IMAGE" || {
+      echo "Interrupted update rollback failed; project writers remain stopped." >&2
+    }
+  else
+    echo "Installed release and project service state were unchanged." >&2
+  fi
+  cleanup_prepared_release
+  exit 130
+}
+
+perform_update() {
+  local previous_image="$1" prepared_image
+  prepare_verified_release || return 1
+  validate_prepared_release || return 1
+  prepared_image="$IMAGE_REPOSITORY:$RELEASE_VERSION"
+  run_update_stage "candidate Compose image pull" env TMB_IMAGE="$prepared_image" \
+    docker compose --project-directory "$ROOT_DIR" --env-file "$ROOT_DIR/.env" \
+      -f "$RELEASE_STAGING_DIRECTORY/docker-compose.yml" --profile local-api pull || return 1
+  prepare_application_transaction || return 1
+  UPDATE_SERVICE_STATE_TOUCHED=true
+  if [[ ${#PREVIOUS_WRITER_SERVICES[@]} -gt 0 ]]; then
+    run_update_stage "filesystem-writer service stop" compose --profile local-api stop -t 45 \
+      "${PREVIOUS_WRITER_SERVICES[@]}" || return 1
+  fi
+  run_update_stage "consistent persistent-state backup" backup || return 1
+  UPDATE_APPLICATION_MUTATED=true
+  install_prepared_release || return 1
+  normalize_runtime_permissions "$previous_image" || return 1
+  probe_runtime_writes "$previous_image" || return 1
+  set_configured_image "$prepared_image" || return 1
+  run_update_stage "tmb command repair" repair_tmb_command || return 1
+  verify_candidate_release_offline || return 1
+  start_services true "${PREVIOUS_WRITER_SERVICES[@]}" || return 1
+  run_update_stage "updated service health verification" verify_services_healthy \
+    "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
+  verify_restored_services_online || return 1
+  run_update_stage "updated exact service-state verification" verify_exact_project_service_state \
+    "${PREVIOUS_PROJECT_SERVICES[@]}" || return 1
+  if project_image_cleanup_enabled; then
+    cleanup_project_resources false || {
+      echo "Update succeeded, but old project image cleanup failed; retry with tmb cleanup." >&2
+    }
+  fi
+}
+
+verify_candidate_release_offline() {
+  run_update_stage "offline post-install verification" compose --profile local-api run \
+    --rm --no-deps worker telegram-media-bot doctor --config /app/config.yaml \
+      --offline --expected-version "$RELEASE_VERSION"
+}
+
+verify_restored_services_online() {
+  local -a doctor_arguments=(
+    telegram-media-bot doctor --config /app/config.yaml
+  )
+  if list_contains local-api "${PREVIOUS_PROJECT_SERVICES[@]}"; then
+    doctor_arguments+=(--online-service local-api)
+  fi
+  if list_contains bot "${PREVIOUS_PROJECT_SERVICES[@]}"; then
+    doctor_arguments+=(--online-service bot)
+  fi
+  [[ ${#doctor_arguments[@]} -gt 4 ]] || return 0
+  run_update_stage "post-start online verification" compose --profile local-api run \
+    --rm --no-deps worker "${doctor_arguments[@]}"
+}
+
+perform_consistent_manual_backup() {
+  local backup_status=0 restore_status=0 stop_status=0
+  PREVIOUS_PROJECT_SERVICES=()
+  PREVIOUS_WRITER_SERVICES=()
+  load_running_project_services || return 1
+  if [[ ${#PREVIOUS_WRITER_SERVICES[@]} -gt 0 ]]; then
+    compose --profile local-api stop -t 45 "${PREVIOUS_WRITER_SERVICES[@]}" || stop_status=$?
+  fi
+  if [[ "$stop_status" -ne 0 ]]; then
+    start_services false "${PREVIOUS_PROJECT_SERVICES[@]}" || true
+    verify_exact_project_service_state "${PREVIOUS_PROJECT_SERVICES[@]}" || true
+    return "$stop_status"
+  fi
+  backup || backup_status=$?
+  start_services false "${PREVIOUS_PROJECT_SERVICES[@]}" || restore_status=$?
+  if [[ "$restore_status" -eq 0 ]]; then
+    verify_services_healthy "${PREVIOUS_PROJECT_SERVICES[@]}" || restore_status=$?
+  fi
+  if [[ "$restore_status" -eq 0 ]]; then
+    verify_exact_project_service_state "${PREVIOUS_PROJECT_SERVICES[@]}" || restore_status=$?
+  fi
+  if [[ "$restore_status" -ne 0 ]]; then
+    echo "Backup service-state restoration failed." >&2
+    return "$restore_status"
+  fi
+  return "$backup_status"
+}
+
+# Entry point for `tmb update [TMB_RELEASE_TAG]`. Preserves the exact
+# transactional lifecycle and SIGINT recovery. This function only ever runs
+# inside the isolated update runner, which owns the management lock.
+run_update() {
+  local previous_image
+  acquire_management_lock || return 1
+  assert_release_allowed "${TMB_RELEASE_TAG:-}" || return 1
+  previous_image="$(configured_image)"
+  PREVIOUS_PROJECT_SERVICES=()
+  PREVIOUS_WRITER_SERVICES=()
+  RELEASE_TEMPORARY_DIRECTORY=""
+  APPLICATION_ENTRIES=()
+  APPLICATION_TRANSACTION_DIRECTORY=""
+  APPLICATION_ROLLBACK_DIRECTORY=""
+  UPDATE_SERVICE_STATE_TOUCHED=false
+  UPDATE_APPLICATION_MUTATED=false
+  UPDATE_PREVIOUS_IMAGE="$previous_image"
+  trap handle_update_interrupt INT
+  load_running_project_services || return 1
+  if perform_update "$previous_image"; then
+    trap - INT
+    cleanup_prepared_release
+    echo "Update to $RELEASE_VERSION completed successfully."
+  else
+    if [[ "$UPDATE_SERVICE_STATE_TOUCHED" == "true" ]]; then
+      if [[ "$UPDATE_APPLICATION_MUTATED" == "true" ]]; then
+        echo "Update failed after installation began; rolling back application, image, permissions, and service state." >&2
+      else
+        echo "Update failed after writer stop; restoring the exact original service state." >&2
+      fi
+      rollback_update "$previous_image" || {
+        trap - INT
+        cleanup_prepared_release
+        return 1
+      }
+    else
+      echo "Update validation failed before service stop; the installed release was unchanged." >&2
+    fi
+    trap - INT
+    cleanup_prepared_release
+    return 1
+  fi
+}

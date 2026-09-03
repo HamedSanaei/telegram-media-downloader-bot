@@ -387,6 +387,41 @@ downloaded through gallery-dl without a false `too_large`, and the plain-profile
 downloaded the original JPEG. Exact command results, artifact hashes, platform skips, and runtime
 smokes are recorded in `docs/HANDOFF_REPORT.md`.
 
+## Operator control plane (T-control-plane)
+
+`tmb` is now the single authoritative operator control plane. The Linux manager was refactored
+from a monolithic script into `scripts/tmb.sh` (entrypoint/dispatch/menus) plus
+`scripts/lib/*.sh` (common, ui, services, update, backup, restore, status, storage, docker,
+logs, telegram, diagnostics, config) with one shared dispatch so every menu action equals a
+scriptable subcommand (`tmb status|start|stop|restart|logs|storage|backup|restore|migration|
+docker|telegram|channels|logger|local-api|doctor|bundle|version|help|uninstall`).
+
+- Dashboard: version/image/digest, per-service state/health/restarts/uptime, disk and directory
+  sizes, SQLite size, Redis volume, old-image reclaimable space, Telegram/logger/channels/Local
+  API state — never secrets.
+- Backup: consistent operational and migration archives (manifest, schema, app version, image,
+  contents, SHA-256 sibling, 0600), list/inspect/verify/delete, `--include-downloads` opt-in.
+- Restore/migration import: transactional, archive validation with path-traversal and symlink
+  rejection, staged-state validation (config-check + SQLite integrity), rollback snapshot,
+  automatic rollback on any failure or SIGINT, exact service-state restoration, pre-restore
+  safety backup retained.
+- Update: the existing transactional verified updater is preserved and now runs from an isolated
+  copy so it can replace its own installed files; SIGINT recovery and automatic rollback intact.
+- Security: central redaction filter for every log/diagnostic pipeline, hidden secret input,
+  atomic typed configuration edits through the application `config-edit` CLI with rollback copies,
+  `flock` management lock (mkdir fallback with stale-pid recovery) for state-mutating commands,
+  exact typed confirmations for destructive operations, project-scoped Docker cleanup only.
+- Installer: verifies the release archive ships `scripts/lib/`, adds OS/architecture checks, and
+  keeps the one-line `bash <(curl ...)` install; `tmb` is linked after install.
+- Tests: new deterministic `scripts/tests/test_tmb.sh` (126 checks) runs without Docker/root via
+  a stateful fake docker and covers dispatch, help/version, no-TTY behavior, status, services,
+  logs parsing, storage scoping, backup manifest/checksum/permissions, traversal/symlink
+  rejection, restore dry-run/success/validation-failure/SIGINT-rollback, exact service-state
+  restoration, locking, migration export/import, the sanitized support bundle, redaction, and
+  safe uninstall. `test_tmb_update.sh` fixtures were updated for the `scripts/lib` layout and
+  the crash marker now arms only after the post-install start so the pre-start `tmb status`
+  self-check cannot consume it.
+
 ## Recent fixes
 
 - 2026-09-01: Consumed the published immutable Telegram Bot API artifact instead of compiling it
@@ -398,6 +433,18 @@ smokes are recorded in `docs/HANDOFF_REPORT.md`.
   application pushes never trigger a Telegram/TDLib compile. Architecture tests prove the
   application build never clones/submodules/cmakes Telegram and the artifact workflow never
   auto-runs on pushes.
+- 2026-09-03: Prepared v1.4.0-rc.5 and verified the migration flow end-to-end against real
+  containers: source export with a healthy service, archive verification (SHA-256, POSIX modes
+  0600, downloads/temp/log exclusion), a fresh destination at a different path importing the
+  bundle (typed config-check + SQLite integrity through the runtime image), pre-restore safety
+  backup retention, exact service-state restoration, post-swap failure with automatic rollback
+  to the exact pre-import state, and tampered-bundle rejection before any mutation; no secret is
+  ever printed by export, import, verify, or rollback output. Operator docs now require stopping
+  the source bot/worker (`tmb stop`) before activating the destination so the same Telegram bot
+  is never polled from two servers. ShellCheck is clean across install.sh, manage.sh, tmb.sh,
+  scripts/lib/*.sh, and scripts/tests/*.sh (same standard as the previous single-file manager),
+  and archive tooling gained `--force-local` so drive-letter paths work when the manager runs
+  under Git Bash/MSYS for development.
 - 2026-09-01: Repaired CI harness failures: the read-only logger preflight test now prepares its
   bind-mounted fixture tree through explicit root containers (`--user 0:0`) for config/database
   creation, corruption, and cleanup (chowning the fixture to the runtime user), while the

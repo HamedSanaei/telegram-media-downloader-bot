@@ -19,6 +19,42 @@ test, deploy, roll back, and hand over to another engineer or coding agent.
 - Before every commit, inspect the complete commit message and author/committer metadata and remove
   accidental AI or tool attribution.
 
+### AI / coding-agent attribution is strictly forbidden
+
+No AI agent, coding agent, automation assistant, editor assistant, or tool may EVER appear as:
+
+- Git author;
+- Git committer;
+- co-author;
+- contributor;
+- signer;
+- PR author attribution text;
+- generated-by attribution;
+- assisted-by attribution;
+- commit-message attribution;
+- release-note attribution;
+- source-code attribution;
+- documentation attribution.
+
+This explicitly includes, but is not limited to: Codebuff, Codex, ChatGPT, OpenAI, Claude,
+Anthropic, Cursor, Copilot, Gemini, and any other coding agent or AI tool. Never add lines such
+as `Co-Authored-By:`, `Generated-By:`, `Generated with:`, `Assisted-By:`, `Created by Codebuff`,
+`Implemented by Codebuff`, or any other agent branding. No agent name may appear in source
+comments, documentation, commit messages, or release notes. No agent may add itself as a
+contributor. Only the configured HUMAN Git identity may be used.
+
+Before ANY future commit, the committing party MUST check:
+
+```bash
+git config user.name
+git config user.email
+git log -1 --format=fuller
+```
+
+and inspect the complete commit message plus author/committer metadata for AI/tool attribution,
+removing any accidental attribution before committing. AI-generated code, tests, and documentation
+must carry no attribution whatsoever.
+
 ## Mandatory first steps for every task
 
 1. Read this file completely.

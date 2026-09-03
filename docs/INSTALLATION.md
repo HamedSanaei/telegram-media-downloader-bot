@@ -53,20 +53,35 @@ the user PATH.
 
 ## Management
 
-Run `tmb` without arguments for the menu, or:
+Run `tmb` without arguments for the interactive menu (nested categories with `0) Back`), or use
+the same handlers non-interactively:
 
 ```text
-tmb start
-tmb stop
-tmb restart
 tmb status
-tmb logs [bot|worker|local-api|redis]
+tmb start | stop | restart
+tmb services ps | health | start-one bot | stop-one bot | restart-one bot
+tmb logs [bot|worker|local-api|redis] [--tail N] [--since 2h] [errors] [-f]
 tmb doctor
-tmb config
+tmb config check | show | wizard | set KEY VALUE | get KEY
+tmb telegram status | setup | token | test | admin-list | admin-add | admin-remove
+tmb channels status | enable | disable | list | add | remove | test | update
+tmb logger status | enable | disable | list | add | remove | health
+tmb local-api status | configure | start | stop | restart | migrate-to-local | migrate-to-cloud
+tmb storage [overview|cleanup-downloads|cleanup-temp|orphan-workspaces|old-backups]
+tmb backup create | list | inspect FILE | verify FILE | delete FILE
+tmb migration export | import FILE
+tmb restore [--dry-run] FILE
+tmb docker status | images | current-image | cleanup-preview | cleanup-old-images
 tmb update
-tmb backup
+tmb bundle
+tmb version | help
 tmb uninstall
+tmb
 ```
+
+`docs/MANAGEMENT.md` is the complete reference. Every destructive operation requires an exact
+typed confirmation or an explicit `--yes`; secrets are never echoed or printed. State-mutating
+operations take a management lock so concurrent updates/restores/backups cannot race.
 
 All production services run with the Compose `unless-stopped` restart policy, so a crashed
 container restarts automatically and the full stack (`bot`, `worker`, `local-api`, `redis`)

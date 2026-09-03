@@ -4,42 +4,107 @@ A production-oriented Telegram bot that inspects public media URLs through isola
 gallery-dl adapters, offers semantic video/image/bundle formats, downloads in an ARQ worker,
 delivers through a typed Telegram adapter, persists state, and cleans every job directory.
 
-## Architectural promise
-
-Only `src/telegram_media_bot/infrastructure/ytdlp/` imports `yt_dlp` inside the application. Raw
-upstream dictionaries, exceptions, format IDs, and hooks never cross that adapter. Telegram handlers
-do no media extraction or download work. The external plugin SDK is a separate distribution below
-`plugins/`, as required by yt-dlp's plugin namespace.
-
-Gallery-dl is pinned and invoked only as `python -m gallery_dl`; vendor JSON, stderr, CLI options,
-temporary CDN URLs, and subprocess objects remain inside `infrastructure/gallerydl/`.
-
-## Runtime
-
-- Python 3.14.5 or a newer stable compatible release;
-- aiogram polling bot and separate ARQ worker;
-- Redis for queue/rate limiting and SQLite/WAL for durable job state;
-- ffmpeg/ffprobe and pinned Deno 2.9.3 for yt-dlp EJS;
-- gallery-dl 1.32.8 for bounded single-post images and mixed-media bundles;
-- Pillow with a package-bundled Noto Sans font for deterministic in-memory administrator charts;
-- Docker Compose startup after one ignored local YAML configuration is created.
-
-## First run
-
-Production one-line installers:
+Everything an operator needs is managed with one command:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/HamedSanaei/telegram-media-downloader-bot/main/install.sh)
 ```
 
-```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; irm https://raw.githubusercontent.com/HamedSanaei/telegram-media-downloader-bot/main/install.ps1 | iex
+then:
+
+```bash
+tmb
 ```
 
-They install/configure the Docker topology and expose the same `tmb` lifecycle menu on Linux and
-Windows. See `docs/INSTALLATION.md`.
+`tmb` is the single operator control plane: an interactive menu **and** a scriptable command line.
+You should almost never need to edit YAML, run raw Docker commands, or remember internal
+application commands.
 
-Developer/local build:
+## What it does
+
+- Inspects public media URLs in a worker process (never in the Telegram polling loop) using
+  yt-dlp and gallery-dl behind project-owned adapters.
+- Delivers semantic quality choices (`best`, `720p`, `audio_mp3`, ...) as MP4/WebM, images, and
+  multi-volume ZIP bundles, with progress and cancellation.
+- Persists durable job state in SQLite/WAL with Redis for queueing, and cleans every job directory.
+- Supports Cloud Bot API and an opt-in Local Bot API mode (files up to 1900 MB).
+
+## Requirements
+
+- A Linux server (x86_64 or aarch64). Windows is supported via `install.ps1` + `tmb.ps1`.
+- Docker Engine with the Compose plugin. The installer can install Docker for you.
+- A Telegram bot token from [@BotFather](https://t.me/BotFather).
+
+## Install
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/HamedSanaei/telegram-media-downloader-bot/main/install.sh)
+```
+
+The installer detects an existing installation, verifies the release checksum, installs the
+application to `/opt/telegram-media-downloader-bot` by default, links the `tmb` command, and
+launches the configuration wizard. After the wizard finishes, run:
+
+```bash
+tmb
+```
+
+## Managing the bot with tmb
+
+`tmb` opens an interactive menu. Every menu item has the same non-interactive command:
+
+```bash
+tmb status        # dashboard: versions, services, disk, Telegram state
+tmb logs worker   # logs: tmb logs [bot|worker|local-api|redis] [--tail N] [--since 2h] [errors]
+tmb doctor        # health checks
+tmb telegram      # bot token, admins, polling (secrets are never echoed)
+tmb channels      # required-channel policy
+tmb logger        # operator logger destinations and outbox health
+tmb local-api     # Local Bot API status/configure/migrate
+tmb storage       # disk overview and project-scoped cleanup
+tmb backup        # create/list/inspect/verify/delete consistent backups
+tmb migration     # export a portable migration bundle / import it on a new server
+tmb docker        # project-scoped image and container management
+tmb update        # transactional verified updater with automatic rollback
+tmb bundle        # sanitized diagnostic support bundle
+tmb version       # application version, image, digest
+tmb help          # full command reference
+```
+
+Backup and restore:
+
+```bash
+tmb backup create          # consistent operational backup (config + durable state)
+tmb migration export       # portable bundle for moving to a new server
+tmb restore --dry-run FILE # validate before touching anything
+tmb restore FILE           # transactional restore with automatic rollback
+```
+
+Update:
+
+```bash
+tmb update
+```
+
+updates through the verified transactional updater; if anything fails, the previous release,
+image, permissions, and exact service state are restored automatically.
+
+See `docs/MANAGEMENT.md` for the complete `tmb` reference, `docs/INSTALLATION.md` for installer
+details, `docs/CONFIGURATION.md` for every runtime option, and `docs/OPERATIONS.md` for upgrades,
+rollback, alerting, and incident diagnosis.
+
+## Architecture promise
+
+Only `src/telegram_media_bot/infrastructure/ytdlp/` imports `yt_dlp` inside the application. Raw
+upstream dictionaries, exceptions, format IDs, and hooks never cross that adapter. Telegram
+handlers do no media extraction or download work. Only
+`src/telegram_media_bot/infrastructure/telegram/mtproto/` may import telethon, and no
+Userbot/MTProto automation is implemented. The external plugin SDK is a separate distribution
+below `plugins/`, as required by yt-dlp's plugin namespace.
+
+## For developers and contributors
+
+Local development uses `uv` and `./manage.sh`:
 
 ```bash
 ./manage.sh init
@@ -48,56 +113,21 @@ Developer/local build:
 ./manage.sh up
 ```
 
-PowerShell:
-
-```powershell
-.\manage.ps1 init
-.\manage.ps1 config-check
-.\manage.ps1 up
-```
-
-The ordinary-video flow is: URL -> queued inspection -> MP4/WebM -> semantic quality -> durable
-download -> throttled progress/cancel -> audio/video/document delivery -> cleanup. Instagram video
-posts, Reels, Stories, Highlights, and multi-video collections automatically use best MP4 and
-deliver videos separately.
-
-Instagram, TikTok, Twitter/X, and Pinterest single-post URLs are first inspected by gallery-dl. If
-the normalized post contains an image, gallery-dl owns the complete ordered post, including any
-companion video. Video-only posts fall back to yt-dlp. Profiles, boards, timelines, searches,
-hashtags, likes, bookmarks, and other bulk endpoints are rejected. YouTube thumbnails and
-SoundCloud artwork stay on the yt-dlp path.
-
-## Development and release gates
+Release gates:
 
 ```bash
 uv lock --check
 uv sync --frozen --group dev
-uv run python scripts/check_architecture.py
-uv run python scripts/check_text_integrity.py
-uv run python scripts/generate_file_manifest.py --check
-uv run pre-commit run detect-secrets --all-files
-uv run pip check
-uv run pip-audit --local --skip-editable --progress-spinner off
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src tests
 uv run pytest -m "not contract" --cov=telegram_media_bot --cov-report=term-missing
 uv build
-uv run python scripts/check_package_assets.py --install-smoke
-docker build -t telegram-media-downloader-bot:review .
 ```
 
-The usage-chart font and its SIL OFL 1.1 license are shipped inside the Python package. Runtime
-rendering does not download assets or consult system fonts, fontconfig, a display server, or an
-external chart API. CI publishes deterministic weekly and monthly fixture charts as the
-`usage-chart-smoke` artifact.
-
-External contract tests are opt-in and require operator-maintained safe public fixtures. See
-`docs/OPERATIONS.md` for upgrades, canary promotion, rollback, alert thresholds, and incident
-diagnosis. See `docs/CONFIGURATION.md` for every runtime option and `docs/LOCAL_BOT_API.md` for
-managed/external Local Bot API setup, explicit migration, rollback, and files up to 1900 MB.
-See `docs/MULTIPART_DELIVERY.md` for `1440p`, `2160p`, `best_original`, and multi-volume ZIP
-delivery for every result above the direct upload limit through 4096 MB.
+See `docs/ARCHITECTURE.md`, `docs/CODE_MAP.md`, and `docs/DECISIONS.md`. The `tmb` control plane
+lives in `scripts/tmb.sh` + `scripts/lib/` and is tested by `scripts/tests/test_tmb.sh` and
+`scripts/tests/test_tmb_update.sh`.
 
 ## Intentional boundaries
 

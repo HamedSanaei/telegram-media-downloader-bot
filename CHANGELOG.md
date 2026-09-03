@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Added (targeting v1.4.0-rc.5)
+
+- `tmb` is now the single authoritative operator control plane. The Linux manager was refactored
+  into `scripts/tmb.sh` (entrypoint: path resolution, sourcing, dispatch, nested menus) plus
+  `scripts/lib/*.sh` (common, ui, services, update, backup, restore, status, storage, docker,
+  logs, telegram, diagnostics, config) with one shared dispatch table so every interactive menu
+  action equals a scriptable subcommand (`tmb status|start|stop|restart|logs|storage|backup|
+  restore|migration|docker|telegram|channels|logger|local-api|doctor|bundle|version|help|
+  uninstall`); no business logic is duplicated between the menu and the CLI handlers.
+- Status dashboard (`tmb status`) without secrets: version, image/digest, per-service state,
+  health, restart count, uptime, guarded CPU/memory, root filesystem and project/data/downloads/
+  temp/state/cookies/Local API/backups/SQLite/Redis-volume sizes, project-owned images, and
+  reclaimable old-image space.
+- Consistent operational and migration backups (`tmb backup create|list|inspect|verify|delete`,
+  `tmb migration export`): manifest with schema/kind/app version/image/contents, sibling SHA-256,
+  0600 with umask 077, downloads/temp excluded by default, `--include-downloads` as a guarded
+  opt-in.
+- Transactional restore and migration import (`tmb restore`, `tmb migration import`): archive
+  validation (gzip, checksum, path-traversal and symlink rejection, manifest schema/kind),
+  writer stop, pre-restore safety backup, staged-state validation, rollback snapshot, automatic
+  rollback on any failure or SIGINT, exact service-state restoration, permission repair, write
+  probe, offline doctor, and online verification.
+- Update hardening: the existing transactional verified updater is preserved and now runs from
+  an isolated copy (tmb.sh + lib/) so it can replace its own installed files without truncating
+  its executing inode; checksum verification, blocked-release policy, rollback, SIGINT recovery,
+  and exact state restoration are unchanged.
+- Secure Telegram/Logger/Required-Channels/Local API/Cookies operator frontends: hidden secret
+  input, token `getMe`-style verification, admin add/remove/list, polling and support settings,
+  channel add/update/test, logger flags and outbox health, Local API status/configure/migrate
+  through the existing fail-closed state machine. Mutations go through the typed application CLI,
+  never raw SQLite or YAML regex editing.
+- Typed `config-edit` application CLI plus `local-api-status`, `telegram-status`, `logger-status`,
+  `channel-status`, `channel-update`, and `cookies-status` actions: atomic writes with rollback
+  copies and restrictive permissions.
+
 ### Added (targeting v1.4.0-rc.4)
 
 - Three real rial payment gateways behind the provider-neutral boundary: UniquePay

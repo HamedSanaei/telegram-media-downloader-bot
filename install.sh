@@ -64,11 +64,16 @@ prepare_verified_release() {
   }
   assert_release_allowed "$INSTALL_RELEASE_VERSION"
   [[ -f "$INSTALL_STAGING_DIRECTORY/docker-compose.yml" ]]
+  [[ -d "$INSTALL_STAGING_DIRECTORY/scripts/lib" ]] || {
+    echo "Release archive is missing the scripts/lib management libraries." >&2
+    return 1
+  }
   local script
   for script in \
     install.sh \
     manage.sh \
     scripts/tmb.sh \
+    scripts/lib/*.sh \
     scripts/build_release_archives.sh \
     scripts/tests/test_tmb_update.sh \
     scripts/tests/test_tmb_upgrade_integration.sh \
@@ -79,6 +84,7 @@ prepare_verified_release() {
     "$INSTALL_STAGING_DIRECTORY/install.sh" \
     "$INSTALL_STAGING_DIRECTORY/manage.sh" \
     "$INSTALL_STAGING_DIRECTORY/scripts/tmb.sh" \
+    "$INSTALL_STAGING_DIRECTORY/scripts/lib" \
     "$INSTALL_STAGING_DIRECTORY/scripts/build_release_archives.sh" \
     "$INSTALL_STAGING_DIRECTORY/scripts/tests/test_tmb_update.sh" \
     "$INSTALL_STAGING_DIRECTORY/scripts/tests/test_tmb_upgrade_integration.sh" \
@@ -94,6 +100,7 @@ install_prepared_release() {
     "$destination/install.sh" \
     "$destination/manage.sh" \
     "$destination/scripts/tmb.sh" \
+    "$destination/scripts/lib" \
     "$destination/scripts/build_release_archives.sh" \
     "$destination/scripts/tests/test_tmb_update.sh" \
     "$destination/scripts/tests/test_tmb_upgrade_integration.sh" \
@@ -106,6 +113,14 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   echo "This installer supports Linux only." >&2
   exit 1
 fi
+
+case "$(uname -m)" in
+  x86_64|amd64|aarch64|arm64) : ;;
+  *)
+    echo "Unsupported CPU architecture: $(uname -m). Supported: x86_64, aarch64." >&2
+    exit 1
+    ;;
+esac
 
 if ! command -v curl >/dev/null 2>&1; then
   sudo apt-get update

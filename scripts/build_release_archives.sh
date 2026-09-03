@@ -38,6 +38,7 @@ chmod 755 \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_tmb_update.sh" \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_tmb_upgrade_integration.sh" \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_local_api_readiness.sh" \
+  "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_tmb.sh" \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_readonly_logger_preflight.sh"
 
 COMMIT_EPOCH="${TMB_RELEASE_ARCHIVE_EPOCH:-$(git show -s --format=%ct "$COMMIT")}"
@@ -73,12 +74,49 @@ git archive \
     >telegram-media-downloader-bot.zip.sha256
 )
 
-# v1.2.1 performs preflight with its already-installed updater, before application replacement.
-# Publish the prepared updater separately so affected installations can bootstrap this preflight
-# fix without weakening config validation or editing config.yaml.
-cp \
-  "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tmb-current.sh" \
-  "$OUTPUT_DIRECTORY/tmb-updater.sh"
+# Publish the prepared updater as a self-extracting, checksummed standalone asset. Older
+# releases used it as a one-time bootstrap when the installed updater could not handle a
+# transition; the manager now lives in scripts/tmb.sh plus scripts/lib/, so the standalone
+# asset embeds that whole scripts tree and runs the entrypoint from its own extraction. The
+# payload is deterministic (fixed mtime/owner/order, gzip -n) so two builds of one commit
+# compare byte-identical, as the publish workflow asserts.
+UPDATER_PAYLOAD="$(mktemp)"
+tar \
+  --sort=name \
+  --mtime="@$COMMIT_EPOCH" \
+  --owner=0 \
+  --group=0 \
+  --numeric-owner \
+  --format=posix \
+  --pax-option=delete=atime,delete=ctime \
+  -cf - \
+  -C "$TEMPORARY_DIRECTORY/tree/$PREFIX" \
+  scripts \
+  | gzip -n -9 >"$UPDATER_PAYLOAD"
+{
+  cat <<'HEADER'
+#!/usr/bin/env bash
+# Self-contained tmb updater. The embedded payload is the full scripts tree
+# (entrypoint, lib/, and tests), extracted to a private directory before the
+# update transaction runs, so this asset works without the repository layout.
+set -euo pipefail
+updater_directory="$(mktemp -d)" || exit 1
+trap 'rm -rf -- "${updater_directory:?}"' EXIT
+payload_line="$(awk '/^#__TMB_UPDATER_PAYLOAD__$/{ print NR; exit }' "$0")"
+[[ "$payload_line" =~ ^[0-9]+$ ]] || {
+  echo "tmb-updater.sh is corrupt: payload marker not found." >&2
+  exit 2
+}
+tail -n +"$((payload_line + 1))" "$0" | tar -xz -C "$updater_directory" || {
+  echo "tmb-updater.sh payload extraction failed." >&2
+  exit 2
+}
+exec bash "$updater_directory/scripts/tmb.sh" "${@:-update}"
+#__TMB_UPDATER_PAYLOAD__
+HEADER
+  cat "$UPDATER_PAYLOAD"
+} >"$OUTPUT_DIRECTORY/tmb-updater.sh"
+rm -f -- "$UPDATER_PAYLOAD"
 chmod 755 "$OUTPUT_DIRECTORY/tmb-updater.sh"
 (
   cd "$OUTPUT_DIRECTORY"

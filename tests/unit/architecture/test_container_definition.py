@@ -443,6 +443,9 @@ def test_release_waits_for_published_image_smoke_test_and_attaches_verified_asse
 
 def test_management_cleanup_is_project_scoped_and_runs_after_update_verification() -> None:
     linux = Path("scripts/tmb.sh").read_text(encoding="utf-8")
+    linux += "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(Path("scripts/lib").glob("*.sh"))
+    )
     windows = Path("scripts/tmb.ps1").read_text(encoding="utf-8")
     repository = "ghcr.io/hamedsanaei/telegram-media-downloader-bot"
 
@@ -454,7 +457,8 @@ def test_management_cleanup_is_project_scoped_and_runs_after_update_verification
         assert "docker system prune" not in script
         assert "docker volume prune" not in script
 
-    assert linux.index("verify_candidate_release_offline || return 1") < linux.index(
+    updater = Path("scripts/lib/update.sh").read_text(encoding="utf-8")
+    assert updater.index("verify_candidate_release_offline || return 1") < updater.index(
         "cleanup_project_resources false"
     )
     assert windows.index('"telegram-media-bot", "doctor"') < windows.index(
@@ -463,7 +467,7 @@ def test_management_cleanup_is_project_scoped_and_runs_after_update_verification
 
 
 def test_linux_update_preflight_uses_prepared_image_and_read_only_runtime_data() -> None:
-    updater = Path("scripts/tmb.sh").read_text(encoding="utf-8")
+    updater = Path("scripts/lib/update.sh").read_text(encoding="utf-8")
     preflight = updater.split("validate_prepared_release() {", maxsplit=1)[1].split(
         "\n}", maxsplit=1
     )[0]
@@ -491,9 +495,13 @@ def test_linux_update_preflight_uses_prepared_image_and_read_only_runtime_data()
 
 
 def test_linux_update_backup_is_offline_atomic_and_preserves_exact_service_state() -> None:
-    updater = Path("scripts/tmb.sh").read_text(encoding="utf-8")
+    updater = Path("scripts/lib/update.sh").read_text(encoding="utf-8")
+    backup_script = Path("scripts/lib/backup.sh").read_text(encoding="utf-8")
+    common = Path("scripts/lib/common.sh").read_text(encoding="utf-8")
+    updater = common + "\n" + updater
+
     transaction = updater.split("perform_update() {", maxsplit=1)[1].split("\n}", maxsplit=1)[0]
-    backup = updater.split("backup() {", maxsplit=1)[1].split("\n}", maxsplit=1)[0]
+    backup = backup_script.split("backup_archive() {", maxsplit=1)[1].split("\n}", maxsplit=1)[0]
 
     assert "PROJECT_SERVICES=(bot worker local-api redis)" in updater
     assert "FILESYSTEM_WRITER_SERVICES=(bot worker local-api)" in updater
@@ -521,7 +529,12 @@ def test_linux_update_backup_is_offline_atomic_and_preserves_exact_service_state
     assert 'mv -f -- "$temporary_archive" "$archive"' in backup
     assert "--exclude='data/telegram-bot-api/telegram-bot-api.log'" in backup
     assert "--exclude='*.log'" not in backup
-    assert "data/downloads" not in backup
+    # Downloads enter the archive only through the explicit --include-downloads
+    # opt-in; the default operational/migration contents never include them.
+    # Both mentions live inside the --include-downloads opt-in branch.
+    assert backup.count("data/downloads") == 2
+    assert 'if [[ "$include_downloads" == "1" && -d data/downloads ]]; then' in backup
+    assert 'backup_items+=("data/downloads")' in backup
     assert "data/temp" not in backup
     assert "verify_exact_project_service_state" in updater
     assert "PREVIOUS_PROJECT_SERVICES" in updater
@@ -560,7 +573,8 @@ def test_runtime_image_guarantees_compatible_7zip_commands_and_shared_identity()
 
 def test_linux_installer_and_updater_install_command_and_repair_permissions() -> None:
     installer = Path("install.sh").read_text(encoding="utf-8")
-    updater = Path("scripts/tmb.sh").read_text(encoding="utf-8")
+    updater = Path("scripts/lib/update.sh").read_text(encoding="utf-8")
+    updater += "\n" + Path("scripts/lib/services.sh").read_text(encoding="utf-8")
 
     assert 'sudo ln -sfn "$INSTALL_DIR/scripts/tmb.sh" "$TMB_BIN_DIR/tmb"' in installer
     assert "repair_tmb_command" in updater

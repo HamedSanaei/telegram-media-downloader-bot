@@ -37,7 +37,7 @@ def test_standalone_bootstrap_policy_snapshots_match_canonical_policy() -> None:
     expected = set(policy["blocked_releases"])
     scripts = (
         Path("install.sh"),
-        Path("scripts/tmb.sh"),
+        Path("scripts/lib/common.sh"),
         Path("install.ps1"),
         Path("scripts/tmb.ps1"),
     )
@@ -52,7 +52,14 @@ def test_standalone_bootstrap_policy_snapshots_match_canonical_policy() -> None:
         assert match is not None, f"missing embedded release policy in {script}"
         actual = set(re.findall(r"\"([^\"]+)\"", match.group(1)))
         assert actual == expected, f"embedded release policy drift in {script}"
-        assert re.search(r"assert[-_]release[-_]?allowed", text, flags=re.IGNORECASE)
+        assert re.search(r"assert[-_]release[-_]?allowed", text, flags=re.IGNORECASE) or (
+            script.name == "common.sh"
+            and re.search(
+                r"assert[-_]release[-_]?allowed",
+                Path("scripts/lib/update.sh").read_text(encoding="utf-8"),
+                flags=re.IGNORECASE,
+            )
+        )
 
 
 def test_release_build_and_publish_paths_enforce_canonical_policy() -> None:

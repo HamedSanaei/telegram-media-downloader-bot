@@ -27,6 +27,7 @@ prepare_case() {
     "$case_root/data/downloads" \
     "$case_root/data/temp"
   cp "$SOURCE_ROOT/scripts/tmb.sh" "$case_root/scripts/tmb.sh"
+  cp -r "$SOURCE_ROOT/scripts/lib" "$case_root/scripts/lib"
   cat >"$case_root/config.yaml" <<'EOF'
 telegram:
   bot_token: V1_CONFIG_SENTINEL
@@ -197,7 +198,7 @@ if [[ " $* " == *" stop "* ]]; then
   done
   mv "$temporary" "$TMB_CASE_ROOT/running-services"
 fi
-if [[ " $* " == *" up "* ]]; then
+if [[ "$*" == *"up "* ]]; then
   after_up=false
   for argument in "$@"; do
     if [[ "$after_up" == "false" ]]; then
@@ -211,6 +212,12 @@ if [[ " $* " == *" up "* ]]; then
         ;;
     esac
   done
+  # The update's post-install start uses --force-recreate; the pre-start
+  # `tmb status` self-check (repair_tmb_command) inspects BEFORE this point,
+  # so the crash marker below must only arm after services were started.
+  if [[ "$*" == *"--force-recreate"* ]]; then
+    touch "$TMB_CASE_ROOT/started-after-update"
+  fi
 fi
 if [[ "$*" == *"run --rm --user 0 --entrypoint sh"* ]] \
   && [[ "${TMB_FAIL_PERMISSIONS:-0}" == "1" ]] \
@@ -220,6 +227,7 @@ if [[ "$*" == *"run --rm --user 0 --entrypoint sh"* ]] \
 fi
 if [[ "$*" == inspect* ]]; then
   if [[ "${TMB_FAIL_HEALTH:-0}" == "1" ]] \
+    && [[ -e "$TMB_CASE_ROOT/started-after-update" ]] \
     && [[ ! -e "$TMB_CASE_ROOT/health-failed-once" ]]; then
     touch "$TMB_CASE_ROOT/health-failed-once"
     printf 'restarting\n'
@@ -256,6 +264,11 @@ printf 'checksum\n' >>"$TMB_TEST_LOG"
 EOF
   cat >"$case_root/fake-bin/tar" <<'EOF'
 #!/usr/bin/env bash
+# The manager invokes GNU tar with --force-local (portable drive-letter support);
+# normalize it away so the simulated argv contract below stays positional.
+if [[ "${1:-}" == "--force-local" ]]; then
+  shift
+fi
 printf 'tar %s\n' "$*" >>"$TMB_TEST_LOG"
 if [[ "${TMB_USE_REAL_TAR:-0}" == "1" ]]; then
   exec /usr/bin/tar "$@"
@@ -288,6 +301,12 @@ mkdir -p "$destination/scripts/tests"
 cp "$TMB_SOURCE_ROOT/install.sh" "$destination/install.sh"
 cp "$TMB_SOURCE_ROOT/manage.sh" "$destination/manage.sh"
 cp "$TMB_SOURCE_ROOT/scripts/tmb.sh" "$destination/scripts/tmb.sh"
+mkdir -p "$destination/scripts/lib"
+for library in \
+  common ui services update backup restore status storage docker logs \
+  telegram diagnostics config; do
+  cp "$TMB_SOURCE_ROOT/scripts/lib/$library.sh" "$destination/scripts/lib/$library.sh"
+done
 cp "$TMB_SOURCE_ROOT/scripts/build_release_archives.sh" \
   "$destination/scripts/build_release_archives.sh"
 cp "$TMB_SOURCE_ROOT/scripts/tests/test_tmb_update.sh" \
@@ -298,6 +317,8 @@ cp "$TMB_SOURCE_ROOT/scripts/tests/test_local_api_readiness.sh" \
   "$destination/scripts/tests/test_local_api_readiness.sh"
 cp "$TMB_SOURCE_ROOT/scripts/tests/test_readonly_logger_preflight.sh" \
   "$destination/scripts/tests/test_readonly_logger_preflight.sh"
+cp "$TMB_SOURCE_ROOT/scripts/tests/test_tmb.sh" \
+  "$destination/scripts/tests/test_tmb.sh"
 chmod 644 \
   "$destination/install.sh" \
   "$destination/manage.sh" \
