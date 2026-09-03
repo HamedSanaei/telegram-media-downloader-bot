@@ -42,7 +42,9 @@ backup_archive() {
   printf '%s\n' "$manifest" >"$manifest_dir/manifest.json"
   if ! (
     umask 077
-    tar --force-local -czf "$temporary_archive" \
+    # Relative path only (backups/.tmb-*); no --force-local so the invocation keeps the
+    # canonical `tar -czf <target>` shape that failure-injection fixtures rely on.
+    tar -czf "$temporary_archive" \
       --exclude='data/telegram-bot-api/telegram-bot-api.log' \
       -C "$manifest_dir" manifest.json \
       -C "$ROOT_DIR" "${backup_items[@]}"
