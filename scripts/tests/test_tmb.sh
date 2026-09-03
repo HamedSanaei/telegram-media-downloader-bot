@@ -187,7 +187,8 @@ if args and args[0] == "compose":
     if action == "ps":
         if "-q" in rest:
             print("container-%s" % rest[-1])
-        elif "--filter status=running" in rest:
+        elif "--filter" in rest and "status=running" in rest:
+            # Real docker splits "--filter status=running" into two argv tokens.
             if os.path.exists(state_file):
                 with open(state_file, encoding="utf-8") as handle:
                     sys.stdout.write(handle.read())
