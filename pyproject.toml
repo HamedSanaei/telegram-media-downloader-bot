@@ -1,6 +1,6 @@
 [project]
 name = "telegram-media-downloader-bot"
-version = "1.4.0-rc.6"
+version = "1.4.0-rc.7"
 description = "A maintainable Telegram media downloader bot with replaceable yt-dlp and gallery-dl adapters."
 readme = "README.md"
 requires-python = ">=3.14"

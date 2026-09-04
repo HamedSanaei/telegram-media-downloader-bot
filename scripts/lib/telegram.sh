@@ -178,7 +178,11 @@ logger_list_destinations() {
 
 # Local Bot API ---------------------------------------------------------
 local_api_status() {
-  config_edit_run local-api-status
+  # Runtime reachability and migration state only exist inside the Compose
+  # application context (service hostname, /data mounts); a bare container
+  # would report cloud/unreachable for a healthy service.
+  compose_run_app telegram-media-bot config-edit \
+    --config /app/config.yaml local-api-status
 }
 
 local_api_configure() {

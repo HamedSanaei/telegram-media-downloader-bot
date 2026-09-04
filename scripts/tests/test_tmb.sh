@@ -398,6 +398,20 @@ check_contains "status shows required channels state" "Required channels policy:
 check_contains "status local-api block agrees with local-api status" "Local API  enabled: false" "$out"
 check_contains "status local-api phase agrees with local-api status" "Local API  migration_phase: cloud" "$out"
 
+# tmb local-api status must run inside the application Compose context: the
+# local-api hostname and the /data migration state only exist on the Compose
+# network/mounts. A bare `docker run` cannot observe the real runtime and
+# reports cloud/unreachable while the service is actually healthy.
+: >"$DOCKER_LOG"
+out="$(run_tmb local-api status)" && code=0 || code=$?
+check_eq "tmb local-api status exits 0" "0" "$code"
+check_contains "local-api status shows enabled line" "enabled: false" "$out"
+check_contains "local-api status shows phase line" "migration_phase: cloud" "$out"
+local_api_status_calls="$(cat "$DOCKER_LOG")"
+normalized_status_fixture="$(cygpath -m "$FIXTURE" 2>/dev/null || printf '%s' "$FIXTURE")"
+check_contains "local-api status runs on the compose runtime" "compose --project-directory $normalized_status_fixture --profile local-api run --rm --no-deps worker telegram-media-bot config-edit --config /app/config.yaml local-api-status" "$local_api_status_calls"
+check_not_contains "local-api status avoids bare docker run" "docker run --rm -i" "$local_api_status_calls"
+
 # --------------------------------------------------------------------------- #
 # 3. Services
 # --------------------------------------------------------------------------- #

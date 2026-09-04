@@ -424,6 +424,16 @@ docker|telegram|channels|logger|local-api|doctor|bundle|version|help|uninstall`)
 
 ## Recent fixes
 
+- 2026-09-04: Prepared v1.4.0-rc.7 from production rc.6 evidence. `tmb local-api
+  status` now runs inside the application Compose context (`compose run` with
+  the project network and mounted application state) instead of an isolated
+  container, so runtime reachability and migration state agree with `tmb status`
+  and `tmb doctor` on a healthy deployment. Regression coverage asserts the
+  Compose execution path in the control-plane suite and full surface agreement
+  (enabled/mode/process_running/endpoint_reachable/migration_phase/
+  active_endpoint plus doctor reachability) against a real healthy Local API
+  container. Version, lock metadata, changelog, and manifest updated; migration,
+  runtime permission, and Local Bot API lifecycle behavior unchanged.
 - 2026-09-04: Prepared v1.4.0-rc.6 from production rc.5 evidence. `tmb backup verify` uses a
   pipefail-safe member check (`tar -tzf ARCHIVE config.yaml`) instead of a `grep -q` pipeline that
   false-negatived large archives. Migration import re-owns the restored `config.yaml` to the

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed (targeting v1.4.0-rc.7)
+
+- `tmb local-api status` now reads runtime reachability and migration state
+  from the actual Compose application context (`compose run` on the project
+  network with the mounted application state) instead of an isolated
+  container that cannot resolve the Local API service, so it agrees with
+  `tmb status` and `tmb doctor` on a healthy deployment.
+
 ### Fixed (targeting v1.4.0-rc.6)
 
 - `tmb backup verify` no longer false-negatives on valid archives: the required-member check uses

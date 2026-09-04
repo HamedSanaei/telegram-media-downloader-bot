@@ -42,6 +42,11 @@ done
 mkdir -p "$INSTALL_ROOT/data/state" "$INSTALL_ROOT/data/cookies" \
   "$INSTALL_ROOT/data/downloads" "$INSTALL_ROOT/data/temp" \
   "$INSTALL_ROOT/data/telegram-bot-api" "$INSTALL_ROOT/backups"
+# Model the production durable state under test: migration completed and the
+# deployment is serving local (absent state defaults to cloud in the app).
+cat >"$INSTALL_ROOT/data/state/telegram-api-migration.json" <<'EOF'
+{"version": 1, "phase": "local", "updated_at": "2026-09-04T00:00:00+00:00"}
+EOF
 cat >"$INSTALL_ROOT/config.yaml" <<'EOF'
 app:
   environment: production
@@ -198,6 +203,10 @@ EOF
 # (`telegram-media-bot local-api ... serve`), read-only config, writable data,
 # runtime user, and the TCP healthcheck on 127.0.0.1:8081.
 cp "$SOURCE_ROOT/docker-compose.yml" "$INSTALL_ROOT/docker-compose.yml"
+# The tmb entrypoint under test (same tree as the compose file above), plus
+# the version metadata `tmb status` reports (required in release archives).
+cp -a "$SOURCE_ROOT/scripts" "$INSTALL_ROOT/scripts"
+cp "$SOURCE_ROOT/pyproject.toml" "$INSTALL_ROOT/pyproject.toml"
 sed -i '/^name: telegram-media-downloader$/d' "$INSTALL_ROOT/docker-compose.yml"
 chmod 600 "$INSTALL_ROOT/.env" "$INSTALL_ROOT/config.yaml"
 
@@ -264,5 +273,38 @@ printf '%s\n' "$STATUS_OUTPUT" | grep -Fxq "enabled: true"
 printf '%s\n' "$STATUS_OUTPUT" | grep -Fxq "endpoint_reachable: true"
 printf '%s\n' "$STATUS_OUTPUT" | grep -Fxq "process_running: true"
 echo "OK app-level local-api status agrees with the healthy container."
+
+# `tmb local-api status` must observe the same healthy runtime through the
+# application Compose context. A bare-container execution cannot resolve the
+# Compose `local-api` hostname or read the mounted migration state, so it
+# reports cloud/unreachable while the service is actually healthy.
+TMB_LAPI_STATUS="$(bash "$INSTALL_ROOT/scripts/tmb.sh" local-api status 2>&1)"
+printf '%s\n' "$TMB_LAPI_STATUS" | grep -Fxq "enabled: true"
+printf '%s\n' "$TMB_LAPI_STATUS" | grep -Fxq "mode: managed"
+printf '%s\n' "$TMB_LAPI_STATUS" | grep -Fxq "process_running: true"
+printf '%s\n' "$TMB_LAPI_STATUS" | grep -Fxq "endpoint_reachable: true"
+printf '%s\n' "$TMB_LAPI_STATUS" | grep -Fxq "migration_phase: local"
+printf '%s\n' "$TMB_LAPI_STATUS" | grep -Fxq "active_endpoint: local"
+echo "OK tmb local-api status agrees with the healthy container."
+
+# The status surfaces must never contradict each other on a healthy fixture:
+# `tmb status`, `tmb local-api status`, and `tmb doctor` agree.
+TMB_STATUS="$(bash "$INSTALL_ROOT/scripts/tmb.sh" status 2>&1)"
+for field in enabled mode process_running endpoint_reachable migration_phase active_endpoint; do
+  expected="$(printf '%s\n' "$TMB_LAPI_STATUS" | sed -n "s/^${field}: //p" | head -n 1)"
+  actual="$(printf '%s\n' "$TMB_STATUS" | sed -n "s/^Local API  ${field}: //p" | head -n 1)"
+  [[ -n "$expected" && "$expected" == "$actual" ]] || {
+    echo "FAIL: tmb status disagrees with tmb local-api status on $field (status=[$actual], local-api=[$expected])." >&2
+    exit 1
+  }
+done
+echo "OK tmb status agrees with tmb local-api status."
+DOCTOR_OUTPUT="$(bash "$INSTALL_ROOT/scripts/tmb.sh" doctor --online-service local-api 2>&1)" || true
+printf '%s\n' "$DOCTOR_OUTPUT" | grep -Fq "OK   local_api_reachable" || {
+  echo "FAIL: tmb doctor does not report a reachable Local API while status does." >&2
+  printf '%s\n' "$DOCTOR_OUTPUT" >&2
+  exit 1
+}
+echo "OK tmb doctor agrees the Local API is reachable."
 
 echo "Privileged Local Bot API container health integration test passed."
