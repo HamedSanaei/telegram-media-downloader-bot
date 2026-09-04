@@ -315,6 +315,10 @@ cp "$TMB_SOURCE_ROOT/scripts/tests/test_tmb_upgrade_integration.sh" \
   "$destination/scripts/tests/test_tmb_upgrade_integration.sh"
 cp "$TMB_SOURCE_ROOT/scripts/tests/test_local_api_readiness.sh" \
   "$destination/scripts/tests/test_local_api_readiness.sh"
+cp "$TMB_SOURCE_ROOT/scripts/tests/test_local_api_container_health.sh" \
+  "$destination/scripts/tests/test_local_api_container_health.sh"
+cp "$TMB_SOURCE_ROOT/scripts/tests/test_migration_uidgid_integration.sh" \
+  "$destination/scripts/tests/test_migration_uidgid_integration.sh"
 cp "$TMB_SOURCE_ROOT/scripts/tests/test_readonly_logger_preflight.sh" \
   "$destination/scripts/tests/test_readonly_logger_preflight.sh"
 cp "$TMB_SOURCE_ROOT/scripts/tests/test_tmb.sh" \

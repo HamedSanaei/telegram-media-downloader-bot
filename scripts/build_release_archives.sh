@@ -38,6 +38,8 @@ chmod 755 \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_tmb_update.sh" \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_tmb_upgrade_integration.sh" \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_local_api_readiness.sh" \
+  "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_local_api_container_health.sh" \
+  "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_migration_uidgid_integration.sh" \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_tmb.sh" \
   "$TEMPORARY_DIRECTORY/tree/$PREFIX/scripts/tests/test_readonly_logger_preflight.sh"
 

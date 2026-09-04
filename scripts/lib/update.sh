@@ -27,6 +27,8 @@ RELEASE_BASH_FILES=(
   scripts/tests/test_tmb_update.sh
   scripts/tests/test_tmb_upgrade_integration.sh
   scripts/tests/test_local_api_readiness.sh
+  scripts/tests/test_local_api_container_health.sh
+  scripts/tests/test_migration_uidgid_integration.sh
   scripts/tests/test_readonly_logger_preflight.sh
   scripts/tests/test_tmb.sh
 )
@@ -125,6 +127,8 @@ prepare_verified_release() {
     "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_tmb_update.sh" \
     "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_tmb_upgrade_integration.sh" \
     "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_local_api_readiness.sh" \
+    "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_local_api_container_health.sh" \
+    "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_migration_uidgid_integration.sh" \
     "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_readonly_logger_preflight.sh" \
     "$RELEASE_STAGING_DIRECTORY/scripts/tests/test_tmb.sh" || return 1
 }
@@ -201,6 +205,8 @@ install_prepared_release() {
     "$ROOT_DIR/scripts/tests/test_tmb_update.sh" \
     "$ROOT_DIR/scripts/tests/test_tmb_upgrade_integration.sh" \
     "$ROOT_DIR/scripts/tests/test_local_api_readiness.sh" \
+    "$ROOT_DIR/scripts/tests/test_local_api_container_health.sh" \
+    "$ROOT_DIR/scripts/tests/test_migration_uidgid_integration.sh" \
     "$ROOT_DIR/scripts/tests/test_readonly_logger_preflight.sh" \
     "$ROOT_DIR/scripts/tests/test_tmb.sh"
 }

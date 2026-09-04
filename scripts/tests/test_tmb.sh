@@ -23,6 +23,7 @@ export TMB_FAKE_DOCKER_STATE="$STATE_FILE"
 export TMB_FAKE_DOCKER_LOG="$DOCKER_LOG"
 export TMB_FAKE_DOCKER_COUNTER="$COUNTER_FILE"
 export TMB_FAKE_DOCKER_MARKER="$INT_MARKER"
+export TMB_FAKE_DOCKER_FIXTURE="$FIXTURE"
 
 PASS=0
 FAIL=0
@@ -175,6 +176,85 @@ def remove_running(services):
         handle.write("".join(remaining))
 
 
+def emit_config_edit(args: list) -> None:
+    """Emulate `config-edit` app CLI output for compose-run invocations."""
+    joined = " ".join(args)
+    if "config-edit" not in joined:
+        return
+    if "telegram-status" in joined:
+        emitted = config_edit_telegram_status(
+            os.path.join(os.environ["TMB_FAKE_DOCKER_FIXTURE"], "config.yaml")
+        )
+        if emitted:
+            print(emitted)
+    elif "local-api-status" in joined:
+        print("enabled: false")
+        print("mode: external")
+        print("process_running: false")
+        print("endpoint_reachable: false")
+        print("migration_phase: cloud")
+        print("active_endpoint: cloud")
+    elif "logger-status" in joined:
+        print("enabled: false")
+        print("configured_destinations: 0")
+        print("outbox: disabled")
+
+
+def config_edit_telegram_status(config_path: str) -> str:
+    """Emulate `config-edit telegram-status` for the fixture config."""
+    lines = []
+    section = ""
+    enabled_flags = {}
+    token = ""
+    local_is_local = False
+    admins = []
+    support = ""
+    try:
+        with open(config_path, encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.rstrip("\n")
+                indent = len(line) - len(line.lstrip())
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                key, _, value = stripped.partition(":")
+                key = key.strip()
+                value = value.strip().strip('"')
+                if indent == 2 and value:
+                    # telegram-level scalar (bot_token, admin_ids, ...)
+                    if key == "bot_token":
+                        token = value
+                    elif key == "local_api_is_local":
+                        local_is_local = value == "true"
+                    elif key == "admin_ids":
+                        admins = [
+                            item.strip()
+                            for item in value.strip("[]").split(",")
+                            if item.strip()
+                        ]
+                    elif key == "support_username":
+                        support = value
+                elif indent in (2, 4):
+                    if key in ("required_channels", "logger") and not value:
+                        section = key
+                    elif indent == 4 and section in ("required_channels", "logger"):
+                        if key == "enabled":
+                            enabled_flags[section] = value == "true"
+    except OSError:
+        return ""
+    configured = bool(token) and token != "CHANGE_ME"
+    lines.append("bot_token: %s" % ("configured" if configured else "not configured"))
+    lines.append("admin_ids: %s" % (",".join(admins) if admins else "(none)"))
+    lines.append("support_username: %s" % (support if support else "(none)"))
+    lines.append("api_mode: %s" % ("local" if local_is_local else "cloud"))
+    lines.append("local_bot_api: disabled")
+    channels = enabled_flags.get("required_channels")
+    lines.append("required_channels: %s (1 channel(s))" % ("enabled" if channels else "disabled"))
+    lines.append("logger: %s" % ("enabled" if enabled_flags.get("logger") else "disabled"))
+    lines.append("polling_timeout_seconds: 30")
+    lines.append("connection: (not probed)")
+    return "\n".join(lines)
+
 args = sys.argv[1:]
 if args and args[0] == "compose":
     args = args[1:]
@@ -203,6 +283,7 @@ if args and args[0] == "compose":
         open(state_file, "w").close()
     elif action == "run":
         maybe_interrupt()
+        emit_config_edit(rest)
     elif action == "logs":
         print("INFO  safe diagnostic line")
         print("ERROR bot_token=123456:TESTtoken leaked")
@@ -230,8 +311,14 @@ if args and args[0] == "inspect":
 if args and args[0] == "run":
     maybe_interrupt()
     if os.environ.get("TMB_TEST_FAKE_DOCKER_RUN_FAIL") == "1":
-        print("fake docker run failed (test)", file=sys.stderr)
-        sys.exit(1)
+        # Fail the STAGED VALIDATION runs (SQLite integrity / config-check),
+        # not the restore transaction's ownership-prep runs, so the injected
+        # failure exercises the "failed validation" operator path.
+        joined = " ".join(args)
+        if "config-check" in joined or "sqlite3" in joined:
+            print("fake docker run failed (test)", file=sys.stderr)
+            sys.exit(1)
+    emit_config_edit(args)
     print("ok")
     sys.exit(0)
 
@@ -261,7 +348,7 @@ check_contains "tmb --help shows usage" "Usage: tmb COMMAND" "$out"
 
 out="$(run_tmb help)" && code=0 || code=$?
 check_eq "tmb help exits 0" "0" "$code"
-check_contains "tmb help lists backup" "backup [create|list|inspect FILE|verify FILE|delete FILE]" "$out"
+check_contains "tmb help lists backup" "backup [create|list|inspect FILE|verify FILE|secure FILE|delete FILE]" "$out"
 
 out="$(run_tmb help backup)" && code=0 || code=$?
 check_eq "tmb help backup exits 0" "0" "$code"
@@ -302,10 +389,14 @@ out="$(run_tmb status)" && code=0 || code=$?
 check_eq "tmb status exits 0" "0" "$code"
 check_contains "status shows version" "Application version: 9.9.9-test" "$out"
 check_contains "status shows bot running" "bot" "$out"
-check_contains "status shows telegram configured" "Telegram: token configured" "$out"
+check_contains "status shows telegram configured" "Telegram: token configured, Cloud Bot API mode" "$out"
 check_not_contains "status hides the token" "TESTtoken" "$out"
-check_contains "status shows logger state" "Operator Logger:" "$out"
-check_contains "status shows required channels state" "Required channels policy:" "$out"
+check_contains "status shows logger state" "Operator Logger: disabled" "$out"
+check_contains "status shows required channels state" "Required channels policy: enabled" "$out"
+# All status values derive from the same application CLI the other status
+# surfaces use, so the dashboard cannot contradict telegram/local-api/doctor.
+check_contains "status local-api block agrees with local-api status" "Local API  enabled: false" "$out"
+check_contains "status local-api phase agrees with local-api status" "Local API  migration_phase: cloud" "$out"
 
 # --------------------------------------------------------------------------- #
 # 3. Services
@@ -470,6 +561,168 @@ check_eq "symlink archive rejected" "1" "$code"
 check_contains "symlink reported" "symlink or special file" "$out"
 
 # --------------------------------------------------------------------------- #
+# 7b. Backup verify: large-archive pipefail regression (real tar)
+# --------------------------------------------------------------------------- #
+# A sufficiently large archive reproduces the historical grep -q/pipefail race:
+# grep exits as soon as config.yaml is found, tar receives SIGPIPE, and the
+# pipeline turns non-zero under `set -o pipefail`. The member-argument check
+# (`tar -tzf ARCHIVE config.yaml`) has no such race.
+big_archive="$TEST_ROOT/big.tar.gz"
+python3 - "$big_archive" <<'PY'
+import io
+import json
+import os
+import sys
+import tarfile
+
+target = sys.argv[1]
+manifest = {
+    "schema_version": 1,
+    "kind": "operational",
+    "created_at": "2026-09-03T18:15:34Z",
+    "app_version": "9.9.9-test",
+    "image": "ghcr.io/hamedsanaei/telegram-media-downloader-bot:9.9.9-test",
+    "contents": ["config.yaml", "data/state", "data/downloads"],
+}
+with tarfile.open(target, "w:gz") as archive:
+    def add(name: str, data: bytes) -> None:
+        info = tarfile.TarInfo(name)
+        info.size = len(data)
+        archive.addfile(info, io.BytesIO(data))
+    add("manifest.json", json.dumps(manifest).encode())
+    add("config.yaml", b"telegram: {}\n")
+    add("data/state/jobs.sqlite3", b"placeholder")
+    for index in range(4000):
+        add("data/downloads/file-%04d.bin" % index, b"x" * 2048)
+PY
+( cd "$TEST_ROOT" && sha256sum "$(basename "$big_archive")" >"$(basename "$big_archive").sha256" )
+out="$(run_tmb backup verify "$big_archive")" && code=0 || code=$?
+check_eq "large archive verify exits 0 (no pipefail race)" "0" "$code"
+check_contains "large archive verify reports valid" "Backup is valid" "$out"
+check_contains "large archive verify reports checksum" "Checksum: OK" "$out"
+
+missing_cfg="$TEST_ROOT/missing-config.tar.gz"
+python3 - "$missing_cfg" <<'PY'
+import io
+import json
+import os
+import sys
+import tarfile
+
+target = sys.argv[1]
+manifest = {"schema_version": 1, "kind": "operational", "contents": []}
+with tarfile.open(target, "w:gz") as archive:
+    info = tarfile.TarInfo("manifest.json")
+    data = json.dumps(manifest).encode()
+    info.size = len(data)
+    archive.addfile(info, io.BytesIO(data))
+PY
+out="$(run_tmb backup verify "$missing_cfg")" && code=0 || code=$?
+check_eq "archive without config.yaml rejected" "1" "$code"
+check_contains "missing config.yaml reported" "missing the required config.yaml entry" "$out"
+
+# --------------------------------------------------------------------------- #
+# 7c. Manifest JSON parsing preserves ':', '@sha256:', and full timestamps
+# --------------------------------------------------------------------------- #
+json_archive="$TEST_ROOT/json-values.tar.gz"
+python3 - "$json_archive" <<'PY'
+import io
+import json
+import os
+import sys
+import tarfile
+
+target = sys.argv[1]
+manifest = {
+    "schema_version": 1,
+    "kind": "migration",
+    "created_at": "2026-09-03T18:15:34Z",
+    "app_version": "1.4.0-rc.6",
+    "image": "ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.4.0-rc.6@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "contents": ["config.yaml", "data/state", "data/telegram-bot-api"],
+}
+with tarfile.open(target, "w:gz") as archive:
+    for name, value in (
+        ("manifest.json", json.dumps(manifest).encode()),
+        ("config.yaml", b"telegram: {}\n"),
+    ):
+        info = tarfile.TarInfo(name)
+        info.size = len(value)
+        archive.addfile(info, io.BytesIO(value))
+PY
+( cd "$TEST_ROOT" && sha256sum "$(basename "$json_archive")" >"$(basename "$json_archive").sha256" )
+out="$(run_tmb backup verify "$json_archive")" && code=0 || code=$?
+check_eq "manifest JSON verify exits 0" "0" "$code"
+check_contains "manifest preserves full created_at" "created_at: 2026-09-03T18:15:34Z" "$out"
+check_contains "manifest preserves full image ref" \
+  "image: ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.4.0-rc.6@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" \
+  "$out"
+out="$(run_tmb backup inspect "$json_archive")" && code=0 || code=$?
+check_eq "manifest JSON inspect exits 0" "0" "$code"
+check_contains "inspect shows JSON contents joined" "contents: config.yaml, data/state, data/telegram-bot-api" "$out"
+
+# --------------------------------------------------------------------------- #
+# 7d. Secret redaction in archive inspection (token embedded in a path)
+# --------------------------------------------------------------------------- #
+secret_archive="$TEST_ROOT/secret-path.tar.gz"
+python3 - "$secret_archive" <<'PY'
+import io
+import json
+import os
+import sys
+import tarfile
+
+target = sys.argv[1]
+manifest = {
+    "schema_version": 1,
+    "kind": "migration",
+    "created_at": "2026-09-03T18:15:34Z",
+    "app_version": "9.9.9-test",
+    "image": "ghcr.io/hamedsanaei/telegram-media-downloader-bot:9.9.9-test",
+    "contents": ["config.yaml", "data/telegram-bot-api"],
+}
+# Fixture secret: a Telegram-bot-token-shaped directory name; must never appear
+# in any user-visible archive inspection output.
+secret = "123456:AAExampleSecretToken"  # pragma: allowlist secret
+entries = {
+    "manifest.json": json.dumps(manifest).encode(),
+    "config.yaml": b"telegram: {}\n",
+    "data/telegram-bot-api/%s/td.binlog" % secret: b"binary-state",
+}
+with tarfile.open(target, "w:gz") as archive:
+    for name, value in entries.items():
+        info = tarfile.TarInfo(name)
+        info.size = len(value)
+        archive.addfile(info, io.BytesIO(value))
+PY
+( cd "$TEST_ROOT" && sha256sum "$(basename "$secret_archive")" >"$(basename "$secret_archive").sha256" )
+out="$(run_tmb backup inspect "$secret_archive")" && code=0 || code=$?
+check_eq "secret-path inspect exits 0" "0" "$code"
+check_not_contains "inspect redacts token embedded in path" "AAExampleSecretToken" "$out"
+check_contains "inspect shows redaction placeholder" "redacted-token" "$out"
+out="$(run_tmb backup verify "$secret_archive")" && code=0 || code=$?
+check_eq "secret-path verify exits 0" "0" "$code"
+check_not_contains "verify redacts token embedded in path" "AAExampleSecretToken" "$out"
+
+# --------------------------------------------------------------------------- #
+# 7e. backup secure + group/world-readable warning (real chmod; Linux only)
+# --------------------------------------------------------------------------- #
+if [[ "$(uname -s)" == "Linux" ]]; then
+  chmod 0644 "$archive_abs" "$archive_abs.sha256"
+  out="$(run_tmb backup verify "$archive")" && code=0 || code=$?
+  check_eq "world-readable archive still verifies" "0" "$code"
+  check_contains "world-readable archive warns" "group/world readable" "$out"
+  out="$(run_tmb backup secure "$archive")" && code=0 || code=$?
+  check_eq "backup secure exits 0" "0" "$code"
+  check_eq "backup secure restores archive mode" "600" "$(stat -c '%a' "$archive_abs")"
+  check_eq "backup secure restores checksum mode" "600" "$(stat -c '%a' "$archive_abs.sha256")"
+  out="$(run_tmb backup verify "$archive")" && code=0 || code=$?
+  check_not_contains "secured archive no longer warns" "group/world readable" "$out"
+else
+  pass "backup secure mode checks run on Linux only (host: $(uname -s))"
+fi
+
+# --------------------------------------------------------------------------- #
 # 8. Restore: dry-run, transactional success, exact state restoration
 # --------------------------------------------------------------------------- #
 out="$(run_tmb restore --dry-run "$archive")" && code=0 || code=$?
@@ -484,6 +737,7 @@ check_eq "restore exits 0" "0" "$code"
 check_contains "restore reports success" "Restore completed successfully" "$out"
 check_not_contains "restore restores config from backup" "modified-after-backup" "$(cat "$FIXTURE/config.yaml")"
 check_contains "restore keeps original config content" "TESTtoken" "$(cat "$FIXTURE/config.yaml")"
+check_contains "restore repairs restored config ownership via image" "chown" "$(cat "$DOCKER_LOG")"
 check_eq "restore restores exact service state" "$state_before_restore" "$(cat "$STATE_FILE")"
 restore_dirs="$(find "$FIXTURE" -maxdepth 1 -name '.tmb-restore.*' | wc -l)"
 check_eq "restore cleans transaction directories" "0" "$restore_dirs"

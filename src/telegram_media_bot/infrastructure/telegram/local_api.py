@@ -192,8 +192,15 @@ class LocalBotApiManager:
     def status(self) -> LocalApiStatus:
         state = self._normalized_state()
         reachable = self.endpoint_reachable()
+        # A managed Local Bot API whose lifecycle is owned by the compose
+        # service (lifecycle_owner == "service") has no managed-process file:
+        # its process IS the running service, so process_running follows
+        # endpoint reachability exactly like external mode. Only
+        # application-owned managed instances track the child process.
         process_running = (
-            self._managed_process_running() if self._config.mode == "managed" else reachable
+            self._managed_process_running()
+            if self._config.mode == "managed" and self._config.lifecycle_owner == "application"
+            else reachable
         )
         active = _active_endpoint(state)
         return LocalApiStatus(

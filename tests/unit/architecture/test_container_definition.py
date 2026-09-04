@@ -591,6 +591,29 @@ def test_linux_installer_and_updater_install_command_and_repair_permissions() ->
     assert 'chmod 755 "$target"' in updater
 
 
+def test_installer_migration_bootstrap_mode_never_runs_wizard_or_start() -> None:
+    installer = Path("install.sh").read_text(encoding="utf-8")
+
+    # Flag parsing: --migration disables configure and start; granular flags
+    # exist; unknown options are rejected.
+    assert 'case "$1" in' in installer
+    assert "--migration)" in installer
+    assert "INSTALL_MIGRATION_MODE=1" in installer
+    assert "--no-configure) INSTALL_CONFIGURE=0" in installer
+    assert "--no-start) INSTALL_START=0" in installer
+    assert "--install-dir)" in installer
+    # The interactive wizard and the service-start sequence must be guarded.
+    assert 'if [[ "$INSTALL_CONFIGURE" == "1" ]]; then' in installer
+    assert "telegram-media-bot configure --config /workspace/config.yaml" in installer
+    assert 'if [[ "$INSTALL_START" == "1" ]]; then' in installer
+    assert "docker compose --profile local-api up -d local-api" in installer
+    # Migration bootstrap must still install the tmb command and leave the
+    # destination ready for `tmb migration import`.
+    assert 'sudo ln -sfn "$INSTALL_DIR/scripts/tmb.sh" "$TMB_BIN_DIR/tmb"' in installer
+    assert "tmb migration import FILE" in installer
+    assert "cd $INSTALL_DIR && tmb migration import FILE" in installer
+
+
 def test_linux_release_archive_bootstraps_safely_from_v1_0_2_updater() -> None:
     builder = Path("scripts/build_release_archives.sh").read_text(encoding="utf-8")
 

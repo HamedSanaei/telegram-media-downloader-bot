@@ -100,11 +100,62 @@ EOF
 }
 
 backup_manifest_field() {
-  local archive="$1" field="$2"
-  # Handles both quoted strings and unquoted JSON numbers.
-  tar --force-local -xzOf "$archive" manifest.json 2>/dev/null |
-    grep -m1 "\"$field\"" |
-    sed -E 's/.*: *"?([^",]*)"?.*/\1/'
+  local archive="$1" field="$2" temporary status
+  # The manifest is JSON; parsing it with grep/sed corrupts values containing
+  # ':' (image refs), '@sha256:', hyphens, or full ISO timestamps. Extract it
+  # and parse with the Python stdlib json module.
+  temporary="$(mktemp -d)" || return 1
+  if ! tar --force-local -xzOf "$archive" manifest.json \
+    >"$temporary/manifest.json" 2>/dev/null; then
+    rm -rf -- "$temporary"
+    return 1
+  fi
+  python3 - "$temporary/manifest.json" "$field" <<'PY' || status=$?
+import json
+import sys
+
+path, field = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as handle:
+        manifest = json.load(handle)
+except Exception:
+    sys.exit(1)
+value = manifest.get(field)
+if value is None:
+    sys.exit(1)
+print(value)
+PY
+  status=${status:-0}
+  rm -rf -- "$temporary"
+  return "$status"
+}
+
+# The manifest `contents` array as a display string (JSON list joined with ", ").
+backup_manifest_contents() {
+  local archive="$1" temporary status
+  temporary="$(mktemp -d)" || return 1
+  if ! tar --force-local -xzOf "$archive" manifest.json \
+    >"$temporary/manifest.json" 2>/dev/null; then
+    rm -rf -- "$temporary"
+    return 1
+  fi
+  python3 - "$temporary/manifest.json" <<'PY' || status=$?
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        manifest = json.load(handle)
+except Exception:
+    sys.exit(1)
+contents = manifest.get("contents")
+if not isinstance(contents, list):
+    sys.exit(1)
+print(", ".join(str(item) for item in contents))
+PY
+  status=${status:-0}
+  rm -rf -- "$temporary"
+  return "$status"
 }
 
 backup_list() {
@@ -135,27 +186,55 @@ resolve_backup_path() {
   readlink -f "$candidate" 2>/dev/null || printf '%s' "$candidate"
 }
 
+# Warn (never fail) when an archive or its checksum is group/world readable,
+# e.g. after scp/rsync copied it with default umask. Migration import accepts
+# such files (the incoming archive is not required to be runtime-owned), but
+# operators should re-secure them with `tmb backup secure FILE`.
+warn_if_backup_world_readable() {
+  local archive="$1" mode checksum_mode
+  mode="$(stat -c '%a' "$archive" 2>/dev/null || echo unknown)"
+  case "$mode" in
+    [0-7][0-7][0-7]) ;;
+    *) mode="unknown" ;;
+  esac
+  if [[ "$mode" != "unknown" && "${mode:1:1}" =~ [4-7] || "$mode" != "unknown" && "${mode:2:1}" =~ [4-7] ]]; then
+    echo "Warning: the archive is group/world readable (mode $mode); it was copied with a permissive umask." >&2
+    echo "Re-secure it with: tmb backup secure $(basename "$archive")" >&2
+  fi
+  if [[ -f "$archive.sha256" ]]; then
+    checksum_mode="$(stat -c '%a' "$archive.sha256" 2>/dev/null || echo unknown)"
+    case "$checksum_mode" in
+      [0-7][0-7][0-7]) ;;
+      *) checksum_mode="unknown" ;;
+    esac
+    if [[ "$checksum_mode" != "unknown" && "${checksum_mode:1:1}" =~ [4-7] || "$checksum_mode" != "unknown" && "${checksum_mode:2:1}" =~ [4-7] ]]; then
+      echo "Warning: the checksum file is group/world readable (mode $checksum_mode)." >&2
+      echo "Re-secure it with: tmb backup secure $(basename "$archive")" >&2
+    fi
+  fi
+}
+
 # Structural + security validation of an archive (used by verify, inspect,
 # and restore). Prints a safe summary; returns non-zero on any failure.
 validate_backup_archive() {
   local archive="$1"
   if [[ ! -f "$archive" ]]; then
-    echo "Backup file not found or not a regular file: $archive" >&2
+    echo "Backup file not found or not a regular file: $(printf '%s' "$archive" | redact_string)" >&2
     return 1
   fi
   if ! gzip -t "$archive" 2>/dev/null; then
-    echo "Backup is not a valid gzip archive: $archive" >&2
+    echo "Backup is not a valid gzip archive: $(printf '%s' "$archive" | redact_string)" >&2
     return 1
   fi
   local entry
   while IFS= read -r entry; do
     case "$entry" in
       /*|*../*)
-        echo "Backup contains an unsafe path entry: $entry" >&2
+        echo "Backup contains an unsafe path entry: $(printf '%s' "$entry" | redact_string)" >&2
         return 1
         ;;
       ./*|*//*)
-        echo "Backup contains an unexpected path entry: $entry" >&2
+        echo "Backup contains an unexpected path entry: $(printf '%s' "$entry" | redact_string)" >&2
         return 1
         ;;
     esac
@@ -174,13 +253,14 @@ validate_backup_archive() {
       cd "$(dirname "$archive")"
       sha256sum --check --status "$(basename "$archive").sha256"
     ); then
-      echo "Backup checksum verification failed: $archive" >&2
+      echo "Backup checksum verification failed: $(printf '%s' "$archive" | redact_string)" >&2
       return 1
     fi
     echo "Checksum: OK"
   else
     echo "Checksum: (no sibling .sha256 file present)"
   fi
+  warn_if_backup_world_readable "$archive"
   local schema kind
   schema="$(backup_manifest_field "$archive" schema_version 2>/dev/null || true)"
   kind="$(backup_manifest_field "$archive" kind 2>/dev/null || true)"
@@ -192,7 +272,9 @@ validate_backup_archive() {
     echo "Backup manifest has an unknown kind: ${kind:-none}" >&2
     return 1
   fi
-  if ! tar --force-local -tzf "$archive" 2>/dev/null | grep -Fxq "config.yaml"; then
+  # Member existence check: `tar -tzf ARCHIVE MEMBER` exits non-zero when the
+  # member is absent without any grep -q/pipefail SIGPIPE race.
+  if ! tar --force-local -tzf "$archive" config.yaml >/dev/null 2>&1; then
     echo "Backup is missing the required config.yaml entry." >&2
     return 1
   fi
@@ -207,7 +289,7 @@ backup_verify() {
   }
   archive="$(resolve_backup_path "$archive")"
   validate_backup_archive "$archive" || return 1
-  echo "Backup is valid: $archive"
+  echo "Backup is valid: $(printf '%s' "$archive" | redact_string)"
   echo "  kind: $(backup_manifest_field "$archive" kind)"
   echo "  app_version: $(backup_manifest_field "$archive" app_version)"
   echo "  image: $(backup_manifest_field "$archive" image)"
@@ -222,20 +304,42 @@ backup_inspect() {
   }
   archive="$(resolve_backup_path "$archive")"
   validate_backup_archive "$archive" || return 1
-  local size mode contents
+  local size mode
   size="$(human_size "$(file_size_bytes "$archive")")"
   mode="$(stat -c '%a' "$archive" 2>/dev/null || echo unknown)"
-  contents="$(tar --force-local -xzOf "$archive" manifest.json 2>/dev/null | sed -n 's/.*"contents": \[\(.*\)\].*/\1/p')"
-  echo "Backup: $archive"
+  echo "Backup: $(printf '%s' "$archive" | redact_string)"
   echo "  size: $size"
   echo "  mode: $mode"
   echo "  kind: $(backup_manifest_field "$archive" kind)"
   echo "  created_at: $(backup_manifest_field "$archive" created_at)"
   echo "  app_version: $(backup_manifest_field "$archive" app_version)"
   echo "  image: $(backup_manifest_field "$archive" image)"
-  echo "  contents: $contents"
+  echo "  contents: $(backup_manifest_contents "$archive" 2>/dev/null || true)"
   echo "  entries:"
-  tar --force-local -tzf "$archive" 2>/dev/null | grep -v '^$' | sed 's/^/    /'
+  tar --force-local -tzf "$archive" 2>/dev/null | grep -v '^$' | sed 's/^/    /' | redact_string
+}
+
+# Re-secure an archive copied in with a permissive umask: archive and checksum
+# are both set to 0600. The archive contents are never modified.
+backup_secure() {
+  local archive="$1"
+  [[ -n "$archive" ]] || {
+    echo "Usage: tmb backup secure FILE [--yes]" >&2
+    return 2
+  }
+  archive="$(resolve_backup_path "$archive")"
+  [[ -f "$archive" ]] || {
+    echo "Backup file not found: $(printf '%s' "$archive" | redact_string)" >&2
+    return 1
+  }
+  chmod 600 "$archive" || {
+    echo "Unable to secure the archive; is it owned by this user?" >&2
+    return 1
+  }
+  if [[ -f "$archive.sha256" ]]; then
+    chmod 600 "$archive.sha256" 2>/dev/null || true
+  fi
+  echo "Backup secured (mode 0600): $(printf '%s' "$archive" | redact_string)"
 }
 
 backup_delete() {
@@ -284,12 +388,15 @@ run_backup() {
     verify)
       backup_verify "${2:-}"
       ;;
+    secure)
+      backup_secure "${2:-}"
+      ;;
     delete)
       acquire_management_lock || return 1
       backup_delete "${2:-}" "${3:-}"
       ;;
     *)
-      echo "Usage: tmb backup [create|list|inspect FILE|verify FILE|delete FILE]" >&2
+      echo "Usage: tmb backup [create|list|inspect FILE|verify FILE|secure FILE|delete FILE]" >&2
       return 2
       ;;
   esac

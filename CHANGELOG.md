@@ -2,7 +2,44 @@
 
 ## Unreleased
 
-### Added (targeting v1.4.0-rc.5)
+### Fixed (targeting v1.4.0-rc.6)
+
+- `tmb backup verify` no longer false-negatives on valid archives: the required-member check uses
+  `tar -tzf ARCHIVE config.yaml` instead of a `grep -q` pipeline, eliminating the pipefail/SIGPIPE
+  race on large archives (regression suite builds a 4000-entry archive to prove it).
+- `tmb migration import` honors the restored runtime identity: after the state swap, the restored
+  `config.yaml` is chowned to the restored `APP_UID`/`APP_GID` (from the restored `.env`) and kept
+  at mode 0600 before the offline doctor, so source and destination may use different runtime
+  UID/GID; rollback restores the original owner, mode, and contents.
+- The `local-api` CLI branch loads settings before use; `local-api status|start|stop|serve|
+  migrate-to-local|migrate-to-cloud` no longer crashes with `UnboundLocalError: settings`, which
+  also fixes the `local-api` compose service startup.
+- Manifest parsing is now real JSON: `backup_manifest_field` extracts `manifest.json` and parses
+  it with the Python stdlib `json` module, preserving image refs with `:`, `@sha256:`, hyphens,
+  and full ISO timestamps.
+- Archive inspection never prints secrets: `tmb backup inspect`/`verify` and restore validation
+  redact Telegram-bot-token-shaped path segments, api-hash-like hex runs, and URL credentials via
+  a central `redact_string` filter; the bundle itself is never modified.
+- Status surfaces agree with the application: `tmb status` derives Telegram/logger/required-
+  channels/Local Bot API values from the same typed application CLI on the compose network, and
+  a service-owned managed Local Bot API reports `process_running` from endpoint reachability, so
+  `tmb status`, `tmb telegram status`, `tmb local-api status`, and `tmb doctor` cannot contradict
+  each other.
+- Migration-destination bootstrap: `install.sh --migration` (or `--no-configure --no-start`)
+  installs the application, Docker prerequisites, directories, image, and `tmb` command without
+  running the token wizard, starting bot/worker, or activating the Local Bot API, leaving the
+  destination ready for `tmb migration import FILE`.
+- Backups are always created 0600 (archive and checksum); `tmb backup secure FILE` re-secures
+  archives copied in with a permissive umask (e.g. after scp), and validation warns when an
+  archive/checksum is group/world readable without refusing the import.
+
+### Added (targeting v1.4.0-rc.6)
+
+- Privileged Local Bot API container health integration test: boots the real compose `local-api`
+  service, waits for the healthcheck to report healthy, proves sustained health with
+  `RestartCount == 0`, and asserts the app-level status agrees with the container.
+
+### Added (targeting v1.4.0-rc.6)
 
 - `tmb` is now the single authoritative operator control plane. The Linux manager was refactored
   into `scripts/tmb.sh` (entrypoint: path resolution, sourcing, dispatch, nested menus) plus

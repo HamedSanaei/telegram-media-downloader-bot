@@ -27,6 +27,24 @@ Instagram cookies, then writes only `config.yaml` with restrictive permissions. 
 `TMB_RELEASE_TAG=vX.Y.Z` before running the installer to select an explicit release. Local API
 migration requires typing `MIGRATE`; normal startup never calls `logOut`.
 
+#### Migration-destination bootstrap
+
+`install.sh --migration` (equivalently `--no-configure --no-start`) installs the verified
+application files, Docker prerequisites, data directories, the pinned image, and the `tmb`
+command, but runs NO configuration wizard, starts NO bot/worker, and activates NO Local Bot API.
+Use it to prepare a new server that will receive its configuration and state from a migration
+archive, while the source remains the only active polling bot until cutover:
+
+```bash
+TMB_RELEASE_TAG=vX.Y.Z bash <(curl -fsSL https://raw.githubusercontent.com/HamedSanaei/telegram-media-downloader-bot/main/install.sh) --migration
+cd <install> && tmb migration import ./backups/tmb-*.tar.gz
+cd <install> && tmb status
+cd <install> && tmb start        # only after the source bot/worker is stopped
+```
+
+`--install-dir PATH` skips the interactive directory prompt. All other flags keep the default
+interactive install.
+
 The requested tag is checked against the repository withdrawal policy before any release download.
 The checksummed archive's own package version is checked again before application/configuration
 paths are created or changed and before images are pulled or services are started. A blocked tag or

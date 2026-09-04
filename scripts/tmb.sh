@@ -85,7 +85,7 @@ command_usage() {
     doctor) echo "Usage: tmb doctor [--offline] [--online-service bot|local-api]" ;;
     config) echo "Usage: tmb config check|show|wizard|set KEY VALUE|get KEY|list-add KEY VALUE|list-remove KEY VALUE|set-secret KEY" ;;
     update) echo "Usage: tmb update   (set TMB_RELEASE_TAG=vX.Y.Z for a pinned version)" ;;
-    backup) echo "Usage: tmb backup [create|list|inspect FILE|verify FILE|delete FILE [--yes]]" ;;
+    backup) echo "Usage: tmb backup [create|list|inspect FILE|verify FILE|secure FILE|delete FILE [--yes]]" ;;
     restore) echo "Usage: tmb restore [--dry-run] FILE" ;;
     migration) echo "Usage: tmb migration export [--include-downloads] | import FILE" ;;
     cleanup) echo "Usage: tmb cleanup [--dry-run]" ;;
@@ -130,7 +130,7 @@ Storage:
   cleanup [--dry-run]
 
 Backup / restore / migration:
-  backup [create|list|inspect FILE|verify FILE|delete FILE]
+  backup [create|list|inspect FILE|verify FILE|secure FILE|delete FILE]
   restore [--dry-run] FILE
   migration export [--include-downloads] | import FILE
 

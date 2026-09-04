@@ -314,6 +314,8 @@ jobs:
           bash -n scripts/tests/test_tmb_update.sh
           bash -n scripts/tests/test_tmb_upgrade_integration.sh
           bash -n scripts/tests/test_local_api_readiness.sh
+          bash -n scripts/tests/test_local_api_container_health.sh
+          bash -n scripts/tests/test_migration_uidgid_integration.sh
           bash -n scripts/tests/test_readonly_logger_preflight.sh
           bash -n scripts/tests/test_tmb.sh
       # The privileged updater matrix drives the locally-loaded `telegram-media-downloader-bot:ci`
@@ -376,6 +378,10 @@ jobs:
             bash scripts/tests/test_tmb_upgrade_integration.sh
           RUN_PRIVILEGED_UPGRADE_TESTS=1 \
             bash scripts/tests/test_local_api_readiness.sh
+          RUN_PRIVILEGED_UPGRADE_TESTS=1 \
+            bash scripts/tests/test_local_api_container_health.sh
+          RUN_PRIVILEGED_UPGRADE_TESTS=1 \
+            bash scripts/tests/test_migration_uidgid_integration.sh
 
   installer-linux:
     needs: [change-detection]

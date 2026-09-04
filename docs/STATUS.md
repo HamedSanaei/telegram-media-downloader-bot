@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-09-02
+Last updated: 2026-09-04
 
 ## Release state
 
@@ -424,6 +424,25 @@ docker|telegram|channels|logger|local-api|doctor|bundle|version|help|uninstall`)
 
 ## Recent fixes
 
+- 2026-09-04: Prepared v1.4.0-rc.6 from production rc.5 evidence. `tmb backup verify` uses a
+  pipefail-safe member check (`tar -tzf ARCHIVE config.yaml`) instead of a `grep -q` pipeline that
+  false-negatived large archives. Migration import re-owns the restored `config.yaml` to the
+  restored `APP_UID`/`APP_GID` (mode 0600) before the offline doctor, so source and destination
+  may use different runtime identities; rollback restores original owner/mode/contents. The
+  `local-api` CLI branch loads settings before use (fixes the production `UnboundLocalError` and
+  the local-api compose service crash). Manifest fields are parsed with Python stdlib JSON,
+  preserving image refs (`:`, `@sha256:`) and full ISO timestamps. A central `redact_string`
+  filter redacts bot-token-shaped path segments, api-hash-like hex runs, and URL credentials from
+  archive inspection/validation output (bundle contents never modified). `tmb status` now derives
+  Telegram/logger/channels/Local API values from the same typed application CLI on the compose
+  network, and service-owned managed Local Bot API reports `process_running` from endpoint
+  reachability, so `tmb status`, `tmb telegram status`, `tmb local-api status`, and `tmb doctor`
+  cannot contradict each other. `install.sh --migration` bootstraps a migration destination
+  without the token wizard or any service start. Archives and checksums are created 0600;
+  `tmb backup secure FILE` re-secures scp-copied bundles and validation warns on group/world-
+  readable copies. New regressions: large-archive verify, token-in-path redaction, JSON manifest
+  values, secure/warn, local-api CLI dispatch, service-owned status semantics, and a privileged
+  real-container Local Bot API health test (healthy, RestartCount 0, status agreement).
 - 2026-09-01: Consumed the published immutable Telegram Bot API artifact instead of compiling it
   inside the normal application Dockerfile: the source-build stage and its compiler toolchain are
   gone, `ARG TELEGRAM_BOT_API_IMAGE` pins

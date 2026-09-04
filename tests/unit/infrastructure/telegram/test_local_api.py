@@ -184,6 +184,54 @@ def test_status_and_external_start_are_safe(
     assert not handle.managed
 
 
+def test_service_owned_managed_status_follows_endpoint_reachability(
+    settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A managed Local Bot API owned by the compose service has no managed
+    process file: process_running must follow endpoint reachability, exactly
+    like external mode, so `tmb status` agrees with the running container."""
+    configured = _local_settings(settings, tmp_path, mode="managed")
+    raw = configured.model_dump()
+    raw["telegram"]["local_bot_api"]["lifecycle_owner"] = "service"
+    configured = Settings.model_validate(raw)
+
+    manager = LocalBotApiManager(configured)
+    monkeypatch.setattr(manager, "endpoint_reachable", lambda: True)
+    monkeypatch.setattr(manager, "_managed_process_running", lambda: False)
+    status = manager.status()
+    assert status.enabled
+    assert status.mode == "managed"
+    assert status.endpoint_reachable
+    assert status.process_running
+
+    stopped = LocalBotApiManager(configured)
+    monkeypatch.setattr(stopped, "endpoint_reachable", lambda: False)
+    monkeypatch.setattr(stopped, "_managed_process_running", lambda: False)
+    assert not stopped.status().process_running
+
+
+def test_application_owned_managed_status_tracks_child_process(
+    settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Application-owned managed instances keep tracking the child process:
+    process_running is NOT derived from endpoint reachability."""
+    configured = _local_settings(settings, tmp_path, mode="managed")
+
+    running = LocalBotApiManager(configured)
+    monkeypatch.setattr(running, "endpoint_reachable", lambda: False)
+    monkeypatch.setattr(running, "_managed_process_running", lambda: True)
+    assert running.status().process_running
+
+    stale = LocalBotApiManager(configured)
+    monkeypatch.setattr(stale, "endpoint_reachable", lambda: True)
+    monkeypatch.setattr(stale, "_managed_process_running", lambda: False)
+    assert not stale.status().process_running
+
+
 def test_external_lifecycle_errors_are_explicit(
     settings: Settings,
     tmp_path: Path,

@@ -616,6 +616,74 @@ def test_local_api_serve_and_configure_commands_are_explicit() -> None:
     assert configure.config == Path("custom.yaml")
 
 
+@pytest.mark.parametrize(
+    "action",
+    ["status", "start", "stop", "serve", "migrate-to-local", "migrate-to-cloud"],
+)
+def test_local_api_dispatch_loads_settings_and_reaches_handler_without_unbound_local(
+    action: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the local-api branch once used `settings` before loading it
+    (UnboundLocalError in production). Every action must load settings and
+    reach its intended handler."""
+    config = tmp_path / "config.yaml"
+    shutil.copyfile("config.example.yaml", config)
+    calls: list[tuple[object, str, bool]] = []
+
+    async def _spy(loaded_settings: object, loaded_action: str, confirmed: bool) -> None:
+        calls.append((loaded_settings, loaded_action, confirmed))
+
+    monkeypatch.setattr(cli, "_run_local_api", _spy)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["telegram-media-bot", "local-api", action, "--config", str(config)],
+    )
+
+    cli.main()
+
+    assert len(calls) == 1
+    loaded_settings, loaded_action, _confirmed = calls[0]
+    assert loaded_action == action
+    assert isinstance(loaded_settings, Settings)
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["status", "start", "stop", "serve", "migrate-to-local", "migrate-to-cloud"],
+)
+def test_local_api_dispatch_without_config_path_loads_default_settings(
+    action: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, str, bool]] = []
+
+    async def _spy(loaded_settings: object, loaded_action: str, confirmed: bool) -> None:
+        calls.append((loaded_settings, loaded_action, confirmed))
+
+    monkeypatch.setattr(cli, "_run_local_api", _spy)
+    monkeypatch.setattr(
+        "telegram_media_bot.bootstrap.config.default_config_path",
+        lambda: tmp_path / "invalid.yaml",
+    )
+    (tmp_path / "invalid.yaml").write_text("::not: [valid: yaml\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["telegram-media-bot", "local-api", action],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+    assert excinfo.value.code == 2
+    # A broken default config must fail cleanly (ConfigurationError -> exit 2),
+    # never with an UnboundLocalError traceback.
+    assert not calls
+
+
 def test_cleanup_workspace_parser_supports_dry_run() -> None:
     args = cli.build_parser().parse_args(
         ["cleanup-workspaces", "--config", "custom.yaml", "--dry-run"]

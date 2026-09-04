@@ -13,6 +13,11 @@
 [[ -n "${SCRIPT_DIRECTORY:-}" ]] || SCRIPT_DIRECTORY="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 [[ -n "${RELEASE_ROOT:-}" ]] || RELEASE_ROOT="https://github.com/HamedSanaei/telegram-media-downloader-bot/releases"
 [[ -n "${ARCHIVE_NAME:-}" ]] || ARCHIVE_NAME="telegram-media-downloader-bot.tar.gz"
+# Repository override contract: privileged/offline integration harnesses stage releases in a
+# local registry and pass TMB_IMAGE_REPOSITORY; production never sets it and keeps the
+# canonical GHCR default. The override keeps candidate pulls on the staging registry even
+# before the release image is published.
+[[ -n "${TMB_IMAGE_REPOSITORY:-}" ]] && IMAGE_REPOSITORY="$TMB_IMAGE_REPOSITORY"
 [[ -n "${IMAGE_REPOSITORY:-}" ]] || IMAGE_REPOSITORY="ghcr.io/hamedsanaei/telegram-media-downloader-bot"
 [[ -n "${TMB_BIN_DIR:-}" ]] || TMB_BIN_DIR="/usr/local/bin"
 [[ -n "${UPDATE_HEALTH_TIMEOUT_SECONDS:-}" ]] || UPDATE_HEALTH_TIMEOUT_SECONDS=180
@@ -123,6 +128,33 @@ release_management_lock() {
 # Every diagnostic/bundle/log pipeline funnels through this filter so secret
 # handling is implemented once. It redacts credential-looking lines and
 # credentials embedded in URLs while preserving useful safe diagnostics.
+
+# Redacts credential-bearing substrings from arbitrary strings: Telegram bot
+# tokens (<6-10 digits>:<long alnum run>), api-hash-like standalone 32-hex
+# runs (never inside longer hex runs such as sha256 digests), and URL userinfo.
+# Display-only: it never modifies files or archives. Implemented with bash
+# parameter expansion so it is portable (no awk backreference support needed).
+redact_string() {
+  local line match prefix
+  while IFS= read -r line; do
+    while [[ "$line" =~ [0-9]{6,10}:[A-Za-z0-9_-]{10,} ]]; do
+      match="${BASH_REMATCH[0]}"
+      line="${line//"$match"/[redacted-token]}"
+    done
+    while [[ "$line" =~ https?://[^/@:[:space:]]+:[^/@[:space:]]+@ ]]; do
+      match="${BASH_REMATCH[0]}"
+      line="${line//"$match"/${match%%://*}://[redacted]@}"
+    done
+    # Standalone 32-hex runs (api-hash-like) are redacted; runs adjacent to
+    # other hex characters (e.g. sha256 digests) are preserved intact.
+    while [[ "$line" =~ (^|[^0-9a-fA-F])([0-9a-fA-F]{32})([^0-9a-fA-F]|$) ]]; do
+      prefix="${line%%"${BASH_REMATCH[0]}"*}"
+      line="${prefix}${BASH_REMATCH[1]}[redacted-hash]${BASH_REMATCH[3]}${line:${#prefix}+${#BASH_REMATCH[0]}}"
+    done
+    printf '%s\n' "$line"
+  done
+}
+
 sanitize_stream() {
   awk '
     {
@@ -137,7 +169,7 @@ sanitize_stream() {
       gsub(/http:\/\/[^\/@:[:space:]]+:[^\/@[:space:]]+@/, "http://[redacted]@", line)
       print substr(line, 1, 500)
     }
-  '
+  ' | redact_string
 }
 
 # Sanitized single command output; $1 names the stage for the message.

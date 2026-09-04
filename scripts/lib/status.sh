@@ -133,38 +133,57 @@ run_status() {
   printf 'Project image reclaimable: %s\n' \
     "$(human_size "$(project_image_reclaimable_bytes)")"
 
-  # Telegram / logger / channels / migration display (config read-only).
-  if config_bot_token_configured; then
-    printf 'Telegram: token configured'
+  # Telegram / logger / channels / Local Bot API display. Every value is
+  # derived from the authoritative application CLI (Pydantic configuration and
+  # runtime probes on the compose network), so this dashboard can never
+  # contradict `tmb telegram status`, `tmb local-api status`, or `tmb doctor`.
+  # Values that cannot be obtained are reported as unavailable, never guessed
+  # from partial raw greps.
+  local telegram_status api_mode token_state logger_state required_state
+  telegram_status="$(compose_run_app telegram-media-bot config-edit \
+    --config /app/config.yaml telegram-status 2>/dev/null || true)"
+  if [[ -n "$telegram_status" ]]; then
+    token_state="$(printf '%s\n' "$telegram_status" | sed -n 's/^bot_token: //p' | head -n 1)"
+    api_mode="$(printf '%s\n' "$telegram_status" | sed -n 's/^api_mode: //p' | head -n 1)"
+    logger_state="$(printf '%s\n' "$telegram_status" | sed -n 's/^logger: //p' | head -n 1)"
+    required_state="$(printf '%s\n' "$telegram_status" | sed -n 's/^required_channels: \([a-z]*\).*/\1/p' | head -n 1)"
+    if [[ "$token_state" == "configured" || "$token_state" == "not configured" ]]; then
+      printf 'Telegram: token %s' "$token_state"
+      if [[ "$api_mode" == "local" ]]; then
+        printf ', Local Bot API mode'
+      elif [[ "$api_mode" == "cloud" ]]; then
+        printf ', Cloud Bot API mode'
+      fi
+      printf '\n'
+    else
+      printf 'Telegram: unavailable\n'
+    fi
   else
-    printf 'Telegram: not configured'
+    printf 'Telegram: unavailable\n'
   fi
-  if config_flag '^  local_api_is_local: *true'; then
-    printf ', Local Bot API mode'
-  else
-    printf ', Cloud Bot API mode'
+  printf 'Operator Logger: %s\n' "${logger_state:-unavailable}"
+  printf 'Required channels policy: %s\n' "${required_state:-unavailable}"
+  if [[ "${logger_state:-}" == "enabled" ]]; then
+    local logger_outbox active effective pending
+    logger_outbox="$(compose_run_app telegram-media-bot config-edit \
+      --config /app/config.yaml logger-status 2>/dev/null || true)"
+    if [[ -n "$logger_outbox" ]]; then
+      active="$(printf '%s\n' "$logger_outbox" | sed -n 's/^active_destinations: //p' | head -n 1)"
+      effective="$(printf '%s\n' "$logger_outbox" | sed -n 's/^effective_destinations: //p' | head -n 1)"
+      pending="$(printf '%s\n' "$logger_outbox" | sed -n 's/^pending_effects: //p' | head -n 1)"
+      printf 'Logger outbox: effective=%s active=%s pending=%s\n' \
+        "${effective:-?}" "${active:-?}" "${pending:-?}"
+    else
+      printf 'Logger outbox: unavailable\n'
+    fi
   fi
-  printf '\n'
-  local logger_state required_state
-  logger_state="disabled"
-  if grep -A 6 '^  logger:' "$ROOT_DIR/config.yaml" 2>/dev/null | grep -m1 '^  enabled:' | grep -q 'true'; then
-    logger_state="enabled"
-  fi
-  required_state="disabled"
-  if grep -A 6 '^  required_channels:' "$ROOT_DIR/config.yaml" 2>/dev/null | grep -m1 '^  enabled:' | grep -q 'true'; then
-    required_state="enabled"
-  fi
-  printf 'Operator Logger: %s\n' "$logger_state"
-  printf 'Required channels policy: %s\n' "$required_state"
 
-  # Local Bot API migration state from the application CLI when possible.
+  # Local Bot API migration state from the application CLI on the compose
+  # network (the local-api hostname only resolves there), so endpoint
+  # reachability reflects the running service.
   local local_api_status
-  local_api_status="$(
-    docker run --rm --user "$(id -u):$(id -g)" \
-      -v "$ROOT_DIR/config.yaml:/app/config.yaml:ro" \
-      "$(configured_image)" \
-      telegram-media-bot config-edit local-api-status 2>/dev/null || true
-  )"
+  local_api_status="$(compose_run_app telegram-media-bot config-edit \
+    --config /app/config.yaml local-api-status 2>/dev/null || true)"
   if [[ -n "$local_api_status" ]]; then
     printf '%s\n' "$local_api_status" | sed 's/^/Local API  /'
   else

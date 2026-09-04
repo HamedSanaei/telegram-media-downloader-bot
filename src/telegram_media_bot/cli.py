@@ -304,6 +304,7 @@ def main() -> None:
             settings = load_settings(args.config, require_token=False)
             asyncio.run(_run_config_edit(settings, args))
         elif args.command == "local-api":
+            settings = load_settings(args.config, require_token=False)
             configure_logging(settings)
             asyncio.run(
                 _run_local_api(

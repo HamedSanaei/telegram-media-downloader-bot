@@ -84,6 +84,7 @@ tmb backup create                # consistent operational backup (stops writers 
 tmb backup list
 tmb backup inspect FILE
 tmb backup verify FILE           # gzip, checksum, manifest, safe entries
+tmb backup secure FILE           # re-secure a copied-in archive/checksum to 0600
 tmb backup delete FILE [--yes]
 tmb migration export             # portable bundle for a new server
 tmb migration export --include-downloads   # explicit opt-in, requires confirmation
@@ -93,32 +94,44 @@ tmb restore FILE                 # transactional restore with automatic rollback
 ```
 
 Backups are `0600` archives with a manifest (schema version, kind, app version, image, contents)
-and a sibling SHA-256 checksum. They contain `config.yaml`, `.env`, `data/state`, `data/cookies`,
-and Local Bot API durable state; downloads/temp are excluded unless explicitly requested.
+and a sibling SHA-256 checksum (also `0600`). They contain `config.yaml`, `.env`, `data/state`,
+`data/cookies`, and Local Bot API durable state; downloads/temp are excluded unless explicitly
+requested. Verification never prints secrets: archive paths and manifest values pass through the
+central redaction filter, so a Local Bot API directory whose name embeds a bot token is displayed
+redacted while the bundle itself remains fully restorable. If an archive copied to this server
+(for example via scp) is group/world readable, `tmb backup verify`/`import` print a warning and
+suggest `tmb backup secure FILE`; the import itself still works.
 
 Restore is transactional: it verifies the archive (format, checksum, path-traversal and symlink
 rejection), records the exact running service state, stops filesystem writers, creates a
 pre-restore safety backup, extracts and validates the staged state (config-check, SQLite
-integrity), swaps persistent entries with a rollback snapshot, repairs runtime permissions,
+integrity), swaps persistent entries with a rollback snapshot, repairs runtime permissions
+(including chowning the restored `config.yaml` to the restored `APP_UID`/`APP_GID` from the
+restored `.env`, mode `0600`, so source and destination may run different runtime UID/GID),
 probes runtime writes, runs an offline doctor, restores the exact previous service state, and
-verifies health online. Any failure (including SIGINT) rolls back automatically; if rollback
-itself fails, recovery material is preserved and exact recovery instructions are printed.
+verifies health online. Any failure (including SIGINT) rolls back automatically, restoring the
+original owner, mode, and contents; if rollback itself fails, recovery material is preserved and
+exact recovery instructions are printed.
 
 ### Moving servers (migration)
 
 A migration bundle carries `config.yaml`, `.env`, SQLite/state, cookies, and Local Bot API
 durable state between two independent installations — the source and destination directories
-need not match. Before the final destination activation you MUST stop the source bot and worker
-(`tmb stop` on the old server) so the same Telegram bot is never polling/working on both servers
-at the same time:
+need not match, and neither do their runtime `APP_UID`/`APP_GID` (the import re-owns the restored
+private config for the destination runtime identity). Before the final destination activation you
+MUST stop the source bot and worker (`tmb stop` on the old server) so the same Telegram bot is
+never polling/working on both servers at the same time:
 
 ```bash
 # 1) old server: export + stop
 cd <install> && tmb migration export
 cd <install> && tmb stop          # required BEFORE destination activation
-# copy the produced backups/tmb-*.tar.gz archive to the new server
+# copy the produced backups/tmb-*.tar.gz (+ .sha256) archive to the new server
 
-# 2) new server: import, verify, start
+# 2) new server: bootstrap the destination, import, verify, start
+bash <(curl -fsSL https://raw.githubusercontent.com/HamedSanaei/telegram-media-downloader-bot/main/install.sh) --migration
+#   installs verified files, Docker, directories, the pinned image, and the tmb command;
+#   runs NO token wizard, starts NO bot/worker, activates NO Local Bot API
 cd <install> && tmb migration import ./backups/tmb-*.tar.gz
 cd <install> && tmb status        # configuration/state restored; services still stopped
 cd <install> && tmb start         # activate on the destination only after the source is stopped

@@ -1312,7 +1312,7 @@ wheels = [
 
 [[package]]
 name = "telegram-media-downloader-bot"
-version = "1.4.0rc5"
+version = "1.4.0rc6"
 source = { editable = "." }
 dependencies = [
     { name = "aiogram" },

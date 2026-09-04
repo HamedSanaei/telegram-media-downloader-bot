@@ -5,6 +5,10 @@ RELEASE_ROOT="https://github.com/HamedSanaei/telegram-media-downloader-bot/relea
 ARCHIVE_NAME="telegram-media-downloader-bot.tar.gz"
 DEFAULT_INSTALL_DIR="/opt/telegram-media-downloader-bot"
 IMAGE_REPOSITORY="ghcr.io/hamedsanaei/telegram-media-downloader-bot"
+# Standalone parity with scripts/lib/common.sh: integration harnesses stage
+# candidate releases in a local registry via TMB_IMAGE_REPOSITORY; production
+# never sets it and keeps the canonical GHCR default.
+[[ -n "${TMB_IMAGE_REPOSITORY:-}" ]] && IMAGE_REPOSITORY="$TMB_IMAGE_REPOSITORY"
 TMB_BIN_DIR="${TMB_BIN_DIR:-/usr/local/bin}"
 # Standalone bootstrap snapshot; tests enforce parity with release-policy.json.
 readonly -a BLOCKED_RELEASE_VERSIONS=("1.3.7")
@@ -77,7 +81,9 @@ prepare_verified_release() {
     scripts/build_release_archives.sh \
     scripts/tests/test_tmb_update.sh \
     scripts/tests/test_tmb_upgrade_integration.sh \
-    scripts/tests/test_local_api_readiness.sh; do
+    scripts/tests/test_local_api_readiness.sh \
+    scripts/tests/test_local_api_container_health.sh \
+    scripts/tests/test_migration_uidgid_integration.sh; do
     bash -n "$INSTALL_STAGING_DIRECTORY/$script"
   done
   chmod 755 \
@@ -88,7 +94,9 @@ prepare_verified_release() {
     "$INSTALL_STAGING_DIRECTORY/scripts/build_release_archives.sh" \
     "$INSTALL_STAGING_DIRECTORY/scripts/tests/test_tmb_update.sh" \
     "$INSTALL_STAGING_DIRECTORY/scripts/tests/test_tmb_upgrade_integration.sh" \
-    "$INSTALL_STAGING_DIRECTORY/scripts/tests/test_local_api_readiness.sh"
+    "$INSTALL_STAGING_DIRECTORY/scripts/tests/test_local_api_readiness.sh" \
+    "$INSTALL_STAGING_DIRECTORY/scripts/tests/test_local_api_container_health.sh" \
+    "$INSTALL_STAGING_DIRECTORY/scripts/tests/test_migration_uidgid_integration.sh"
 }
 
 install_prepared_release() {
@@ -104,10 +112,48 @@ install_prepared_release() {
     "$destination/scripts/build_release_archives.sh" \
     "$destination/scripts/tests/test_tmb_update.sh" \
     "$destination/scripts/tests/test_tmb_upgrade_integration.sh" \
-    "$destination/scripts/tests/test_local_api_readiness.sh"
+    "$destination/scripts/tests/test_local_api_readiness.sh" \
+    "$destination/scripts/tests/test_local_api_container_health.sh" \
+    "$destination/scripts/tests/test_migration_uidgid_integration.sh"
 }
 
 assert_release_allowed "${TMB_RELEASE_TAG:-}"
+
+# Flag parsing -----------------------------------------------------------
+# Default: full interactive install (configure wizard + start services).
+# --migration: bootstrap a migration destination - install verified files,
+# Docker, directories, image, and the tmb command, but DO NOT run the token
+# wizard, DO NOT start bot/worker, and DO NOT activate the Local Bot API.
+# The destination receives its config/state later via `tmb migration import`.
+INSTALL_MIGRATION_MODE=0
+INSTALL_CONFIGURE=1
+INSTALL_START=1
+INSTALL_DIR_ARG=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --migration)
+      INSTALL_MIGRATION_MODE=1
+      INSTALL_CONFIGURE=0
+      INSTALL_START=0
+      ;;
+    --no-configure) INSTALL_CONFIGURE=0 ;;
+    --no-start) INSTALL_START=0 ;;
+    --install-dir)
+      [[ $# -ge 2 ]] || {
+        echo "Missing value for --install-dir" >&2
+        exit 2
+      }
+      INSTALL_DIR_ARG="$2"
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      echo "Usage: install.sh [--migration] [--no-configure] [--no-start] [--install-dir PATH]" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "This installer supports Linux only." >&2
@@ -137,8 +183,12 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 docker compose version >/dev/null
 
-read -r -p "Installation directory [$DEFAULT_INSTALL_DIR]: " INSTALL_DIR
-INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+if [[ -n "$INSTALL_DIR_ARG" ]]; then
+  INSTALL_DIR="$INSTALL_DIR_ARG"
+else
+  read -r -p "Installation directory [$DEFAULT_INSTALL_DIR]: " INSTALL_DIR
+  INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+fi
 install_prepared_release "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
@@ -158,18 +208,27 @@ grep -q '^APP_GID=' .env || echo "APP_GID=$(id -g)" >> .env
 mkdir -p data/downloads data/temp data/state data/cookies data/telegram-bot-api
 
 docker pull "$DEFAULT_IMAGE"
-docker run --rm -it \
-  --user "$(id -u):$(id -g)" \
-  -v "$INSTALL_DIR:/workspace" -w /workspace \
-  "$DEFAULT_IMAGE" telegram-media-bot configure --config /workspace/config.yaml
-
-docker compose --profile local-api up -d local-api
-read -r -p "Migrate this bot from Cloud Bot API to Local Bot API now? Type MIGRATE: " answer
-if [[ "$answer" == "MIGRATE" ]]; then
-  docker compose --profile local-api run --rm --no-deps bot \
-    telegram-media-bot local-api --config /app/config.yaml migrate-to-local --yes
+if [[ "$INSTALL_CONFIGURE" == "1" ]]; then
+  docker run --rm -it \
+    --user "$(id -u):$(id -g)" \
+    -v "$INSTALL_DIR:/workspace" -w /workspace \
+    "$DEFAULT_IMAGE" telegram-media-bot configure --config /workspace/config.yaml
+else
+  echo "Skipping the interactive configuration wizard (--no-configure / --migration)."
+  echo "The destination will receive its configuration from the migration archive."
 fi
-docker compose --profile local-api up -d --no-build
+
+if [[ "$INSTALL_START" == "1" ]]; then
+  docker compose --profile local-api up -d local-api
+  read -r -p "Migrate this bot from Cloud Bot API to Local Bot API now? Type MIGRATE: " answer
+  if [[ "$answer" == "MIGRATE" ]]; then
+    docker compose --profile local-api run --rm --no-deps bot \
+      telegram-media-bot local-api --config /app/config.yaml migrate-to-local --yes
+  fi
+  docker compose --profile local-api up -d --no-build
+else
+  echo "Skipping service startup (--no-start / --migration); no bot/worker/Local API is running."
+fi
 
 chmod 755 scripts/tmb.sh
 sudo mkdir -p "$TMB_BIN_DIR"
@@ -179,4 +238,14 @@ command -v tmb >/dev/null 2>&1 || {
 }
 test -x "$(readlink -f "$(command -v tmb)")"
 tmb status >/dev/null
-echo "Installation completed. Use: tmb status, tmb logs, tmb doctor"
+if [[ "$INSTALL_MIGRATION_MODE" == "1" ]]; then
+  echo "Migration-destination installation completed; nothing is running."
+  echo "IMPORTANT: keep the source server as the only active bot until cutover."
+  echo "Next steps:"
+  echo "  1. Copy the migration archive to this server (scp the tmb-*.tar.gz + .sha256)."
+  echo "  2. cd $INSTALL_DIR && tmb migration import FILE"
+  echo "  3. tmb status        # verify config/state restored"
+  echo "  4. tmb start         # ONLY after the source bot/worker is stopped"
+else
+  echo "Installation completed. Use: tmb status, tmb logs, tmb doctor"
+fi
