@@ -34,14 +34,18 @@ SRC_UID=10001
 SRC_GID=10001
 
 cleanup() {
+  # Compose reads the project .env on every call; after a migration import
+  # the DST .env is private to the restored runtime identity, so teardown
+  # runs privileged (same model as the import) to never leave test projects
+  # behind on strict compose versions.
   export COMPOSE_PROJECT_NAME="tmb-uid-src-$$"
-  docker compose --project-directory "$SRC" --profile local-api down \
+  sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$SRC" --profile local-api down \
     --remove-orphans --volumes >/dev/null 2>&1 || true
   export COMPOSE_PROJECT_NAME="tmb-uid-dst-$$"
-  docker compose --project-directory "$DST" --profile local-api down \
+  sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api down \
     --remove-orphans --volumes >/dev/null 2>&1 || true
   export COMPOSE_PROJECT_NAME="tmb-uid-dst2-$$"
-  docker compose --project-directory "$DST2" --profile local-api down \
+  sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST2" --profile local-api down \
     --remove-orphans --volumes >/dev/null 2>&1 || true
   sudo rm -rf -- "$TEST_ROOT" 2>/dev/null || true
 }
@@ -102,12 +106,15 @@ write_source_config() {
   # Derive the fixture from config.example.yaml (mirroring the privileged
   # updater harness) so the schema always stays complete; a hand-written
   # subset drifts and rejects at load (e.g. missing FormatSection entries).
-  cp "$SOURCE_ROOT/config.example.yaml" "$SRC/config.yaml"
+  # All writes run privileged: on the second call the existing config is
+  # already owned by the source runtime identity (0600), and the end state
+  # (0600, re-owned below) is identical either way.
+  sudo cp "$SOURCE_ROOT/config.example.yaml" "$SRC/config.yaml"
   if [[ ! -f "$SRC/config.yaml" ]]; then
     echo "FAIL: write_source_config phase: sed target missing: path=$SRC/config.yaml exists=no." >&2
     exit 1
   fi
-  sed -i \
+  sudo sed -i \
     -e "s|^  bot_token: CHANGE_ME$|  bot_token: \"$TOKEN\"|" \
     -e 's|^  local_api_base_url: null$|  local_api_base_url: http://local-api:8081|' \
     -e 's|^  local_api_is_local: false$|  local_api_is_local: true|' \
@@ -126,9 +133,9 @@ write_source_config() {
     -e 's|^  cookies_file: null$|  cookies_file: /data/cookies/cookies.txt|' \
     "$SRC/config.yaml"
   if [[ "$logger_enabled" == "true" ]]; then
-    sed -i '/^  logger:$/ { n; s/enabled: false/enabled: true/; }' "$SRC/config.yaml"
+    sudo sed -i '/^  logger:$/ { n; s/enabled: false/enabled: true/; }' "$SRC/config.yaml"
   fi
-  chmod 600 "$SRC/config.yaml"
+  sudo chmod 600 "$SRC/config.yaml"
   # Mirror a real production install: install.sh re-owns the private config
   # to the runtime identity. Without this the real local-api service (running
   # as APP_UID here) cannot read the 0600 config or write its data tree.
@@ -226,7 +233,7 @@ IMPORT_OUTPUT="$(sudo bash "$DST/scripts/tmb.sh" migration import \
   "backups/$(basename "$MIGRATION_ARCHIVE")" 2>&1)" || {
   echo "FAIL: destination migration import failed." >&2
   printf '%s\n' "$IMPORT_OUTPUT" >&2
-  docker compose --project-directory "$DST" --profile local-api ps -a >&2 || true
+  sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api ps -a >&2 || true
   exit 1
 }
 if [[ "$IMPORT_OUTPUT" != *"Restore completed successfully"* ]]; then
@@ -280,7 +287,10 @@ sudo grep -q '"phase": "local"' "$DST/data/state/telegram-api-migration.json" ||
 echo "OK SQLite, cookies (0600), and Local Bot API durable state restored"
 
 # Import must never activate services: the destination project stays stopped.
-running="$(docker compose --project-directory "$DST" --profile local-api \
+# The restored DST/.env is private to the restored runtime identity, so all
+# post-import compose calls for this project run via sudo (same model as the
+# import itself and the sudo content checks above).
+running="$(sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api \
   ps --services --filter status=running | tr -d '\r' | tr '\n' ' ')"
 [[ -z "${running//[[:space:]]/}" ]] || {
   echo "FAIL: import left destination services running: $running" >&2
@@ -318,7 +328,7 @@ echo "OK source stopped before destination activation (single-poller cutover)"
 
 # --- Destination activation: real local-api + stable bot/worker -------------- #
 DST_ACTIVATION_OUTPUT=""
-if ! DST_ACTIVATION_OUTPUT="$(docker compose --project-directory "$DST" --profile local-api \
+if ! DST_ACTIVATION_OUTPUT="$(sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api \
   up -d --no-build redis local-api bot worker 2>&1)"; then
   echo "FAIL: destination activation compose up failed." >&2
   if [[ "$DST_ACTIVATION_OUTPUT" == *"$TOKEN"* ]]; then
@@ -326,7 +336,7 @@ if ! DST_ACTIVATION_OUTPUT="$(docker compose --project-directory "$DST" --profil
   else
     printf '%s\n' "$DST_ACTIVATION_OUTPUT" >&2
   fi
-  docker compose --project-directory "$DST" --profile local-api ps -a >&2 || true
+  sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api ps -a >&2 || true
   exit 1
 fi
 if [[ "$DST_ACTIVATION_OUTPUT" == *"$TOKEN"* ]]; then
@@ -334,7 +344,7 @@ if [[ "$DST_ACTIVATION_OUTPUT" == *"$TOKEN"* ]]; then
   exit 1
 fi
 
-local_api_container="$(docker compose --project-directory "$DST" --profile local-api ps -q local-api)"
+local_api_container="$(sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api ps -q local-api)"
 [[ -n "$local_api_container" ]] || {
   echo "FAIL: destination local-api container was not created." >&2
   exit 1
@@ -349,18 +359,18 @@ for _attempt in {1..60}; do
   if docker inspect --format '{{.State.Status}}' "$local_api_container" 2>/dev/null |
     grep -Eq '^(exited|dead)$'; then
     echo "FAIL: destination local-api exited before becoming healthy." >&2
-    docker compose --project-directory "$DST" --profile local-api logs local-api >&2 || true
+    sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api logs local-api >&2 || true
     exit 1
   fi
   sleep 4
 done
 [[ "$(health_state)" == "healthy" ]] || {
   echo "FAIL: destination local-api did not become healthy." >&2
-  docker compose --project-directory "$DST" --profile local-api logs local-api >&2 || true
+  sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api logs local-api >&2 || true
   exit 1
 }
 for _attempt in {1..30}; do
-  running="$(docker compose --project-directory "$DST" --profile local-api \
+  running="$(sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api \
     ps --services --filter status=running | tr -d '\r' | tr '\n' ' ')"
   [[ "$running" == *"bot"* && "$running" == *"worker"* && "$running" == *"redis"* ]] && break
   sleep 2
@@ -371,7 +381,7 @@ done
 }
 sleep 20
 for container in bot worker local-api redis; do
-  id="$(docker compose --project-directory "$DST" --profile local-api ps -q "$container")"
+  id="$(sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api ps -q "$container")"
   restarts="$(docker inspect --format '{{.RestartCount}}' "$id")"
   [[ "$restarts" == "0" ]] || {
     echo "FAIL: destination $container RestartCount is $restarts." >&2
@@ -387,7 +397,7 @@ echo "OK destination services running with RestartCount=0 (local-api real, bot/w
 
 # The REAL offline doctor against the RESTORED config as the RESTORED runtime
 # identity: this is the end-to-end proof of the BUG 2 ownership repair.
-DOCTOR_OUTPUT="$(docker compose --project-directory "$DST" --profile local-api \
+DOCTOR_OUTPUT="$(sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api \
   run --rm --no-deps worker telegram-media-bot doctor --config /app/config.yaml \
   --offline 2>&1)"
 if [[ "$DOCTOR_OUTPUT" == *"$TOKEN"* ]]; then
@@ -402,7 +412,7 @@ printf '%s\n' "$DOCTOR_OUTPUT" | grep -q "OK   local_api_executable" || {
 echo "OK destination offline doctor succeeded as the restored runtime identity"
 
 # App-level local-api status agrees with the healthy container (BUG 6).
-LAPI_STATUS="$(docker compose --project-directory "$DST" --profile local-api \
+LAPI_STATUS="$(sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api \
   run --rm --no-deps worker telegram-media-bot local-api --config /app/config.yaml \
   status 2>&1)"
 if [[ "$LAPI_STATUS" == *"$TOKEN"* ]]; then
@@ -414,7 +424,7 @@ printf '%s\n' "$LAPI_STATUS" | grep -Fxq "endpoint_reachable: true"
 printf '%s\n' "$LAPI_STATUS" | grep -Fxq "process_running: true"
 echo "OK destination local-api app status agrees with the healthy container"
 
-docker compose --project-directory "$DST" --profile local-api stop >/dev/null 2>&1 || true
+sudo COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" docker compose --project-directory "$DST" --profile local-api stop >/dev/null 2>&1 || true
 
 # --- Failure after swap: offline doctor fails -> full automatic rollback ----
 write_source_config true
