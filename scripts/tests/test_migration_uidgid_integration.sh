@@ -268,7 +268,7 @@ sudo grep -q 'fixture' "$DST/data/cookies/cookies.txt" || {
   echo "FAIL: restored cookies missing." >&2
   exit 1
 }
-COOKIE_MODE="$(stat -c '%a' "$DST/data/cookies/cookies.txt")"
+COOKIE_MODE="$(sudo stat -c '%a' "$DST/data/cookies/cookies.txt")"
 [[ "$COOKIE_MODE" == "600" ]] || {
   echo "FAIL: restored cookies mode is $COOKIE_MODE, expected 600." >&2
   exit 1
