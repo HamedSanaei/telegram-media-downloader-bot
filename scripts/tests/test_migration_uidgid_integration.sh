@@ -317,8 +317,18 @@ docker compose --project-directory "$SRC" --profile local-api down >/dev/null 2>
 echo "OK source stopped before destination activation (single-poller cutover)"
 
 # --- Destination activation: real local-api + stable bot/worker -------------- #
-DST_ACTIVATION_OUTPUT="$(docker compose --project-directory "$DST" --profile local-api \
-  up -d --no-build redis local-api bot worker 2>&1)"
+DST_ACTIVATION_OUTPUT=""
+if ! DST_ACTIVATION_OUTPUT="$(docker compose --project-directory "$DST" --profile local-api \
+  up -d --no-build redis local-api bot worker 2>&1)"; then
+  echo "FAIL: destination activation compose up failed." >&2
+  if [[ "$DST_ACTIVATION_OUTPUT" == *"$TOKEN"* ]]; then
+    echo "FAIL: destination activation output contained the bot token (redacted)." >&2
+  else
+    printf '%s\n' "$DST_ACTIVATION_OUTPUT" >&2
+  fi
+  docker compose --project-directory "$DST" --profile local-api ps -a >&2 || true
+  exit 1
+fi
 if [[ "$DST_ACTIVATION_OUTPUT" == *"$TOKEN"* ]]; then
   echo "FAIL: destination activation leaked the bot token." >&2
   exit 1
