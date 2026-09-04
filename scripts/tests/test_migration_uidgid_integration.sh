@@ -41,13 +41,16 @@ cleanup() {
   export COMPOSE_PROJECT_NAME="tmb-uid-dst2-$$"
   docker compose --project-directory "$DST2" --profile local-api down \
     --remove-orphans --volumes >/dev/null 2>&1 || true
-  rm -rf -- "$TEST_ROOT"
+  sudo rm -rf -- "$TEST_ROOT" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-for command in bash docker python3; do
+for command in bash docker python3 sudo; do
   command -v "$command" >/dev/null
 done
+# The CI runner is not root; the fixture mirrors the updater harness by using
+# passwordless sudo for cross-UID host operations and root-run exports/imports.
+
 
 install_tree() {
   local target="$1"
@@ -123,8 +126,10 @@ write_source_config() {
   # Mirror a real production install: install.sh re-owns the private config
   # to the runtime identity. Without this the real local-api service (running
   # as APP_UID here) cannot read the 0600 config or write its data tree.
-  chown "${SRC_UID}:${SRC_GID}" "$SRC/config.yaml"
-  [[ -d "$SRC/data" ]] && chown -R "${SRC_UID}:${SRC_GID}" "$SRC/data"
+  # The privileged harness convention is host sudo for cross-UID chowns (the
+  # CI runner itself is not root; see test_tmb_upgrade_integration.sh).
+  sudo chown "${SRC_UID}:${SRC_GID}" "$SRC/config.yaml"
+  [[ -d "$SRC/data" ]] && sudo chown -R "${SRC_UID}:${SRC_GID}" "$SRC/data"
 }
 
 # --- Source installation (runtime identity 10001:10001) --------------------
@@ -139,7 +144,7 @@ APP_UID=${SRC_UID}
 APP_GID=${SRC_GID}
 EOF
 chmod 600 "$SRC/.env"
-chown "${SRC_UID}:${SRC_GID}" "$SRC/data" "$SRC/backups" 2>/dev/null || true
+sudo chown "${SRC_UID}:${SRC_GID}" "$SRC/data" "$SRC/backups" 2>/dev/null || true
 mkdir -p "$SRC/data/state"
 cat >"$SRC/data/state/telegram-api-migration.json" <<'EOF'
 {"version": 1, "phase": "local", "updated_at": "2026-09-04T00:00:00+00:00"}
@@ -147,7 +152,7 @@ EOF
 printf '# Netscape HTTP Cookie File\n.fixture.example\tTRUE\t/\tTRUE\t0\tfixture\tvalue\n' \
   >"$SRC/data/cookies/cookies.txt"
 chmod 600 "$SRC/data/cookies/cookies.txt"
-chown -R "${SRC_UID}:${SRC_GID}" "$SRC/data"
+sudo chown -R "${SRC_UID}:${SRC_GID}" "$SRC/data"
 
 export COMPOSE_PROJECT_NAME="tmb-uid-src-$$"
 docker compose --project-directory "$SRC" --profile local-api up -d --no-build redis bot worker local-api
@@ -165,7 +170,10 @@ running="$(docker compose --project-directory "$SRC" --profile local-api \
 }
 echo "OK source services running: $running"
 
-EXPORT_OUTPUT="$(bash "$SRC/scripts/tmb.sh" migration export 2>&1)"
+# The source data tree is owned by the source runtime identity (0600/0700),
+# so the export that reads it runs as root - the updater-harness convention
+# (test_tmb_upgrade_integration.sh runs its updater via sudo env).
+EXPORT_OUTPUT="$(sudo bash "$SRC/scripts/tmb.sh" migration export 2>&1)"
 if [[ "$EXPORT_OUTPUT" == *"$TOKEN"* ]]; then
   echo "FAIL: migration export leaked the bot token." >&2
   printf '%s\n' "$EXPORT_OUTPUT" >&2
@@ -203,11 +211,11 @@ APP_GID=54321
 EOF
 chmod 600 "$DST/.env"
 mkdir -p "$DST/backups"
-cp "$SRC/$MIGRATION_ARCHIVE" "$DST/backups/"
-cp "$SRC/$MIGRATION_ARCHIVE.sha256" "$DST/backups/"
+sudo cp "$SRC/$MIGRATION_ARCHIVE" "$DST/backups/"
+sudo cp "$SRC/$MIGRATION_ARCHIVE.sha256" "$DST/backups/"
 
 export COMPOSE_PROJECT_NAME="tmb-uid-dst-$$"
-IMPORT_OUTPUT="$(bash "$DST/scripts/tmb.sh" migration import \
+IMPORT_OUTPUT="$(sudo bash "$DST/scripts/tmb.sh" migration import \
   "backups/$(basename "$MIGRATION_ARCHIVE")" 2>&1)"
 IMPORT_STATUS=$?
 if [[ "$IMPORT_STATUS" -ne 0 ]]; then
@@ -239,18 +247,18 @@ MODE="$(stat -c '%a' "$DST/config.yaml")"
 }
 echo "OK restored config.yaml owner=${OWNER} mode=${MODE} (restored runtime identity honored)"
 
-grep -q '^APP_UID=10001$' "$DST/.env" || {
+sudo grep -q '^APP_UID=10001$' "$DST/.env" || {
   echo "FAIL: restored .env does not carry the source runtime identity." >&2
   exit 1
 }
 echo "OK restored .env carries the source APP_UID/GID"
 
 # SQLite/state, cookies, and Local Bot API durable state restored.
-[[ -f "$DST/data/state/jobs.sqlite3" ]] || {
+sudo test -f "$DST/data/state/jobs.sqlite3" || {
   echo "FAIL: restored SQLite state missing." >&2
   exit 1
 }
-grep -q 'fixture' "$DST/data/cookies/cookies.txt" || {
+sudo grep -q 'fixture' "$DST/data/cookies/cookies.txt" || {
   echo "FAIL: restored cookies missing." >&2
   exit 1
 }
@@ -259,7 +267,7 @@ COOKIE_MODE="$(stat -c '%a' "$DST/data/cookies/cookies.txt")"
   echo "FAIL: restored cookies mode is $COOKIE_MODE, expected 600." >&2
   exit 1
 }
-grep -q '"phase": "local"' "$DST/data/state/telegram-api-migration.json" || {
+sudo grep -q '"phase": "local"' "$DST/data/state/telegram-api-migration.json" || {
   echo "FAIL: restored Local Bot API durable state missing." >&2
   exit 1
 }
@@ -394,7 +402,7 @@ docker compose --project-directory "$DST" --profile local-api stop >/dev/null 2>
 
 # --- Failure after swap: offline doctor fails -> full automatic rollback ----
 write_source_config true
-EXPORT2_OUTPUT="$(bash "$SRC/scripts/tmb.sh" migration export 2>&1)"
+EXPORT2_OUTPUT="$(sudo bash "$SRC/scripts/tmb.sh" migration export 2>&1)"
 MIGRATION_ARCHIVE2="$(printf '%s\n' "$EXPORT2_OUTPUT" | sed -n 's/^Backup created: //p' | head -n 1)"
 
 install_tree "$DST2"
@@ -414,12 +422,12 @@ APP_GID=54321
 EOF
 chmod 600 "$DST2/.env"
 mkdir -p "$DST2/backups"
-cp "$SRC/$MIGRATION_ARCHIVE2" "$DST2/backups/"
-cp "$SRC/$MIGRATION_ARCHIVE2.sha256" "$DST2/backups/"
+sudo cp "$SRC/$MIGRATION_ARCHIVE2" "$DST2/backups/"
+sudo cp "$SRC/$MIGRATION_ARCHIVE2.sha256" "$DST2/backups/"
 
 export COMPOSE_PROJECT_NAME="tmb-uid-dst2-$$"
 FAIL_STATUS=0
-FAIL_OUTPUT="$(bash "$DST2/scripts/tmb.sh" migration import \
+FAIL_OUTPUT="$(sudo bash "$DST2/scripts/tmb.sh" migration import \
   "backups/$(basename "$MIGRATION_ARCHIVE2")" 2>&1)" || FAIL_STATUS=$?
 if [[ "$FAIL_STATUS" -eq 0 ]]; then
   echo "FAIL: import with a post-swap-doctor-failing archive unexpectedly succeeded." >&2
@@ -436,7 +444,7 @@ grep -q "rolling back" <<<"$FAIL_OUTPUT" || {
 }
 # The rollback must restore the destination's ORIGINAL config: content, owner,
 # and mode.
-grep -q "dst2-original-marker" "$DST2/config.yaml" || {
+sudo grep -q "dst2-original-marker" "$DST2/config.yaml" || {
   echo "FAIL: rollback did not restore the destination's original config content." >&2
   exit 1
 }
