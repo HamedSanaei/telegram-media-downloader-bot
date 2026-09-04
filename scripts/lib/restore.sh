@@ -249,6 +249,22 @@ restore_transaction() {
   RESTORE_SWAPPED=0
   trap restore_interrupt INT
 
+  # Pin the compose project identity for the whole transaction. A migration
+  # archive carries the SOURCE installation's .env (including its
+  # COMPOSE_PROJECT_NAME), so after the swap every compose call would address
+  # the source project instead of this installation. Exporting the
+  # currently-effective name first keeps state capture, verification, and
+  # rollback aimed at the same project. The value comes from the environment
+  # (highest compose precedence) or the pre-swap .env; when neither sets a
+  # name the variable stays unset and compose keeps its directory default on
+  # both sides of the swap. File contents are never printed.
+  if [[ -z "${COMPOSE_PROJECT_NAME:-}" && -f "$ROOT_DIR/.env" ]]; then
+    COMPOSE_PROJECT_NAME="$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$ROOT_DIR/.env" | head -n 1)"
+  fi
+  if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
+    export COMPOSE_PROJECT_NAME
+  fi
+
   PREVIOUS_PROJECT_SERVICES=()
   PREVIOUS_WRITER_SERVICES=()
   load_running_project_services || return 1
