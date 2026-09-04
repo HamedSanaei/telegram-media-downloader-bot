@@ -107,7 +107,7 @@ write_source_config() {
     -e 's|^  local_api_is_local: false$|  local_api_is_local: true|' \
     -e 's|^    executable: CHANGE_ME$|    executable: /usr/local/bin/telegram-bot-api|' \
     -e 's|^    api_id: 0$|    api_id: 12345|' \
-    -e 's|^    api_hash: CHANGE_ME$|    api_hash: "0123456789abcdef0123456789abcdef"|' \
+    -e 's|^    api_hash: CHANGE_ME$|    api_hash: "0123456789abcdef0123456789abcdef"|' \  # pragma: allowlist secret
     -e 's|^    host: 127.0.0.1$|    host: 0.0.0.0|' \
     -e 's|^    working_directory: ./data/telegram-bot-api$|    working_directory: /data/telegram-bot-api|' \
     -e 's|^    temp_directory: ./data/telegram-bot-api/temp$|    temp_directory: /data/telegram-bot-api/temp|' \
@@ -217,13 +217,12 @@ sudo cp "$SRC/$MIGRATION_ARCHIVE.sha256" "$DST/backups/"
 
 export COMPOSE_PROJECT_NAME="tmb-uid-dst-$$"
 IMPORT_OUTPUT="$(sudo bash "$DST/scripts/tmb.sh" migration import \
-  "backups/$(basename "$MIGRATION_ARCHIVE")" 2>&1)"
-IMPORT_STATUS=$?
-if [[ "$IMPORT_STATUS" -ne 0 ]]; then
-  echo "FAIL: migration import failed (status $IMPORT_STATUS)." >&2
+  "backups/$(basename "$MIGRATION_ARCHIVE")" 2>&1)" || {
+  echo "FAIL: destination migration import failed." >&2
   printf '%s\n' "$IMPORT_OUTPUT" >&2
+  docker compose --project-directory "$DST" --profile local-api ps -a >&2 || true
   exit 1
-fi
+}
 if [[ "$IMPORT_OUTPUT" != *"Restore completed successfully"* ]]; then
   echo "FAIL: migration import did not complete: $IMPORT_OUTPUT" >&2
   exit 1

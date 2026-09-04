@@ -62,7 +62,7 @@ telegram:
     mode: managed
     executable: /usr/local/bin/telegram-bot-api
     api_id: 12345
-    api_hash: "0123456789abcdef0123456789abcdef"
+    api_hash: "0123456789abcdef0123456789abcdef"  # pragma: allowlist secret
     host: 0.0.0.0
     port: 8081
     local_mode: true
