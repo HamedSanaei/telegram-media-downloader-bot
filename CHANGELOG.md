@@ -17,9 +17,9 @@
 - Manifest parsing is now real JSON: `backup_manifest_field` extracts `manifest.json` and parses
   it with the Python stdlib `json` module, preserving image refs with `:`, `@sha256:`, hyphens,
   and full ISO timestamps.
-- Archive inspection never prints secrets: `tmb backup inspect`/`verify` and restore validation
-  redact Telegram-bot-token-shaped path segments, api-hash-like hex runs, and URL credentials via
-  a central `redact_string` filter; the bundle itself is never modified.
+- Archive inspection redacts sensitive values before display: `tmb backup inspect`/`verify`
+  and restore validation mask bot-token-shaped path segments, api-hash-like hex runs, and
+  URL credentials via a central `redact_string` filter; the bundle itself is never modified.
 - Status surfaces agree with the application: `tmb status` derives Telegram/logger/required-
   channels/Local Bot API values from the same typed application CLI on the compose network, and
   a service-owned managed Local Bot API reports `process_running` from endpoint reachability, so

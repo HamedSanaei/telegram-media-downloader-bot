@@ -28,6 +28,8 @@ SRC="$TEST_ROOT/source"
 DST="$TEST_ROOT/destination"
 DST2="$TEST_ROOT/destination-2"
 TOKEN="123456:MIGRATION_FAKE_TOKEN_123456"  # pragma: allowlist secret
+# Fixture api_hash is intentionally fake and never a real credential.  # pragma: allowlist secret
+FAKE_API_HASH="0123456789abcdef0123456789abcdef"  # pragma: allowlist secret
 SRC_UID=10001
 SRC_GID=10001
 
@@ -101,13 +103,17 @@ write_source_config() {
   # updater harness) so the schema always stays complete; a hand-written
   # subset drifts and rejects at load (e.g. missing FormatSection entries).
   cp "$SOURCE_ROOT/config.example.yaml" "$SRC/config.yaml"
+  if [[ ! -f "$SRC/config.yaml" ]]; then
+    echo "FAIL: write_source_config phase: sed target missing: path=$SRC/config.yaml exists=no." >&2
+    exit 1
+  fi
   sed -i \
     -e "s|^  bot_token: CHANGE_ME$|  bot_token: \"$TOKEN\"|" \
     -e 's|^  local_api_base_url: null$|  local_api_base_url: http://local-api:8081|' \
     -e 's|^  local_api_is_local: false$|  local_api_is_local: true|' \
     -e 's|^    executable: CHANGE_ME$|    executable: /usr/local/bin/telegram-bot-api|' \
     -e 's|^    api_id: 0$|    api_id: 12345|' \
-    -e 's|^    api_hash: CHANGE_ME$|    api_hash: "0123456789abcdef0123456789abcdef"|' \  # pragma: allowlist secret
+    -e "s|^    api_hash: CHANGE_ME\$|    api_hash: \"${FAKE_API_HASH}\"|" \
     -e 's|^    host: 127.0.0.1$|    host: 0.0.0.0|' \
     -e 's|^    working_directory: ./data/telegram-bot-api$|    working_directory: /data/telegram-bot-api|' \
     -e 's|^    temp_directory: ./data/telegram-bot-api/temp$|    temp_directory: /data/telegram-bot-api/temp|' \
@@ -402,8 +408,26 @@ docker compose --project-directory "$DST" --profile local-api stop >/dev/null 2>
 
 # --- Failure after swap: offline doctor fails -> full automatic rollback ----
 write_source_config true
+if [[ ! -f "$SRC/config.yaml" ]]; then
+  echo "FAIL: rollback-fixture phase: sed target missing after write_source_config: path=$SRC/config.yaml exists=no." >&2
+  exit 1
+fi
 EXPORT2_OUTPUT="$(sudo bash "$SRC/scripts/tmb.sh" migration export 2>&1)"
+if [[ "$EXPORT2_OUTPUT" == *"$TOKEN"* ]]; then
+  echo "FAIL: rollback-fixture export leaked the bot token." >&2
+  exit 1
+fi
 MIGRATION_ARCHIVE2="$(printf '%s\n' "$EXPORT2_OUTPUT" | sed -n 's/^Backup created: //p' | head -n 1)"
+if [[ -z "${MIGRATION_ARCHIVE2:-}" ]]; then
+  echo "FAIL: rollback-fixture phase: export produced no archive name." >&2
+  printf '%s\n' "$EXPORT2_OUTPUT" >&2
+  exit 1
+fi
+if [[ ! -f "$SRC/$MIGRATION_ARCHIVE2" ]]; then
+  echo "FAIL: rollback-fixture phase: export archive missing: path=$SRC/$MIGRATION_ARCHIVE2 exists=no." >&2
+  exit 1
+fi
+echo "OK rollback-fixture export produced $MIGRATION_ARCHIVE2"
 
 install_tree "$DST2"
 write_service_override "$DST2"
