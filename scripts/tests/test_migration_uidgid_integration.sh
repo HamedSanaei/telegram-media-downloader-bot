@@ -135,6 +135,16 @@ write_source_config() {
 # --- Source installation (runtime identity 10001:10001) --------------------
 install_tree "$SRC"
 write_service_override "$SRC"
+# Seed the durable state and cookies BEFORE write_source_config re-owns the
+# data tree to the source runtime identity; a non-root CI runner cannot write
+# into the 10001-owned directories afterwards.
+mkdir -p "$SRC/data/state"
+cat >"$SRC/data/state/telegram-api-migration.json" <<'EOF'
+{"version": 1, "phase": "local", "updated_at": "2026-09-04T00:00:00+00:00"}
+EOF
+printf '# Netscape HTTP Cookie File\n.fixture.example\tTRUE\t/\tTRUE\t0\tfixture\tvalue\n' \
+  >"$SRC/data/cookies/cookies.txt"
+chmod 600 "$SRC/data/cookies/cookies.txt"
 write_source_config false
 cat >"$SRC/.env" <<EOF
 TMB_IMAGE=telegram-media-downloader-bot:ci
@@ -144,15 +154,6 @@ APP_UID=${SRC_UID}
 APP_GID=${SRC_GID}
 EOF
 chmod 600 "$SRC/.env"
-sudo chown "${SRC_UID}:${SRC_GID}" "$SRC/data" "$SRC/backups" 2>/dev/null || true
-mkdir -p "$SRC/data/state"
-cat >"$SRC/data/state/telegram-api-migration.json" <<'EOF'
-{"version": 1, "phase": "local", "updated_at": "2026-09-04T00:00:00+00:00"}
-EOF
-printf '# Netscape HTTP Cookie File\n.fixture.example\tTRUE\t/\tTRUE\t0\tfixture\tvalue\n' \
-  >"$SRC/data/cookies/cookies.txt"
-chmod 600 "$SRC/data/cookies/cookies.txt"
-sudo chown -R "${SRC_UID}:${SRC_GID}" "$SRC/data"
 
 export COMPOSE_PROJECT_NAME="tmb-uid-src-$$"
 docker compose --project-directory "$SRC" --profile local-api up -d --no-build redis bot worker local-api
