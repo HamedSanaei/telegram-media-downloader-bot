@@ -35,8 +35,8 @@ _SECRET_ASSIGNMENT = re.compile(
 )
 
 
-def sanitize_audit_message(value: object) -> str:
-    """Redact actual secret-shaped values while preserving ordinary operational prose."""
+def _redact_audit_payload(value: object) -> str:
+    """Reject structured payloads and redact secrets before any whitespace normalization."""
     if not isinstance(value, str):
         raise UnsafeAuditPayloadError("audit messages must be pre-rendered strings")
     if _TRACEBACK.search(value) or _PATH.search(value) or _NETSCAPE_ROW.search(value):
@@ -47,10 +47,21 @@ def sanitize_audit_message(value: object) -> str:
     text = _SECRET_ASSIGNMENT.sub(
         lambda match: f"{match.group('key').strip(chr(34) + chr(39))}=<redacted>", text
     )
-    text = " ".join(text.strip().split())
+    return text
+
+
+def sanitize_audit_message(value: object) -> str:
+    """Redact actual secret-shaped values while preserving ordinary operational prose."""
+    text = " ".join(_redact_audit_payload(value).strip().split())
     if not text:
         raise UnsafeAuditPayloadError("empty audit payload rejected")
     return text[:2000]
+
+
+def sanitize_audit_caption(value: str) -> str:
+    """Sanitize a media description without flattening its lines or truncating it."""
+    text = _redact_audit_payload(value).replace("\r\n", "\n").replace("\r", "\n")
+    return re.sub(r"[^\S\n]+", " ", text).strip()
 
 
 def safe_failure_class(exc: BaseException) -> str:
@@ -58,4 +69,9 @@ def safe_failure_class(exc: BaseException) -> str:
     return type(exc).__name__[:96]
 
 
-__all__ = ["UnsafeAuditPayloadError", "safe_failure_class", "sanitize_audit_message"]
+__all__ = [
+    "UnsafeAuditPayloadError",
+    "safe_failure_class",
+    "sanitize_audit_caption",
+    "sanitize_audit_message",
+]

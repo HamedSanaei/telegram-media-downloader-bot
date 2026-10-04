@@ -5,16 +5,19 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 from aiogram import Bot
 from aiogram.exceptions import TelegramNetworkError
 from aiogram.methods import CopyMessage
+from aiogram.types import MessageId
 
 from telegram_media_bot.application.services.audit_outbox import AuditOutboxProcessor
 from telegram_media_bot.application.services.audit_service import AuditService
 from telegram_media_bot.application.services.delivery_output_audit import (
     DeliveredOutputAuditService,
+    mirroring_enabled,
 )
-from telegram_media_bot.domain.audit import AuditEventType
+from telegram_media_bot.domain.audit import AuditCategory, AuditEventType, AuditSeverity
 from telegram_media_bot.domain.models import (
     DeliveryItemRecord,
     DeliveryItemStatus,
@@ -25,6 +28,7 @@ from telegram_media_bot.domain.models import (
     JobKind,
     JobRecord,
     JobStatus,
+    UserProfile,
 )
 from telegram_media_bot.infrastructure.persistence.sqlite_audit import (
     SqliteAuditRepository,
@@ -40,17 +44,34 @@ _DEFAULT_JOB_ID = JobId("download-1")
 class _CopyingBot:
     def __init__(self, failure: Exception | None = None) -> None:
         self.failure = failure
-        self.copies: list[dict[str, object]] = []
+        self.media: dict[int, dict[str, object]] = {}
         self.messages: list[tuple[int, str]] = []
 
-    async def copy_message(self, **kwargs: object) -> None:
+    async def copy_message(self, **kwargs: object) -> MessageId:
         if self.failure is not None:
             raise self.failure
-        self.copies.append(kwargs)
+        message_id = len(self.media) + 1
+        self.media[message_id] = {
+            "source_id": kwargs["message_id"],
+            "caption": kwargs.get("caption", ""),
+            "parse_mode": kwargs.get("parse_mode"),
+        }
+        return MessageId(message_id=message_id)
 
-    async def copy_messages(self, **_kwargs: object) -> None:
+    async def copy_messages(self, **kwargs: object) -> list[MessageId]:
         if self.failure is not None:
             raise self.failure
+        copied = []
+        for source_id in cast(list[int], kwargs["message_ids"]):
+            message_id = len(self.media) + 1
+            self.media[message_id] = {"source_id": source_id, "caption": ""}
+            copied.append(MessageId(message_id=message_id))
+        return copied
+
+    async def edit_message_caption(self, **kwargs: object) -> None:
+        media = self.media[cast(int, kwargs["message_id"])]
+        media["caption"] = kwargs["caption"]
+        media["parse_mode"] = kwargs["parse_mode"]
 
     async def send_message(self, chat_id: int, text: str) -> None:
         self.messages.append((chat_id, text))
@@ -82,9 +103,11 @@ def _job(job_id: JobId = _DEFAULT_JOB_ID) -> JobRecord:
 
 
 def _complete(jobs: SqliteJobRepository, job_id: JobId) -> None:
+    record = jobs.get_job(job_id)
+    assert record is not None
     jobs.complete_download(
         job_id,
-        user_id=99,
+        user_id=record.user_id,
         day=date(2026, 9, 1),
         source="youtube",
         delivery_file_id="file-1",
@@ -100,7 +123,9 @@ def _service(
     *,
     enabled: bool = True,
 ) -> DeliveredOutputAuditService:
-    return DeliveredOutputAuditService(AuditService(audit, enabled=True), jobs, enabled=enabled)
+    return DeliveredOutputAuditService(
+        AuditService(audit, enabled=True), jobs, jobs, enabled=enabled
+    )
 
 
 def test_completed_output_uses_only_ordered_durable_delivered_message_ids(
@@ -120,6 +145,7 @@ def test_completed_output_uses_only_ordered_durable_delivered_message_ids(
             DeliveryItemStatus.DELIVERED,
             DeliveryMethod.DOCUMENT,
             recipient_message_id=202,
+            caption="بخش دوم",
         )
     )
     jobs.upsert_delivery_item(
@@ -130,6 +156,7 @@ def test_completed_output_uses_only_ordered_durable_delivered_message_ids(
             DeliveryItemStatus.DELIVERED,
             DeliveryMethod.DOCUMENT,
             recipient_message_id=101,
+            caption="بخش اول\n\n🔗 لینک اصلی: https://example.com/private-input",
         )
     )
     jobs.upsert_delivery_item(
@@ -152,6 +179,9 @@ def test_completed_output_uses_only_ordered_durable_delivered_message_ids(
     assert item.event.source.chat_id == 4242
     assert item.event.source.message_ids == (101, 202)
     assert "private-input" not in item.event.message
+    assert item.event.output is not None
+    assert item.event.output.captions == ("بخش اول", "بخش دوم")
+    assert item.event.output.source_url == record.url
     assert audit.pending_delivery_outputs() == ()
 
 
@@ -160,6 +190,7 @@ def test_crash_after_completion_is_reconciled_once_across_restart(tmp_path: Path
     jobs, audit = _repositories(path)
     record = jobs.create_job(_job())
     service = _service(jobs, audit)
+    jobs.upsert_user(UserProfile(99, 4242, "sample_user", "Sample", None, None, None))
     assert service.prepare(record.job_id)
     jobs.upsert_delivery_item(
         DeliveryItemRecord(
@@ -169,9 +200,11 @@ def test_crash_after_completion_is_reconciled_once_across_restart(tmp_path: Path
             DeliveryItemStatus.DELIVERED,
             DeliveryMethod.VIDEO,
             recipient_message_id=777,
+            caption="توضیحات نمونه\n@DownloadKadeBot\n\n🔗 لینک اصلی: https://example.com/private-input",
         )
     )
     _complete(jobs, record.job_id)
+    jobs.upsert_user(UserProfile(99, 4242, "changed_user", "Sample", None, None, None))
 
     restarted_jobs = SqliteJobRepository(path)
     restarted_jobs.initialize()
@@ -192,7 +225,13 @@ def test_crash_after_completion_is_reconciled_once_across_restart(tmp_path: Path
             ('%"event_type":"download_output_delivered"%',),
         ).fetchone()
     assert len(events) == 1
-    assert deserialize_event(str(events[0][0])).source is not None
+    restored = deserialize_event(str(events[0][0]))
+    assert restored.source is not None
+    assert restored.telegram_user_id == 99
+    assert restored.output is not None
+    assert restored.output.telegram_username == "sample_user"
+    assert restored.output.source_url == record.url
+    assert restored.output.captions == ("توضیحات نمونه\n@DownloadKadeBot",)
     assert effects == (1,)
 
 
@@ -201,7 +240,9 @@ async def test_text_instagram_url_mirrors_actual_delivered_video_message(
 ) -> None:
     path = tmp_path / "state.sqlite3"
     jobs, audit = _repositories(path)
-    record = jobs.create_job(replace(_job(), url="https://www.instagram.com/reel/example/"))
+    url = "https://www.instagram.com/reel/DeL5jdsIMo3/"
+    record = jobs.create_job(replace(_job(), url=url, user_id=821868829))
+    jobs.upsert_user(UserProfile(821868829, 4242, "sample_user", "Sample", None, None, None))
     service = _service(jobs, audit)
     assert service.prepare(record.job_id)
     jobs.upsert_delivery_item(
@@ -212,6 +253,7 @@ async def test_text_instagram_url_mirrors_actual_delivered_video_message(
             DeliveryItemStatus.DELIVERED,
             DeliveryMethod.VIDEO,
             recipient_message_id=500,
+            caption=f"توضیحات نمونه\n@DownloadKadeBot\n\n🔗 لینک اصلی: {url}",
         )
     )
     _complete(jobs, record.job_id)
@@ -224,8 +266,26 @@ async def test_text_instagram_url_mirrors_actual_delivered_video_message(
         ).dispatch_batch()
         == 1
     )
-    assert bot.copies == [{"chat_id": _DESTINATION, "from_chat_id": 4242, "message_id": 500}]
-    assert "instagram.com/reel" not in bot.messages[0][1]
+    assert bot.messages == []
+    assert list(bot.media) == [1]
+    media = bot.media[1]
+    assert media["source_id"] == 500
+    assert media["parse_mode"] == "HTML"
+    assert media["caption"] == (
+        "توضیحات نمونه\n@DownloadKadeBot\n\n"
+        "آیدی عددی: <code>821868829</code>\n"
+        "یوزرنیم: @sample_user\n"
+        f'🔗 لینک اصلی: <a href="{url}">{url}</a>'
+    )
+    restarted_jobs, restarted_audit = _repositories(path)
+    assert _service(restarted_jobs, restarted_audit).reconcile_pending() == 0
+    assert (
+        await AuditOutboxProcessor(
+            restarted_audit, TelegramAuditDelivery(cast(Bot, cast(Any, bot)))
+        ).dispatch_batch()
+        == 0
+    )
+    assert list(bot.media) == [1]
 
 
 async def test_output_copy_ambiguity_is_uncertain_and_never_retried(tmp_path: Path) -> None:
@@ -242,6 +302,7 @@ async def test_output_copy_ambiguity_is_uncertain_and_never_retried(tmp_path: Pa
             DeliveryItemStatus.DELIVERED,
             DeliveryMethod.VIDEO,
             recipient_message_id=500,
+            caption="توضیحات نمونه",
         )
     )
     _complete(jobs, record.job_id)
@@ -296,3 +357,194 @@ def test_additive_intent_migration_preserves_existing_logger_state(tmp_path: Pat
 
     assert restarted.list_destinations()[0].chat_id == _DESTINATION
     assert restarted.pending_delivery_outputs() == ()
+
+
+@pytest.mark.parametrize("username", [None, "", "@", "@@invalid", "has space", "a" * 33])
+def test_missing_or_invalid_username_omits_only_optional_field(
+    tmp_path: Path, username: str | None
+) -> None:
+    jobs, audit = _repositories(tmp_path / "state.sqlite3")
+    record = jobs.create_job(_job())
+    jobs.upsert_user(UserProfile(99, 4242, username, "Sample", None, None, None))
+    service = _service(jobs, audit)
+    assert service.prepare(record.job_id)
+    jobs.upsert_delivery_item(
+        DeliveryItemRecord(
+            record.job_id,
+            1,
+            DeliveryProvider.BOT_API,
+            DeliveryItemStatus.DELIVERED,
+            DeliveryMethod.VIDEO,
+            recipient_message_id=500,
+            caption="",
+        )
+    )
+    _complete(jobs, record.job_id)
+    assert service.finalize(record.job_id)
+    output = audit.claim_pending()[0].event.output
+    assert output is not None
+    assert output.telegram_username is None
+    assert output.captions == ("",)
+
+
+def test_username_snapshot_prevents_collision_after_enqueue_completion_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "state.sqlite3"
+    jobs, audit = _repositories(path)
+    record = jobs.create_job(_job())
+    jobs.upsert_user(UserProfile(99, 4242, "@original_user", "Sample", None, None, None))
+    service = _service(jobs, audit)
+    assert service.prepare(record.job_id)
+    jobs.upsert_delivery_item(
+        DeliveryItemRecord(
+            record.job_id,
+            1,
+            DeliveryProvider.BOT_API,
+            DeliveryItemStatus.DELIVERED,
+            DeliveryMethod.VIDEO,
+            recipient_message_id=500,
+            caption="actual caption",
+        )
+    )
+    _complete(jobs, record.job_id)
+
+    def fail_completion(_job_id: str) -> bool:
+        raise sqlite3.OperationalError("fixture completion failure")
+
+    monkeypatch.setattr(audit, "complete_delivery_output", fail_completion)
+    with pytest.raises(sqlite3.OperationalError):
+        service.finalize(record.job_id)
+    jobs.upsert_user(UserProfile(99, 4242, "changed_user", "Sample", None, None, None))
+    restarted_jobs, restarted_audit = _repositories(path)
+    assert _service(restarted_jobs, restarted_audit).reconcile_pending() == 1
+    effects = restarted_audit.claim_pending()
+    assert len(effects) == 1
+    assert effects[0].event.output is not None
+    assert effects[0].event.output.telegram_username == "original_user"
+
+
+@pytest.mark.parametrize("last_caption", [None, "last"])
+def test_repeated_receipt_keeps_first_caption_and_legacy_missing_stays_unknown(
+    tmp_path: Path,
+    last_caption: str | None,
+) -> None:
+    jobs, audit = _repositories(tmp_path / "state.sqlite3")
+    record = jobs.create_job(_job())
+    service = _service(jobs, audit)
+    assert service.prepare(record.job_id)
+    for ordinal, message_id, caption in (
+        (1, 101, "first"),
+        (2, 101, "different"),
+        (3, 102, last_caption),
+    ):
+        jobs.upsert_delivery_item(
+            DeliveryItemRecord(
+                record.job_id,
+                ordinal,
+                DeliveryProvider.BOT_API,
+                DeliveryItemStatus.DELIVERED,
+                DeliveryMethod.VIDEO,
+                recipient_message_id=message_id,
+                caption=caption,
+            )
+        )
+    _complete(jobs, record.job_id)
+    assert service.finalize(record.job_id)
+    event = audit.claim_pending()[0].event
+    assert event.source is not None
+    assert event.source.message_ids == (101, 102)
+    if last_caption is None:
+        assert event.output is None
+    else:
+        assert event.output is not None
+        assert event.output.captions == ("first", "last")
+    assert audit.pending_delivery_outputs() == ()
+
+
+@pytest.mark.parametrize(
+    ("caption", "expected"),
+    [
+        ("🔗 لینک اصلی: https://example.com/private-input", ""),
+        ("prefix\n\n🔗 لینک اصلی: https://example.com/private-input", "prefix"),
+        (
+            "🔗 لینک اصلی: https://example.com/private-input\nnot a suffix",
+            "🔗 لینک اصلی: https://example.com/private-input\nnot a suffix",
+        ),
+    ],
+)
+def test_only_delivery_generated_final_source_line_is_removed(
+    tmp_path: Path,
+    caption: str,
+    expected: str,
+) -> None:
+    jobs, audit = _repositories(tmp_path / "state.sqlite3")
+    record = jobs.create_job(_job())
+    service = _service(jobs, audit)
+    assert service.prepare(record.job_id)
+    jobs.upsert_delivery_item(
+        DeliveryItemRecord(
+            record.job_id,
+            1,
+            DeliveryProvider.BOT_API,
+            DeliveryItemStatus.DELIVERED,
+            DeliveryMethod.VIDEO,
+            recipient_message_id=101,
+            caption=caption,
+        )
+    )
+    _complete(jobs, record.job_id)
+    assert service.finalize(record.job_id)
+    output = audit.claim_pending()[0].event.output
+    assert output is not None
+    assert output.captions == (expected,)
+
+
+async def test_legacy_missing_caption_fails_only_its_effect_and_operational_post_survives(
+    tmp_path: Path,
+) -> None:
+    jobs, audit = _repositories(tmp_path / "state.sqlite3")
+    record = jobs.create_job(_job())
+    service = _service(jobs, audit)
+    assert service.prepare(record.job_id)
+    jobs.upsert_delivery_item(
+        DeliveryItemRecord(
+            record.job_id,
+            1,
+            DeliveryProvider.BOT_API,
+            DeliveryItemStatus.DELIVERED,
+            DeliveryMethod.VIDEO,
+            recipient_message_id=101,
+        )
+    )
+    _complete(jobs, record.job_id)
+    assert service.finalize(record.job_id)
+    bot = _CopyingBot()
+    processor = AuditOutboxProcessor(audit, TelegramAuditDelivery(cast(Bot, cast(Any, bot))))
+    assert await processor.dispatch_batch() == 0
+    assert bot.media == {}
+    assert bot.messages == []
+    assert audit.health_snapshot().active_destinations == 1
+    assert audit.health_snapshot().terminal_effects == 1
+    AuditService(audit, enabled=True).emit(
+        event_type=AuditEventType.SYSTEM_HEALTH,
+        category=AuditCategory.SYSTEM,
+        severity=AuditSeverity.INFO,
+        correlation_id="operational-next",
+        message="Operational reporting remains available",
+    )
+    assert await processor.dispatch_batch() == 1
+    assert bot.messages == [(_DESTINATION, "Operational reporting remains available")]
+
+
+@pytest.mark.parametrize("logger_enabled", [False, True])
+@pytest.mark.parametrize("submission_mirror_enabled", [False, True])
+@pytest.mark.parametrize("operator_privacy_attested", [False, True])
+def test_successful_output_requires_all_three_operator_flags(
+    logger_enabled: bool, submission_mirror_enabled: bool, operator_privacy_attested: bool
+) -> None:
+    assert mirroring_enabled(
+        logger_enabled=logger_enabled,
+        submission_mirror_enabled=submission_mirror_enabled,
+        operator_privacy_attested=operator_privacy_attested,
+    ) is (logger_enabled and submission_mirror_enabled and operator_privacy_attested)

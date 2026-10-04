@@ -359,6 +359,55 @@ def test_delivery_items_are_upserted_by_job_and_ordinal(
     assert items[0].recipient_message_id == 20
 
 
+@pytest.mark.parametrize("caption", [None, "", "توضیحات <نمونه>\n@DownloadKadeBot"])
+def test_delivery_caption_survives_restart_and_reinitialization(
+    repository: SqliteJobRepository, caption: str | None
+) -> None:
+    record = _job(JobId("caption-snapshot"), JobStatus.DELIVERING, datetime.now(UTC))
+    repository.create_job(record)
+    item = DeliveryItemRecord(
+        job_id=record.job_id,
+        ordinal=1,
+        provider=DeliveryProvider.BOT_API,
+        status=DeliveryItemStatus.DELIVERED,
+        method=DeliveryMethod.VIDEO,
+        recipient_message_id=20,
+        file_id="file",
+        file_unique_id="unique",
+        caption=caption,
+    )
+    repository.upsert_delivery_item(item)
+    reopened = SqliteJobRepository(repository._path)
+    reopened.initialize()
+    reopened.initialize()
+    assert reopened.delivery_items(record.job_id) == (item,)
+
+
+def test_legacy_delivery_item_migrates_without_inventing_caption(
+    repository: SqliteJobRepository,
+) -> None:
+    record = _job(JobId("legacy-caption"), JobStatus.SUCCEEDED, datetime.now(UTC))
+    repository.create_job(record)
+    item = DeliveryItemRecord(
+        job_id=record.job_id,
+        ordinal=1,
+        provider=DeliveryProvider.BOT_API,
+        status=DeliveryItemStatus.DELIVERED,
+        method=DeliveryMethod.VIDEO,
+        recipient_message_id=20,
+        file_id="file",
+        file_unique_id="unique",
+    )
+    repository.upsert_delivery_item(item)
+    with closing(sqlite3.connect(repository._path)) as connection:
+        connection.execute("ALTER TABLE delivery_items DROP COLUMN caption")
+        connection.commit()
+    reopened = SqliteJobRepository(repository._path)
+    reopened.initialize()
+    reopened.initialize()
+    assert reopened.delivery_items(record.job_id) == (item,)
+
+
 def test_container_fields_and_format_options_survive_round_trip(
     repository: SqliteJobRepository,
 ) -> None:

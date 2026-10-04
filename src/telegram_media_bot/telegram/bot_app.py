@@ -16,10 +16,6 @@ from telegram_media_bot.application.services.durable_update_inbox import Durable
 from telegram_media_bot.application.services.effect_ledger import EffectLedgerService
 from telegram_media_bot.application.services.entitlements import EntitlementService
 from telegram_media_bot.application.services.job_service import JobService
-from telegram_media_bot.application.services.submission_audit import (
-    AcceptedSubmissionAuditService,
-    mirroring_enabled,
-)
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.bootstrap.instagram import build_instagram_connection_service
@@ -103,15 +99,6 @@ async def run_bot(settings: Settings) -> None:
         entitlements = EntitlementService(
             subscriptions=subscription_store, plans=subscription_store
         )
-        mirror_enabled = mirroring_enabled(
-            logger_enabled=settings.telegram.logger.enabled,
-            submission_mirror_enabled=settings.telegram.logger.submission_mirror_enabled,
-            operator_privacy_attested=settings.telegram.logger.operator_privacy_attested,
-        )
-        submission_audit = AcceptedSubmissionAuditService(
-            audit,
-            enabled=mirror_enabled,
-        )
         rate_limiter = RedisRateLimiter.create(settings.redis.url)
         if settings.telegram.required_channels.enabled:
             membership_checker = TelegramMembershipChecker.create(
@@ -178,8 +165,6 @@ async def run_bot(settings: Settings) -> None:
                 effects=effects,
                 connection=build_instagram_connection_service(settings),
                 audit_admin=audit_admin,
-                submission_audit=submission_audit,
-                source_resolver=inbox_store,
                 payment_runtime=payment_runtime,
                 subscription_store=subscription_store,
                 entitlements=entitlements,

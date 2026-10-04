@@ -12,6 +12,7 @@ from telegram_media_bot.domain.audit import (
     AuditEvent,
     AuditEventType,
     AuditSeverity,
+    DeliveredOutputAuditContext,
     LoggerDestinationHealth,
     TelegramSourceReference,
 )
@@ -54,6 +55,7 @@ class AuditService:
         content_type: str | None = None,
         provider: str | None = None,
         source: TelegramSourceReference | None = None,
+        output: DeliveredOutputAuditContext | None = None,
         occurred_at: datetime | None = None,
         idempotency_key: str | None = None,
     ) -> int:
@@ -86,18 +88,19 @@ class AuditService:
             content_type=content_type,
             provider=provider,
             source=source,
+            output=output,
         )
         return self._repository.enqueue(event)
 
-    def extend_submission_source(self, source: TelegramSourceReference) -> int:
-        if not self._enabled or source.media_group_id is None:
-            return 0
-        return self._repository.extend_submission_source(source)
-
-    def prepare_delivery_output(self, job_id: str) -> bool:
+    def prepare_delivery_output(self, job_id: str, *, telegram_username: str | None = None) -> bool:
         if not self._enabled:
             return False
-        return self._repository.prepare_delivery_output(job_id)
+        return self._repository.prepare_delivery_output(job_id, telegram_username=telegram_username)
+
+    def delivery_output_username(self, job_id: str) -> str | None:
+        if not self._enabled:
+            return None
+        return self._repository.delivery_output_username(job_id)
 
     def pending_delivery_outputs(self, *, limit: int = 50) -> tuple[str, ...]:
         if not self._enabled:

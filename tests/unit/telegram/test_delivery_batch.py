@@ -40,13 +40,14 @@ from telegram_media_bot.telegram.delivery import (
 )
 
 
-def _message(message_id: int, method: str) -> Message:
+def _message(message_id: int, method: str, *, caption: str | None = None) -> Message:
     chat = Chat(id=1, type="private")
     if method == "photo":
         return Message(
             message_id=message_id,
             date=datetime.now(UTC),
             chat=chat,
+            caption=caption,
             photo=[
                 PhotoSize(
                     file_id=f"f{message_id}",
@@ -62,6 +63,7 @@ def _message(message_id: int, method: str) -> Message:
             message_id=message_id,
             date=datetime.now(UTC),
             chat=chat,
+            caption=caption,
             video=Video(
                 file_id=f"f{message_id}",
                 file_unique_id=f"u{message_id}",
@@ -74,6 +76,7 @@ def _message(message_id: int, method: str) -> Message:
         message_id=message_id,
         date=datetime.now(UTC),
         chat=chat,
+        caption=caption,
         document=Document(file_id=f"f{message_id}", file_unique_id=f"u{message_id}"),
     )
 
@@ -121,7 +124,7 @@ class FakeBatchBot:
                 message="network lost",
             )
         await self._consume(kwargs.get(method) or kwargs.get("document"))
-        return _message(self.upload_count, method)
+        return _message(self.upload_count, method, caption=cast(str | None, kwargs.get("caption")))
 
 
 def _artifact(path: Path, index: int, kind: MediaKind, name: str) -> DownloadArtifact:

@@ -72,12 +72,12 @@ takes effect when the bot restarts and reloads `config.yaml`.
 
 `telegram.logger` is strict and fully off by default. `enabled` allows the durable dispatcher;
 `alerts_enabled` independently admits terminal operational/Cookie Health events, and
-`submission_mirror_enabled` admits accepted-submission copies only when
+`submission_mirror_enabled` now admits successful downloaded-output copies only when
 `operator_privacy_attested` is also true. `channels` is a unique list of numeric `-100...` private
 channel IDs and reconciles with runtime destinations as a protected union. The configured
 `privacy_notice_version` is retained for backward compatibility and is not consulted at runtime:
 since v1.4.0-rc.2 no per-user acknowledgement is required or stored in the acceptance path.
-Submission mirroring requires the operator attestation, at least one usable destination, and
+Successful-output mirroring requires the operator attestation, at least one usable destination, and
 nothing else. Unknown keys, unsafe versions, duplicate/invalid IDs, or capability flags with
 `enabled: false` fail strict configuration. These flags do not change ordinary download behavior;
 logger faults close only the audit path.

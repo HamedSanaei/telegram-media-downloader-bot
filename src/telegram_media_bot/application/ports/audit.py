@@ -10,7 +10,6 @@ from telegram_media_bot.domain.audit import (
     LoggerDestinationHealth,
     LoggerHealthSnapshot,
     LoggerOutboxItem,
-    TelegramSourceReference,
 )
 
 
@@ -25,11 +24,13 @@ class AuditRepository(Protocol):
         self, chat_id: int, health: LoggerDestinationHealth, failure_class: str | None = None
     ) -> LoggerDestination | None: ...
     def enqueue(self, event: AuditEvent) -> int: ...
-    def prepare_delivery_output(self, job_id: str) -> bool: ...
+    def prepare_delivery_output(
+        self, job_id: str, *, telegram_username: str | None = None
+    ) -> bool: ...
+    def delivery_output_username(self, job_id: str) -> str | None: ...
     def delivery_output_pending(self, job_id: str) -> bool: ...
     def pending_delivery_outputs(self, *, limit: int = 50) -> tuple[str, ...]: ...
     def complete_delivery_output(self, job_id: str) -> bool: ...
-    def extend_submission_source(self, source: TelegramSourceReference) -> int: ...
     # Deprecated since v1.4.0-rc.2: per-user privacy acknowledgement is no
     # longer consulted by the acceptance path; kept for schema compatibility.
     def has_privacy_acknowledgement(self, user_id: int, policy_version: str) -> bool: ...
@@ -54,15 +55,8 @@ class LoggerDestinationVerifier(Protocol):
     async def probe(self, chat_id: int) -> DestinationProbeResult: ...
 
 
-class TelegramSourceResolver(Protocol):
-    """Resolve bounded, already-durable source identities for a Telegram album."""
-
-    def media_group_message_ids(self, chat_id: int, media_group_id: str) -> tuple[int, ...]: ...
-
-
 __all__ = [
     "AuditDeliveryPort",
     "AuditRepository",
     "LoggerDestinationVerifier",
-    "TelegramSourceResolver",
 ]

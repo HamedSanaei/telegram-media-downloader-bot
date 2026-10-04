@@ -208,6 +208,7 @@ class BatchDelivery:
                 file_unique_id=f"u{index}",
                 provider=DeliveryProvider.BOT_API,
                 ordinal=index,
+                caption=cast(str, kwargs["caption"]),
             )
             for index in range(1, succeeded + 1)
         )

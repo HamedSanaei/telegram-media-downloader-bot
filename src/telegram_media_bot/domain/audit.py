@@ -6,9 +6,11 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
+from urllib.parse import urlsplit
 
 _SAFE_CLASSIFICATION = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9_+-][A-Za-z0-9_.:+-]{0,191}$")
+_SAFE_TELEGRAM_USERNAME = re.compile(r"[A-Za-z0-9_]{1,32}")
 
 
 class AuditCategory(StrEnum):
@@ -118,6 +120,44 @@ class TelegramSourceReference:
 
 
 @dataclass(frozen=True, slots=True)
+class DeliveredOutputAuditContext:
+    source_url: str
+    captions: tuple[str, ...]
+    telegram_username: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_url, str) or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in self.source_url
+        ):
+            raise ValueError("output source URL must be an absolute HTTP(S) URL without userinfo")
+        try:
+            parsed = urlsplit(self.source_url)
+            valid_url = (
+                parsed.scheme.casefold() in {"http", "https"}
+                and bool(parsed.hostname)
+                and parsed.username is None
+                and parsed.password is None
+            )
+            _ = parsed.port
+        except ValueError:
+            valid_url = False
+        if not valid_url:
+            raise ValueError("output source URL must be an absolute HTTP(S) URL without userinfo")
+        if not isinstance(self.captions, tuple) or any(
+            not isinstance(caption, str) for caption in self.captions
+        ):
+            raise ValueError("output captions must be a tuple of strings")
+        if self.telegram_username is not None and (
+            not isinstance(self.telegram_username, str)
+            or not _SAFE_TELEGRAM_USERNAME.fullmatch(self.telegram_username)
+        ):
+            raise ValueError(
+                "output telegram username must be normalized and 1..32 safe characters"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class AuditEvent:
     event_id: str
     event_type: AuditEventType
@@ -132,6 +172,7 @@ class AuditEvent:
     content_type: str | None = None
     provider: str | None = None
     source: TelegramSourceReference | None = None
+    output: DeliveredOutputAuditContext | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.event_type, AuditEventType):
@@ -184,6 +225,13 @@ class AuditEvent:
             and self.source is None
         ):
             raise ValueError("Telegram copy events require a source reference")
+        if self.output is not None:
+            if not isinstance(self.output, DeliveredOutputAuditContext):
+                raise ValueError("output must be a typed delivered output context")
+            if self.event_type is not AuditEventType.DOWNLOAD_OUTPUT_DELIVERED:
+                raise ValueError("output context is only valid for delivered download outputs")
+            if self.source is None or len(self.output.captions) != len(self.source.message_ids):
+                raise ValueError("output context requires one caption per source message")
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +308,7 @@ __all__ = [
     "AuditEvent",
     "AuditEventType",
     "AuditSeverity",
+    "DeliveredOutputAuditContext",
     "DestinationProbeOutcome",
     "DestinationProbeResult",
     "LoggerDestination",

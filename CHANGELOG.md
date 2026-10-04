@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed
+
+- Successful downloads now produce only the downloaded media in private logger channels:
+  preserve its delivered description and attribution, then append the numeric user ID,
+  optional saved username, and complete clickable canonical source link to each media caption.
+  Accepted-input copies and separate accepted/delivered text reports are retired.
+- Persist actual delivery captions and the pre-delivery username snapshot for restart-safe output
+  mirroring. Caption-less historical receipts fail only their own logger effect; channel health,
+  operational/error reporting, user captions, cleanup, and uncertain-send quarantine are unchanged.
+  Pending/retryable/leased accepted-input effects retire without deleting audit history.
+
 ## v1.4.0-rc.8 - 2026-10-07
 
 ### Fixed

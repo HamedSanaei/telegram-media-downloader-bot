@@ -265,7 +265,9 @@ Activate in this order, restarting after each reviewed configuration change:
 5. Review the privacy policy in `docs/PRIVACY.md` and the indefinite retention, set
    `operator_privacy_attested: true`, then set `submission_mirror_enabled: true`. Since
    v1.4.0-rc.2 the disclosure is informational only (`/privacy`); no user acknowledgement is
-   required or requested, and an accepted submission copies once without any per-user gate.
+   required or requested. Verify one successful download produces only its logger media with the
+   original description, numeric user ID, optional username, and clickable canonical source footer;
+   acceptance must create no input copy or separate metadata report.
 6. Record the owner, activation time, backup archive, config diff, destination probe, metric
    baseline, and rollback criteria. T024 remains blocked; no payment/VIP credential event is enabled
    by this rollout, and release `1.3.7` remains forbidden.

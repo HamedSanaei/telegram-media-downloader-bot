@@ -5,12 +5,13 @@ authoritative privacy/transparency reference for the operator logger feature.
 
 ## Non-blocking disclosure (since v1.4.0-rc.2)
 
-Submission mirroring is an **operator-enabled audit feature**. When the operator
-enables the logger, enables `submission_mirror_enabled`, and explicitly attests
-the policy with `operator_privacy_attested: true`, accepted download submissions
-(URL text, photos, videos, documents, audio, animations, captions, and media
-groups) may be copied to the configured private operational logger channel and
-retained indefinitely.
+Successful-output mirroring is an **operator-enabled audit feature**. When the operator enables
+the logger, enables the existing `submission_mirror_enabled` key, and explicitly attests the policy
+with `operator_privacy_attested: true`, confirmed media from successful downloads may be copied to
+the configured private logger channel and retained indefinitely. Original accepted inputs are not
+copied. Each media caption contains its sanitized delivered description/attribution, numeric user ID,
+optional username snapshotted before delivery, and complete safe canonical source link; there is no
+separate accepted/delivered text report.
 
 **Users are never required to acknowledge this policy.** There is no blocking
 privacy prompt in the download path, no acknowledgement button, and no
@@ -29,7 +30,7 @@ The transparency surface is informational only:
 
 ## Runtime contract
 
-Accepted-submission mirroring is active only when **all three** operator
+Successful-output mirroring is active only when **all three** operator
 settings are true:
 
 ```yaml

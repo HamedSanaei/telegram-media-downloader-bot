@@ -119,11 +119,12 @@ class TelegramLoggerSection(StrictModel):
     enabled: bool = False
     channels: tuple[int, ...] = ()
     alerts_enabled: bool = False
+    #: Existing key now controls successful-output mirroring only, never accepted-input copies.
     submission_mirror_enabled: bool = False
     operator_privacy_attested: bool = False
     privacy_notice_version: str = Field(default="logger-v1", min_length=1, max_length=32)
     #: Independent switch: successful VIP purchases go to the Operator Logger without affecting
-    #: (or depending on) submission mirroring. ``logger.enabled`` remains the master kill switch.
+    #: (or depending on) output mirroring. ``logger.enabled`` remains the master kill switch.
     payment_events_enabled: bool = True
 
     @field_validator("privacy_notice_version")

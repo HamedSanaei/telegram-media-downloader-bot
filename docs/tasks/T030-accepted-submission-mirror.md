@@ -2,6 +2,10 @@
 
 **Status:** complete (2026-08-31)
 
+**Historical contract:** original-input copying was replaced on 2026-10-08 by successful-output-only
+caption-enriched mirroring under ADR-038. This task records the prior implementation, not current
+runtime behavior; see `docs/PROJECT_SPEC.md` and `docs/STATUS.md`.
+
 ## Goal
 
 Mirror every successfully accepted actual download submission into enabled private logger channels

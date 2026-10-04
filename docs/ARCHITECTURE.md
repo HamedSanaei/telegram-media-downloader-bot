@@ -567,38 +567,29 @@ Telethon/MTProto session, staging-channel, Premium queue, or copy-message delive
 
 **Implementation status:** T026-T032 implemented and feature-gated off by default.
 Repository initialization and config-destination reconciliation run at bot and worker
-startup; accepted submissions create durable native-copy intents, while production delivery
-draining is completed by T032.
+startup; pre-delivery output intents and confirmed receipt captions drive successful-output
+mirroring. Acceptance does not enqueue logger media or metadata effects.
 
-### Flow (T026-T032 implemented)
+### Flow
 
-```text
-accepted Telegram update
-        |
-        +--> existing durable inbox / submit_url / JobService
-        |          |
-        |          +--> normal inspection/download queue (unchanged)
-        |
-        +--> typed AuditEvent --> SQLite/WAL logger outbox
-                                      |
-                                      +--> per-destination dispatcher (implemented T032)
-                                             |
-                                             +--> Telegram native copy/send gateway (implemented T030)
-                                             +--> PENDING / COMPLETED / UNCERTAIN (modeled)
-
-confirmed worker delivery receipts
-        |
-        +--> pre-delivery output intent --> durable job SUCCEEDED
-                                               |
-                                               +--> DOWNLOAD_OUTPUT_DELIVERED
-                                                    (recipient message IDs only)
-                                               +--> restart reconciliation by job_id
+```mermaid
+flowchart TD
+    Input[Durable inbox and submit_url] --> Job[JobService and download queue]
+    Job --> Intent[Output intent: saved username snapshot]
+    Intent --> Send[Worker Telegram delivery]
+    Send --> Receipt[SQLite confirmed receipts: message IDs and actual captions]
+    Receipt --> Success[Durable job SUCCEEDED]
+    Success --> Output[Typed sanitized output event]
+    Output --> Outbox[Per-destination SQLite outbox]
+    Outbox --> Copy[Caption-enriched native media copy]
+    Copy --> Outcome[Succeeded or uncertain quarantine]
+    Intent --> Reconcile[Bounded restart reconciliation]
+    Reconcile --> Output
 ```
 
-Terminal worker failures and persisted Cookie Health transitions emit typed events after their
-existing durable state changes (implemented T029); no unsolicited operational path enumerates
-`telegram.admin_ids` anymore. The dispatcher owns fan-out, bounded retry, leases, and destination
-health. It never changes job status, cancellation precedence, cleanup, or delivery uncertainty.
+Terminal operational failures and persisted Cookie Health transitions retain their independent
+text-event paths. The dispatcher owns fan-out, leases, retry classification, and destination health;
+it never changes job status, cancellation precedence, receipt authority, usage, or cleanup.
 
 ### Ownership and boundaries (T026/T027)
 
@@ -641,10 +632,12 @@ redacts cookies, passwords, 2FA, authorization headers, bot tokens, filesystem p
 exceptions, Instagram sessions, payment secrets, and signed login tokens while preserving approved
 numeric user IDs.
 
-Accepted download submissions are recorded only after durable acceptance (implemented T030). Native
-Telegram copy operations preserve original media, captions, and album ordering; media groups receive
-one logical submission identity. Control interactions are excluded. The original message is not
-edited or deleted. Mirroring requires explicit operator privacy attestation
+Successful output events derive ordered IDs and exact caption snapshots from durable confirmed
+receipts, with an insert-once optional username captured before user delivery. Descriptions pass the
+same fail-closed secret policy while preserving line breaks. Native copies add escaped HTML identity
+and safe complete canonical URL footers within 1024 UTF-16 units; bulk copies remove original captions
+before mapped edits. No separate metadata message or accepted-input copy remains. Mirroring requires
+explicit operator privacy attestation
 (`operator_privacy_attested`), a usable private destination, and nothing else: since v1.4.0-rc.2 the
 exact Persian disclosure is informational only (`/privacy`) and no per-user acknowledgement is
 required, requested, or consulted in the acceptance path. Legacy acknowledgement rows are retained
@@ -662,7 +655,10 @@ usable destination, the system emits only structured application logs plus bound
 signals.
 
 Rollout is additive and feature-gated: initialize dormant state, validate private channels and
-permissions, enable operational alerts, show the privacy notice, then enable accepted-submission
-mirroring. Backups include SQLite/WAL/SHM and logger state. Rollback restores prior configuration
+permissions, enable operational alerts, show the privacy notice, then enable successful-output
+mirroring. Additive caption/username migrations preserve operator state. Initialization retires only
+pending/retryable/leased historical input effects; sending/succeeded/uncertain history and old group
+rows remain untouched. Local missing-context/identity/retirement failures never forbid a destination.
+Backups include SQLite/WAL/SHM and logger state. Rollback restores prior configuration
 without deleting audit history and leaves all existing inbox/effect/job/cookie-health behavior
 authoritative.

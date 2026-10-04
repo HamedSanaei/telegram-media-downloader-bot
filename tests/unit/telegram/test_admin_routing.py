@@ -9,7 +9,6 @@ import pytest
 import telegram_media_bot.telegram.handlers as handlers_module
 from telegram_media_bot.application.services.logger_privacy import LOGGER_PRIVACY_DISCLOSURE_FA
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.audit import TelegramSourceReference
 from telegram_media_bot.domain.models import (
     JobId,
     JobKind,
@@ -86,6 +85,9 @@ class FakeUsers:
     def upsert_user(self, *_args: object, **_kwargs: object) -> None:
         return None
 
+    def get_username(self, _user_id: int) -> str | None:
+        return None
+
     def record_request(self, *_args: object, **_kwargs: object) -> None:
         return None
 
@@ -141,23 +143,6 @@ class FakeValidator:
         return url
 
 
-class FakeSubmissionAudit:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.accepted: list[dict[str, object]] = []
-        self.observed: list[object] = []
-        self.fail = fail
-
-    def record_accepted(self, **kwargs: object) -> int:
-        self.accepted.append(kwargs)
-        if self.fail:
-            raise RuntimeError("audit unavailable")
-        return 1
-
-    def observe_media_group_member(self, source: object) -> int:
-        self.observed.append(source)
-        return 0
-
-
 class FakeCallback:
     def __init__(self, user_id: int, data: str) -> None:
         self.from_user = SimpleNamespace(id=user_id)
@@ -167,13 +152,6 @@ class FakeCallback:
 
     async def answer(self, text: str | None = None, *, show_alert: bool = False) -> None:
         self.answers.append((text, show_alert))
-
-
-class FakeSourceResolver:
-    def media_group_message_ids(self, chat_id: int, media_group_id: str) -> tuple[int, ...]:
-        assert chat_id == 20
-        assert media_group_id == "album-1"
-        return (101, 102, 103)
 
 
 @pytest.fixture
@@ -252,13 +230,12 @@ async def test_regular_user_status_remains_editable_without_admin_keyboard(
 
 
 @pytest.mark.parametrize("media_kind", [None, "photo", "video", "document", "audio", "animation"])
-async def test_only_accepted_download_submissions_create_mirror_intent(
+async def test_url_text_and_media_captions_remain_accepted_download_submissions(
     role_settings: Settings,
     media_kind: str | None,
 ) -> None:
     jobs = FakeJobs()
     queue = FakeQueue()
-    mirror = FakeSubmissionAudit()
     router = build_router(
         settings=role_settings,
         queue=queue,  # type: ignore[arg-type]
@@ -266,7 +243,6 @@ async def test_only_accepted_download_submissions_create_mirror_intent(
         access_policy=FakeAccessPolicy(),  # type: ignore[arg-type]
         jobs=jobs,  # type: ignore[arg-type]
         users=FakeUsers(),  # type: ignore[arg-type]
-        submission_audit=mirror,  # type: ignore[arg-type]
     )
     message = FakeMessage(
         20,
@@ -277,20 +253,14 @@ async def test_only_accepted_download_submissions_create_mirror_intent(
 
     await _handler(router, "enqueue_url")(message, durable_update_id=77)
 
-    assert len(mirror.accepted) == 1
-    assert mirror.accepted[0]["content_type"] == (media_kind or "text")
-    assert mirror.accepted[0]["telegram_user_id"] == 20
-    assert mirror.accepted[0]["update_id"] == 77
-    assert mirror.accepted[0]["job_id"] == "inspection-job"
     assert len(queue.inspections) == 1
 
 
-async def test_album_source_is_ordered_and_logger_failure_does_not_fail_acceptance(
+async def test_invalid_and_start_control_traffic_do_not_create_download_jobs(
     role_settings: Settings,
 ) -> None:
     jobs = FakeJobs()
     queue = FakeQueue()
-    mirror = FakeSubmissionAudit(fail=True)
     router = build_router(
         settings=role_settings,
         queue=queue,  # type: ignore[arg-type]
@@ -298,55 +268,19 @@ async def test_album_source_is_ordered_and_logger_failure_does_not_fail_acceptan
         access_policy=FakeAccessPolicy(),  # type: ignore[arg-type]
         jobs=jobs,  # type: ignore[arg-type]
         users=FakeUsers(),  # type: ignore[arg-type]
-        submission_audit=mirror,  # type: ignore[arg-type]
-        source_resolver=FakeSourceResolver(),
-    )
-    message = FakeMessage(
-        20,
-        None,
-        caption="album https://example.com/media",
-        media_kind="photo",
-        media_group_id="album-1",
-        message_id=102,
-    )
-
-    await _handler(router, "enqueue_url")(message, durable_update_id=78)
-
-    source = cast(TelegramSourceReference, mirror.accepted[0]["source"])
-    assert source.message_ids == (101, 102, 103)
-    assert len(queue.inspections) == 1
-    assert message.answers[0][0] == INSPECTION_QUEUED_TEXT.format(job_id="inspection-job")
-
-
-async def test_invalid_and_start_control_traffic_are_never_mirrored(
-    role_settings: Settings,
-) -> None:
-    jobs = FakeJobs()
-    queue = FakeQueue()
-    mirror = FakeSubmissionAudit()
-    router = build_router(
-        settings=role_settings,
-        queue=queue,  # type: ignore[arg-type]
-        repository=FakeRepository(),  # type: ignore[arg-type]
-        access_policy=FakeAccessPolicy(),  # type: ignore[arg-type]
-        jobs=jobs,  # type: ignore[arg-type]
-        users=FakeUsers(),  # type: ignore[arg-type]
-        submission_audit=mirror,  # type: ignore[arg-type]
     )
 
     await _handler(router, "start")(FakeMessage(20, "/start"), FakeState())
     await _handler(router, "enqueue_url")(FakeMessage(20, "ordinary text"), durable_update_id=79)
 
-    assert mirror.accepted == []
     assert jobs.calls == []
 
 
-async def test_mirroring_accepts_without_any_user_acknowledgement(
+async def test_acceptance_never_demands_user_privacy_acknowledgement(
     role_settings: Settings,
 ) -> None:
     jobs = FakeJobs()
     queue = FakeQueue()
-    mirror = FakeSubmissionAudit()
     router = build_router(
         settings=role_settings,
         queue=queue,  # type: ignore[arg-type]
@@ -354,39 +288,13 @@ async def test_mirroring_accepts_without_any_user_acknowledgement(
         access_policy=FakeAccessPolicy(),  # type: ignore[arg-type]
         jobs=jobs,  # type: ignore[arg-type]
         users=FakeUsers(),  # type: ignore[arg-type]
-        submission_audit=mirror,  # type: ignore[arg-type]
     )
     message = FakeMessage(20, "https://example.com/media")
 
     await _handler(router, "enqueue_url")(message, durable_update_id=80)
 
-    # Mirroring is active, zero user acknowledgement exists, yet the download
-    # is durably accepted and mirrored.
     assert len(jobs.calls) == 1
-    assert len(mirror.accepted) == 1
-    # No blocking privacy acknowledgement message is ever emitted in the
-    # download acceptance path.
     assert all(LOGGER_PRIVACY_DISCLOSURE_FA not in text for text, _ in message.answers)
-
-
-async def test_mirroring_accepts_when_audit_write_fails(role_settings: Settings) -> None:
-    jobs = FakeJobs()
-    queue = FakeQueue()
-    router = build_router(
-        settings=role_settings,
-        queue=queue,  # type: ignore[arg-type]
-        repository=FakeRepository(),  # type: ignore[arg-type]
-        access_policy=FakeAccessPolicy(),  # type: ignore[arg-type]
-        jobs=jobs,  # type: ignore[arg-type]
-        users=FakeUsers(),  # type: ignore[arg-type]
-        submission_audit=FakeSubmissionAudit(fail=True),  # type: ignore[arg-type]
-    )
-    message = FakeMessage(20, "https://example.com/media")
-
-    await _handler(router, "enqueue_url")(message, durable_update_id=82)
-
-    # Logger failure must never fail or block the user's download.
-    assert len(jobs.calls) == 1
 
 
 async def test_privacy_disclosure_command_is_non_blocking(role_settings: Settings) -> None:

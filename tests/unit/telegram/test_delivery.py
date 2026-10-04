@@ -74,7 +74,7 @@ class FakeBot:
         self.last_upload = kwargs
         self.uploads.append(kwargs)
         await self._consume(kwargs.get("audio"))
-        return _message("audio")
+        return _message("audio", caption=cast(str | None, kwargs.get("caption")))
 
     async def send_video(self, **kwargs: object) -> Message:
         self.last_upload = kwargs
@@ -89,19 +89,19 @@ class FakeBot:
                 message="connection lost",
             )
         await self._consume(kwargs.get("video"))
-        return _message("video")
+        return _message("video", caption=cast(str | None, kwargs.get("caption")))
 
     async def send_document(self, **kwargs: object) -> Message:
         self.last_upload = kwargs
         self.uploads.append(kwargs)
         await self._consume(kwargs.get("document"))
-        return _message("document")
+        return _message("document", caption=cast(str | None, kwargs.get("caption")))
 
     async def send_photo(self, **kwargs: object) -> Message:
         self.last_upload = kwargs
         self.uploads.append(kwargs)
         await self._consume(kwargs.get("photo"))
-        return _message("photo")
+        return _message("photo", caption=cast(str | None, kwargs.get("caption")))
 
     async def send_media_group(self, **kwargs: object) -> list[Message]:
         self.last_upload = kwargs
@@ -118,7 +118,11 @@ class FakeBot:
                 message="connection lost",
             )
         return [
-            _message("photo" if isinstance(item, InputMediaPhoto) else "video", index + 1)
+            _message(
+                "photo" if isinstance(item, InputMediaPhoto) else "video",
+                index + 1,
+                caption=cast(str | None, getattr(item, "caption", None)),
+            )
             for index, item in enumerate(media)
         ]
 
@@ -155,6 +159,7 @@ async def test_delivery_selects_normalized_media_method(
     assert receipt.method.value == expected
     assert receipt.file_id == "file-id"
     assert bot.last_upload["request_timeout"] == configured.telegram.upload_timeout_seconds
+    assert receipt.primary.caption == bot.last_upload["caption"]
 
 
 async def test_video_failure_falls_back_to_document(settings: Settings, tmp_path: Path) -> None:
@@ -1020,7 +1025,9 @@ async def test_webp_document_delivery_never_becomes_a_sticker(
                         is_video=False,
                     ),
                 )
-            return _message("document", len(self.received))
+            return _message(
+                "document", len(self.received), caption=cast(str | None, kwargs.get("caption"))
+            )
 
     bot = WebpTelegramBot()
     persisted: list[int] = []
@@ -1237,12 +1244,13 @@ def _result(tmp_path: Path, kind: MediaKind) -> DownloadResult:
     )
 
 
-def _message(kind: str, message_id: int = 1) -> Message:
+def _message(kind: str, message_id: int = 1, *, caption: str | None = None) -> Message:
     if kind == "audio":
         return Message(
             message_id=message_id,
             date=datetime.now(UTC),
             chat=Chat(id=1, type="private"),
+            caption=caption,
             audio=Audio(file_id="file-id", file_unique_id="unique-id", duration=1),
         )
     if kind == "video":
@@ -1250,6 +1258,7 @@ def _message(kind: str, message_id: int = 1) -> Message:
             message_id=message_id,
             date=datetime.now(UTC),
             chat=Chat(id=1, type="private"),
+            caption=caption,
             video=Video(
                 file_id="file-id",
                 file_unique_id="unique-id",
@@ -1263,6 +1272,7 @@ def _message(kind: str, message_id: int = 1) -> Message:
             message_id=message_id,
             date=datetime.now(UTC),
             chat=Chat(id=1, type="private"),
+            caption=caption,
             document=Document(file_id="file-id", file_unique_id="unique-id"),
         )
     if kind == "photo":
@@ -1270,6 +1280,7 @@ def _message(kind: str, message_id: int = 1) -> Message:
             message_id=message_id,
             date=datetime.now(UTC),
             chat=Chat(id=1, type="private"),
+            caption=caption,
             photo=[
                 PhotoSize(
                     file_id="file-id",

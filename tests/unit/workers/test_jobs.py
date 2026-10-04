@@ -6,6 +6,7 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from contextlib import closing
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -60,6 +61,7 @@ from telegram_media_bot.domain.failures import (
 )
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
+    DeliveryItemReceipt,
     DeliveryMethod,
     DeliveryProgressEvent,
     DeliveryReceipt,
@@ -189,7 +191,13 @@ class FakeDelivery:
                     )
                 )
             raise self.failure
-        receipt = DeliveryReceipt(DeliveryMethod.VIDEO, 3, "file-id", "unique-id")
+        receipt = DeliveryReceipt(
+            items=(
+                DeliveryItemReceipt(
+                    DeliveryMethod.VIDEO, 3, "file-id", "unique-id", caption=self.last_caption
+                ),
+            )
+        )
         item_delivered = kwargs.get("item_delivered")
         if callable(item_delivered):
             await item_delivered(receipt.primary)
@@ -356,7 +364,7 @@ async def test_worker_download_persists_receipt_and_cleans(
     audit_store.initialize()
     audit_store.reconcile_config((LOGGER_CHANNEL,))
     context["output_audit"] = DeliveredOutputAuditService(
-        AuditService(audit_store, enabled=True), repository, enabled=True
+        AuditService(audit_store, enabled=True), repository, repository, enabled=True
     )
     job_id = await process_download_job(
         context,
@@ -403,7 +411,7 @@ async def test_output_logger_failure_never_changes_successful_job(
     audit_store.initialize()
     audit_store.reconcile_config((LOGGER_CHANNEL,))
     output_audit = DeliveredOutputAuditService(
-        AuditService(audit_store, enabled=True), repository, enabled=True
+        AuditService(audit_store, enabled=True), repository, repository, enabled=True
     )
 
     def fail_finalize(_job_id: JobId) -> bool:
@@ -423,6 +431,52 @@ async def test_output_logger_failure_never_changes_successful_job(
     record = repository.get_job(JobId(result))
     assert record is not None and record.status is JobStatus.SUCCEEDED
     assert delivery.deliveries == 1
+
+
+@pytest.mark.parametrize("audit_failure", ["username_lookup", "unsafe_caption"])
+async def test_real_output_context_failure_keeps_user_success_receipt_usage_and_cleanup(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+    monkeypatch: pytest.MonkeyPatch,
+    audit_failure: str,
+) -> None:
+    context, repository, download, delivery = worker_context
+    audit_store = SqliteAuditRepository(repository._path)
+    audit_store.initialize()
+    audit_store.reconcile_config((LOGGER_CHANNEL,))
+    context["output_audit"] = DeliveredOutputAuditService(
+        AuditService(audit_store, enabled=True), repository, repository, enabled=True
+    )
+    if audit_failure == "username_lookup":
+
+        def failed_lookup(_user_id: int) -> str | None:
+            raise sqlite3.OperationalError("fixture unavailable profile")
+
+        monkeypatch.setattr(repository, "get_username", failed_lookup)
+    else:
+        original_download = download.download
+
+        def unsafe_caption_download(**kwargs: Any) -> DownloadResult:
+            return replace(original_download(**kwargs), title="/data/private/secret.txt")
+
+        monkeypatch.setattr(download, "download", unsafe_caption_download)
+    result = await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media",
+        mode=DownloadMode.BEST.value,
+    )
+    record = repository.get_job(JobId(result))
+    assert record is not None and record.status is JobStatus.SUCCEEDED
+    assert repository.delivery_items(record.job_id)[0].caption == delivery.last_caption
+    assert _load_audit_events(audit_store) == []
+    with closing(sqlite3.connect(repository._path)) as connection:
+        assert connection.execute(
+            "SELECT successful_download_count, delivered_bytes FROM users WHERE user_id=20"
+        ).fetchone() == (1, 5)
+    configured = cast(Settings, context["settings"])
+    assert not (configured.storage.downloads_path() / result).exists()
+    assert not (configured.storage.temp_path() / result).exists()
 
 
 async def test_recovered_youtube_mix_job_is_normalized_at_execution_boundary(

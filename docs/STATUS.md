@@ -1,6 +1,29 @@
 # Project status
 
-Last updated: 2026-10-07
+Last updated: 2026-10-08
+
+## Successful-output-only logger posts (2026-10-08)
+
+- Successful downloads mirror only their confirmed Telegram media; each item preserves its actual
+  delivered description/attribution and adds the numeric user ID, optional saved username, and
+  complete clickable canonical URL. No accepted-input copy or standalone accepted/delivered report
+  remains. User delivery captions and operational/Cookie Health/payment/system reporting are unchanged.
+- Additive SQLite migrations persist receipt captions and insert-once pre-delivery username
+  snapshots. Restart reconciliation retains payload identity; partial copies/edit failures remain
+  uncertain and are never automatically recopied. Missing historical captions fail only that effect,
+  not the destination or user job. Safe historical accepted effects retire with leases cleared;
+  event JSON, old group rows, and sending/succeeded/uncertain history remain intact.
+- The unchanged `submission_mirror_enabled` key now gates successful output only, together with
+  logger enablement and operator privacy attestation. No per-user acknowledgement is introduced.
+- Offline runtime smoke exercised the real worker, Telegram delivery gateway, SQLite stores, output
+  service, and outbox: user job succeeded; one logger media message; zero logger text messages;
+  zero second-dispatch messages after restart; user caption unchanged. No live Telegram visual
+  layout or production deployment was exercised.
+- Verification: 377 targeted tests passed; the full non-contract suite passed 1,533 tests with
+  12 platform/opt-in skips and 80.99% coverage. Frozen lock/sync, Ruff lint/format, mypy, and the
+  agent-context guard passed on Python 3.14.5. Tests used isolated temporary roots to avoid an
+  existing Windows `pytest-current` cleanup permission error. The throwaway smoke and its data
+  were removed; no dependency, runtime-secret, or local production configuration change was made.
 
 ## v1.4.0-rc.8 publication and Netherlands deployment (2026-10-07)
 
@@ -211,8 +234,9 @@ cannot be falsely removed through the UI. T029 is complete: terminal operational
 Cookie Health transition/reminder alerts now route as typed `ERROR`/`COOKIE_HEALTH` audit events
 into the durable outbox instead of being broadcast to every `telegram.admin_ids`; with no logger
 or destinations the worker only records structured logs, and logger storage faults can never
-change a user job outcome. T030 accepted-submission mirroring, T031 privacy/retention controls, and
-T032 E2E rollout/operations are complete. Mirroring defaults off and requires explicit
+change a user job outcome. T030's original accepted-input mirror has been replaced by
+successful-output-only caption-enriched posts; T031 privacy/retention controls and T032
+E2E rollout/operations remain complete. Mirroring defaults off and requires explicit
 operator attestation, a usable private destination, and nothing else: since v1.4.0-rc.2 the exact
 Persian disclosure is informational only (`/privacy`) and no per-user acknowledgement is required,
 requested, or consulted in the acceptance path; legacy acknowledgement rows are retained for

@@ -780,6 +780,7 @@ async def process_download_job(
                     recipient_message_id=item.message_id,
                     file_id=item.file_id,
                     file_unique_id=item.file_unique_id,
+                    caption=item.caption,
                 ),
             )
         except Exception as exc:

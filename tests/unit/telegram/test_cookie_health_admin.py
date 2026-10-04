@@ -61,6 +61,9 @@ class FakeUsers:
     def upsert_user(self, *_args: object, **_kwargs: object) -> None:
         return None
 
+    def get_username(self, _user_id: int) -> str | None:
+        return None
+
     def record_request(self, *_args: object, **_kwargs: object) -> None:
         return None
 

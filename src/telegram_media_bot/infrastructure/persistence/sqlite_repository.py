@@ -171,6 +171,7 @@ class SqliteJobRepository(JobRepository):
                     recipient_message_id INTEGER,
                     file_id TEXT,
                     file_unique_id TEXT,
+                    caption TEXT,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (job_id, ordinal),
                     FOREIGN KEY (job_id) REFERENCES jobs(job_id) ON DELETE CASCADE
@@ -231,6 +232,7 @@ class SqliteJobRepository(JobRepository):
                 );
                 """
             )
+            _ensure_column(connection, "delivery_items", "caption", "TEXT")
             _ensure_column(connection, "jobs", "container", "TEXT")
             _ensure_column(
                 connection,
@@ -514,8 +516,8 @@ class SqliteJobRepository(JobRepository):
                 """
                 INSERT INTO delivery_items (
                     job_id, ordinal, provider, status, method,
-                    recipient_message_id, file_id, file_unique_id, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    recipient_message_id, file_id, file_unique_id, caption, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id, ordinal) DO UPDATE SET
                     provider = excluded.provider,
                     status = excluded.status,
@@ -523,6 +525,7 @@ class SqliteJobRepository(JobRepository):
                     recipient_message_id = excluded.recipient_message_id,
                     file_id = excluded.file_id,
                     file_unique_id = excluded.file_unique_id,
+                    caption = excluded.caption,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -534,6 +537,7 @@ class SqliteJobRepository(JobRepository):
                     item.recipient_message_id,
                     item.file_id,
                     item.file_unique_id,
+                    item.caption,
                     _now_text(),
                 ),
             )
@@ -556,6 +560,7 @@ class SqliteJobRepository(JobRepository):
                 ),
                 file_id=str(row["file_id"]) if row["file_id"] else None,
                 file_unique_id=(str(row["file_unique_id"]) if row["file_unique_id"] else None),
+                caption=row["caption"],
             )
             for row in rows
         )
@@ -1130,6 +1135,13 @@ class SqliteJobRepository(JobRepository):
                 "SELECT 1 FROM blocked_users WHERE user_id = ?", (user_id,)
             ).fetchone()
         return row is not None
+
+    def get_username(self, user_id: int) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT username FROM users WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return str(row["username"]) if row is not None and row["username"] else None
 
     def upsert_user(self, profile: UserProfile, *, started: bool = False) -> None:
         now = _now_text()

@@ -600,8 +600,8 @@ content/provider classification, sanitized message, source-message references, a
 approved numeric Telegram user ID. Business services do not branch on destination names or
 administrator IDs.
 
-After a request is durably accepted, logger work is written to SQLite/WAL before normal processing
-continues. A per-destination dispatcher records `PENDING`, `COMPLETED`, and `UNCERTAIN` (or an
+Eligible operational events and successful-output intents are written to SQLite/WAL independently
+of ordinary request acceptance. A per-destination dispatcher records `PENDING`, `COMPLETED`, and `UNCERTAIN` (or an
 equivalent quarantine state), uses bounded retries and leases, and isolates channel failures. A
 Telegram timeout or ambiguous response is never treated as proof that a duplicate send is safe.
 No logger destination falls back to all `telegram.admin_ids`; without a usable destination the
@@ -624,24 +624,29 @@ updates only that row and does not stop delivery to healthy channels or the user
 The admin panel is the only runtime management surface and reauthorizes every action using the
 current `telegram.admin_ids`.
 
-## ADR-038: Original submissions are private audit copies with explicit indefinite retention
+## ADR-038: Successful outputs are caption-enriched private audit copies with indefinite retention
 
 **Status:** accepted
 
-`USER_SUBMISSION_RECEIVED` is emitted only after a real download submission is durably accepted.
-URL text, photo, video, document, audio, animation, captions, supported attachments, and albums are
-copied with Telegram-native `copyMessage`/`copyMessages` where possible. Album order, all items,
-captions, and one logical submission identity are preserved. The original message is not edited or
-deleted, and control interactions are excluded. The original user-entered URL remains in the
-private copy; canonical/provider classification is separate correlation metadata.
+**2026-10-08 policy replacement:** original-input acceptance copies and separate accepted/delivered
+metadata messages are retired. `USER_SUBMISSION_RECEIVED` remains a readable historical event type
+only; new enqueue is rejected and pending/retryable/leased effects retire locally at initialization.
+Original event JSON, old group rows, and sending/succeeded/uncertain history are retained.
 
-`DOWNLOAD_OUTPUT_DELIVERED` is a distinct typed event for the concrete Telegram messages produced
-by a fully completed download. The worker derives its ordered source references only from durable
-`DELIVERED` receipt rows with numeric recipient message IDs and copies those messages from the
-recipient chat; it never reuses the accepted input reference or re-uploads local files. A
-pre-delivery SQLite intent plus deterministic `delivery-output:{job_id}` identity closes the
-post-completion crash window. Non-successful or receipt-ambiguous delivery is never guessed, and
-logger failure remains unable to change the user job outcome.
+`DOWNLOAD_OUTPUT_DELIVERED` mirrors only confirmed Telegram media from a durable successful job.
+Ordinal receipt IDs and actual captions are persisted at the Telegram response boundary; no title
+reconstruction or local-file reupload is permitted. Each copied item keeps its sanitized description
+and attribution, then appends the numeric user ID, optional saved username, and complete safe
+canonical source link in escaped HTML. Only oversized descriptive prefixes are shortened to the
+1024-UTF-16-unit visible limit; oversized visible URLs use a short label with their full href.
+
+A pre-delivery SQLite intent captures the insert-once normalized username, including missing values.
+Deterministic `delivery-output:{job_id}` identity and receipt-based restart reconciliation recover
+completion/enqueue crashes without identity collisions after profile changes. Legacy missing-caption
+events fail only their own effect; they never invent captions, change channel health, or fail the user.
+Bulk copies use strictly increasing runs/chunks of at most 100, remove source captions, check returned
+count, then edit mapped captions. Partial copies, edit failures, and later failures are uncertain and
+never automatically recopied. User captions, operational errors, and cleanup remain unchanged.
 
 Before activation, users see: «برای اجرای سرویس و پشتیبانی/امنیت، لینک‌ها و رسانه‌هایی که برای دانلود می‌فرستید ممکن است در کانال خصوصی عملیاتی لاگر کپی و به‌صورت نامحدود نگهداری شوند؛ با ادامهٔ استفاده موافقت می‌کنید.» Audit copies and safe metadata are retained indefinitely in the first implementation; no automatic
 Telegram deletion is introduced. Any later manual purge must be bounded and idempotent.

@@ -54,9 +54,10 @@ telegram:
     enabled: false
     channels: []
     alerts_enabled: false
+    # Existing key: mirrors only successful downloaded media with an enriched caption, not inputs.
     submission_mirror_enabled: false
     # Independent switch: successful VIP purchases are written to the Operator Logger even when
-    # submission mirroring is off. The global logger.enabled above remains the master kill switch.
+    # successful-output mirroring is off. The global logger.enabled remains the master kill switch.
     payment_events_enabled: true
     # Set true only after the operator has reviewed the private-channel access/retention policy.
     operator_privacy_attested: false

@@ -34,6 +34,35 @@ def test_sanitize_url_rejects_non_http() -> None:
     assert sanitize_url("file:///etc/passwd") == "<invalid-url>"
 
 
+def test_url_path_truncation_default_remains_bounded() -> None:
+    path = "/" + "segment/" * 40 + "post"
+    url = f"https://example.com{path}"
+    assert sanitize_url(url) == f"https://example.com{path[:180]}"
+    assert sanitize_url(url, truncate_path=True) == sanitize_url(url)
+
+
+def test_complete_source_target_preserves_long_path_but_not_credentials_or_secrets() -> None:
+    path = "/media/" + "segment/" * 180 + "%F0%9F%98%80"
+    url = (
+        f"https://user:password@EXAMPLE.com{path}"  # pragma: allowlist secret
+        "?v=post&t=30&token=synthetic-secret&tracking=ignored#private-fragment"
+    )
+    assert sanitize_url(url, truncate_path=False) == f"https://example.com{path}?v=post&t=30"
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["file:///etc/passwd", "/relative/path", "https://[malformed/path", "https:///missing-host"],
+)
+def test_complete_path_option_does_not_accept_invalid_urls(url: str) -> None:
+    assert sanitize_url(url, truncate_path=False) == "<invalid-url>"
+
+
+def test_complete_path_option_leaves_short_url_policy_unchanged() -> None:
+    url = "https://EXAMPLE.com/media?v=post&token=synthetic-secret#fragment"
+    assert sanitize_url(url, truncate_path=False) == sanitize_url(url)
+
+
 @pytest.mark.parametrize(
     ("message", "forbidden"),
     [

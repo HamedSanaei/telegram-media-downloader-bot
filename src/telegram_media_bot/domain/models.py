@@ -542,6 +542,7 @@ class DeliveryItemReceipt:
     file_unique_id: str
     provider: DeliveryProvider = DeliveryProvider.BOT_API
     ordinal: int = 1
+    caption: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -603,6 +604,7 @@ class DeliveryItemRecord:
     recipient_message_id: int | None = None
     file_id: str | None = None
     file_unique_id: str | None = None
+    caption: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

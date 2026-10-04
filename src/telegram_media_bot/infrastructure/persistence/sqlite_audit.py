@@ -7,17 +7,20 @@ import secrets
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from telegram_media_bot.application.services.audit_sanitizer import sanitize_audit_message
+from telegram_media_bot.application.services.audit_sanitizer import (
+    sanitize_audit_caption,
+    sanitize_audit_message,
+)
 from telegram_media_bot.domain.audit import (
     AuditCategory,
     AuditEvent,
     AuditEventType,
     AuditSeverity,
+    DeliveredOutputAuditContext,
     LoggerDestination,
     LoggerDestinationHealth,
     LoggerDestinationSource,
@@ -29,7 +32,6 @@ from telegram_media_bot.domain.audit import (
 from telegram_media_bot.domain.errors import PersistenceError
 
 _MAX_ATTEMPTS = 6
-_MEDIA_GROUP_SETTLE_SECONDS = 2
 
 
 class SqliteAuditRepository:
@@ -96,13 +98,6 @@ class SqliteAuditRepository:
                     ON logger_outbox(state, next_attempt_at, lease_until);
                 CREATE INDEX IF NOT EXISTS logger_destination_health_idx
                     ON logger_destinations(health, enabled);
-                CREATE TABLE IF NOT EXISTS audit_submission_groups (
-                    source_chat_id INTEGER NOT NULL,
-                    media_group_id TEXT NOT NULL,
-                    event_id TEXT NOT NULL UNIQUE,
-                    PRIMARY KEY (source_chat_id, media_group_id),
-                    FOREIGN KEY (event_id) REFERENCES audit_events(event_id)
-                );
                 -- Deprecated since v1.4.0-rc.2: per-user privacy acknowledgement is
                 -- no longer part of the runtime acceptance path. The table is kept
                 -- for backward compatibility and is not written by new code.
@@ -115,12 +110,42 @@ class SqliteAuditRepository:
                 CREATE TABLE IF NOT EXISTS logger_delivery_output_intents (
                     job_id TEXT PRIMARY KEY,
                     created_at TEXT NOT NULL,
-                    completed_at TEXT
+                    completed_at TEXT,
+                    telegram_username TEXT
                 );
                 CREATE INDEX IF NOT EXISTS logger_delivery_output_pending_idx
                     ON logger_delivery_output_intents(completed_at, created_at);
                 """
             )
+            connection.execute("BEGIN IMMEDIATE")
+            columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(logger_delivery_output_intents)"
+                ).fetchall()
+            }
+            if "telegram_username" not in columns:
+                connection.execute(
+                    "ALTER TABLE logger_delivery_output_intents ADD COLUMN telegram_username TEXT"
+                )
+            candidates = connection.execute(
+                """SELECT DISTINCT events.event_id,events.event_json
+                FROM audit_events AS events JOIN logger_outbox AS outbox
+                    ON outbox.event_id=events.event_id
+                WHERE outbox.state IN ('pending','retryable','leased')"""
+            ).fetchall()
+            now = _now()
+            for row in candidates:
+                event = deserialize_event(str(row["event_json"]))
+                if event.event_type is AuditEventType.USER_SUBMISSION_RECEIVED:
+                    connection.execute(
+                        """UPDATE logger_outbox SET state='failed_terminal',
+                        last_failure_class='SubmissionMirrorRetired',failed_at=?,updated_at=?,
+                        lease_token=NULL,lease_until=NULL
+                        WHERE event_id=? AND state IN ('pending','retryable','leased')""",
+                        (now, now, str(row["event_id"])),
+                    )
+            connection.execute("COMMIT")
 
     def reconcile_config(self, chat_ids: tuple[int, ...]) -> None:
         desired = set(chat_ids)
@@ -268,8 +293,14 @@ class SqliteAuditRepository:
         return _destination(row)
 
     def enqueue(self, event: AuditEvent) -> int:
+        if event.event_type is AuditEventType.USER_SUBMISSION_RECEIVED:
+            raise ValueError("accepted submission mirroring is retired")
         if sanitize_audit_message(event.message) != event.message:
             raise ValueError("audit event must be sanitized before persistence")
+        if event.output is not None and any(
+            sanitize_audit_caption(caption) != caption for caption in event.output.captions
+        ):
+            raise ValueError("audit output captions must be sanitized before persistence")
         payload = serialize_event(event)
         now = _now()
         with self._connect() as connection:
@@ -279,7 +310,7 @@ class SqliteAuditRepository:
             ).fetchone()
             if existing is not None:
                 persisted = deserialize_event(str(existing["event_json"]))
-                if persisted != event and not _compatible_submission_replay(persisted, event):
+                if persisted != event:
                     raise PersistenceError("audit event identity collision")
                 connection.execute("COMMIT")
                 return 0
@@ -290,16 +321,6 @@ class SqliteAuditRepository:
             if not event_created:
                 connection.execute("COMMIT")
                 return 0
-            next_attempt_at = now
-            if event.source is not None and event.source.media_group_id is not None:
-                connection.execute(
-                    """INSERT INTO audit_submission_groups
-                    (source_chat_id,media_group_id,event_id) VALUES (?,?,?)""",
-                    (event.source.chat_id, event.source.media_group_id, event.event_id),
-                )
-                next_attempt_at = (
-                    datetime.now(UTC) + timedelta(seconds=_MEDIA_GROUP_SETTLE_SECONDS)
-                ).isoformat()
             destinations = connection.execute(
                 """SELECT chat_id FROM logger_destinations WHERE enabled=1
                 AND health IN ('active','unreachable')
@@ -311,21 +332,31 @@ class SqliteAuditRepository:
                     """INSERT OR IGNORE INTO logger_outbox
                     (event_id,destination_chat_id,state,next_attempt_at,created_at,updated_at)
                     VALUES (?,?,'pending',?,?,?)""",
-                    (event.event_id, int(destination["chat_id"]), next_attempt_at, now, now),
+                    (event.event_id, int(destination["chat_id"]), now, now, now),
                 ).rowcount
             connection.execute("COMMIT")
         return created
 
-    def prepare_delivery_output(self, job_id: str) -> bool:
+    def prepare_delivery_output(self, job_id: str, *, telegram_username: str | None = None) -> bool:
         """Persist the output-mirror intent before Telegram user delivery begins."""
         now = _now()
         with self._connect() as connection:
             created = connection.execute(
                 """INSERT OR IGNORE INTO logger_delivery_output_intents
-                (job_id,created_at,completed_at) VALUES (?,?,NULL)""",
-                (job_id, now),
+                (job_id,created_at,completed_at,telegram_username) VALUES (?,?,NULL,?)""",
+                (job_id, now, telegram_username),
             ).rowcount
         return bool(created)
+
+    def delivery_output_username(self, job_id: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT telegram_username FROM logger_delivery_output_intents WHERE job_id=?",
+                (job_id,),
+            ).fetchone()
+        if row is None or row["telegram_username"] is None:
+            return None
+        return str(row["telegram_username"])
 
     def pending_delivery_outputs(self, *, limit: int = 50) -> tuple[str, ...]:
         with self._connect() as connection:
@@ -353,61 +384,6 @@ class SqliteAuditRepository:
                 (_now(), job_id),
             ).rowcount
         return bool(changed)
-
-    def extend_submission_source(self, source: TelegramSourceReference) -> int:
-        """Merge one album member before delivery; a sent/leased album remains immutable."""
-        if source.media_group_id is None:
-            return 0
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            mapping = connection.execute(
-                """SELECT event_id FROM audit_submission_groups
-                WHERE source_chat_id=? AND media_group_id=?""",
-                (source.chat_id, source.media_group_id),
-            ).fetchone()
-            if mapping is None:
-                connection.execute("COMMIT")
-                return 0
-            event_id = str(mapping["event_id"])
-            immutable = connection.execute(
-                """SELECT COUNT(*) FROM logger_outbox WHERE event_id=?
-                AND state NOT IN ('pending','retryable')""",
-                (event_id,),
-            ).fetchone()
-            if immutable is not None and int(immutable[0]) > 0:
-                connection.execute("COMMIT")
-                return 0
-            row = connection.execute(
-                "SELECT event_json FROM audit_events WHERE event_id=?", (event_id,)
-            ).fetchone()
-            if row is None:
-                connection.execute("COMMIT")
-                return 0
-            event = deserialize_event(str(row["event_json"]))
-            if event.source is None:
-                connection.execute("COMMIT")
-                return 0
-            message_ids = tuple(sorted({*event.source.message_ids, *source.message_ids}))
-            if message_ids == event.source.message_ids:
-                connection.execute("COMMIT")
-                return len(message_ids)
-            merged = replace(event, source=replace(event.source, message_ids=message_ids))
-            now = datetime.now(UTC)
-            connection.execute(
-                "UPDATE audit_events SET event_json=? WHERE event_id=?",
-                (serialize_event(merged), event_id),
-            )
-            connection.execute(
-                """UPDATE logger_outbox SET next_attempt_at=?,updated_at=?
-                WHERE event_id=? AND state IN ('pending','retryable')""",
-                (
-                    (now + timedelta(seconds=_MEDIA_GROUP_SETTLE_SECONDS)).isoformat(),
-                    now.isoformat(),
-                    event_id,
-                ),
-            )
-            connection.execute("COMMIT")
-        return len(message_ids)
 
     def has_privacy_acknowledgement(self, user_id: int, policy_version: str) -> bool:
         """Deprecated: legacy per-user acknowledgement is no longer consulted."""
@@ -530,6 +506,13 @@ class SqliteAuditRepository:
 
     def mark_terminal(self, item: LoggerOutboxItem, failure_class: str) -> None:
         self._finish(item, LoggerOutboxState.FAILED_TERMINAL, failure_class)
+        if failure_class in {
+            "MissingSourceReference",
+            "MissingOutputCaptionContext",
+            "MissingOutputUserIdentity",
+            "SubmissionMirrorRetired",
+        }:
+            return
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
@@ -713,6 +696,15 @@ def _event_dict(event: AuditEvent) -> dict[str, Any]:
         "job_id": event.job_id,
         "message": event.message,
         "occurred_at": event.occurred_at.isoformat(),
+        "output": (
+            {
+                "source_url": event.output.source_url,
+                "telegram_username": event.output.telegram_username,
+                "captions": event.output.captions,
+            }
+            if event.output is not None
+            else None
+        ),
         "provider": event.provider,
         "severity": event.severity.value,
         "source": (
@@ -731,6 +723,7 @@ def _event_dict(event: AuditEvent) -> dict[str, Any]:
 
 def _event_from_dict(data: dict[str, Any]) -> AuditEvent:
     source = data.get("source")
+    output = data.get("output")
     return AuditEvent(
         event_id=str(data["event_id"]),
         event_type=AuditEventType(str(data["event_type"])),
@@ -757,23 +750,19 @@ def _event_from_dict(data: dict[str, Any]) -> AuditEvent:
             if isinstance(source, dict)
             else None
         ),
-    )
-
-
-def _compatible_submission_replay(persisted: AuditEvent, incoming: AuditEvent) -> bool:
-    if (
-        persisted.event_type is not AuditEventType.USER_SUBMISSION_RECEIVED
-        or incoming.event_type is not AuditEventType.USER_SUBMISSION_RECEIVED
-        or persisted.source is None
-        or incoming.source is None
-    ):
-        return False
-    persisted_without_source = replace(persisted, source=incoming.source)
-    return (
-        persisted_without_source == incoming
-        and persisted.source.chat_id == incoming.source.chat_id
-        and persisted.source.media_group_id == incoming.source.media_group_id
-        and set(incoming.source.message_ids) <= set(persisted.source.message_ids)
+        output=(
+            DeliveredOutputAuditContext(
+                source_url=str(output["source_url"]),
+                captions=tuple(str(caption) for caption in output["captions"]),
+                telegram_username=(
+                    str(output["telegram_username"])
+                    if output.get("telegram_username") is not None
+                    else None
+                ),
+            )
+            if isinstance(output, dict)
+            else None
+        ),
     )
 
 

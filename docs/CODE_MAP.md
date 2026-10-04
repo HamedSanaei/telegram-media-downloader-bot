@@ -185,17 +185,17 @@ The following runtime ownership implements the completed logger milestone.
 
 | Area | Ownership |
 |---|---|
-| `domain/audit.py` | Typed `AuditEvent`, category/type invariants, numeric user-ID validation, required submission source-message references, probe outcomes, and redaction-safe payloads (implemented T026/T028/T030) |
+| `domain/audit.py` | Typed audit events, replay-readable historical input types, validated delivered-output URL/username/per-item caption context, numeric identity, and source alignment |
 | `application/ports/audit.py` | Audit sink, logger destination management, durable outbox, lease, delivery-effect, and destination-verifier contracts (implemented T026-T028) |
 | `application/services/audit_service.py`, `audit_sanitizer.py`, `audit_outbox.py` | Event eligibility, centralized fail-closed whole-value/header sanitization, and transport-neutral outbox processing (implemented T026/T027) |
 | `application/services/audit_destination_admin.py` | Role-authorized destination management: strict channel-ID validation, probe-driven health, enable/disable, config-protected removal (implemented T028) |
-| `infrastructure/persistence/sqlite_audit.py` | Additive SQLite/WAL logger destinations, outbox, health, probe records, leases, and uncertain-delivery records (implemented T027/T028) |
+| `infrastructure/persistence/sqlite_audit.py` | Additive SQLite/WAL destinations/outbox/health/leases, insert-once output username snapshots, typed context persistence, safe historical-input retirement, and item-local terminal failures |
 | `infrastructure/telegram/audit_destination_verifier.py` | Typed channel probe: existence, type, bot membership, posting test, sanitized outcome mapping (implemented T028) |
-| `application/services/submission_audit.py`, `telegram/handlers.py` | Durable-acceptance-only `USER_SUBMISSION` emission, replay-stable source identity, bounded album aggregation, and logger-failure isolation (implemented T030) |
-| `application/services/logger_privacy.py`, `application/services/submission_audit.py` | Non-blocking Persian disclosure (`/privacy`), operator-attestation activation gate, no per-user acknowledgement (implemented T031/RC2); legacy acknowledgement rows kept for backward compatibility in `infrastructure/persistence/sqlite_audit.py` |
-| `infrastructure/telegram/audit_delivery.py`, `infrastructure/persistence/sqlite_audit.py` | Native bounded single/group copy transport, typed failure outcomes, per-destination outbox, restart-safe album source merging, and additive delivery-output intent recovery |
+| `telegram/handlers.py`, `telegram/bot_app.py` | URL acceptance, durable profile capture, and privacy disclosure; no accepted-input logger event or album resolver |
+| `application/services/logger_privacy.py`, `application/services/delivery_output_audit.py` | Non-blocking Persian disclosure, successful-output three-way operator gate, no per-user acknowledgement; historical acknowledgement rows remain readable in SQLite |
+| `infrastructure/telegram/audit_delivery.py` | Caption-enriched HTML single copies, ordered increasing bulk chunks (max 100), caption-free bulk copies plus mapped edits, UTF-16 caption budget, and partial-effect uncertainty; no success text reports |
 | `telegram/admin_menu.py` / `telegram/admin_handlers.py` | Logger-channel management flow, numeric channel validation, test, enable/disable/remove, and health UI (implemented T028) |
-| `application/services/delivery_output_audit.py`, `workers/settings.py`, `workers/jobs.py` | Independent alert/output-mirror admission, durable receipt-derived output events, crash reconciliation, bounded 30-second/20-item outbox dispatch, aggregate health/metrics, and logger-failure isolation |
+| `application/services/delivery_output_audit.py`, `workers/settings.py`, `workers/jobs.py`, `telegram/delivery.py`, `infrastructure/persistence/sqlite_repository.py` | Actual caption receipt snapshots, confirmed ordinal filtering, safe canonical output URL, pre-delivery username capture, deterministic crash reconciliation, isolated bounded dispatch, unchanged user completion/cleanup |
 | `docs/` | Completed T026-T032, accepted ADR-036-038, privacy/retention policy, staged rollout, incident, backup, and rollback runbooks |
 
 ## Milestone 6 ownership (implemented)

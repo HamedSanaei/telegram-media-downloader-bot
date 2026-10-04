@@ -213,28 +213,35 @@ depth; they never contain user/channel IDs, URLs, message text, filenames, or cr
 - The existing admin panel manages add/list/test/enable/disable/remove/health using
   `🧾 کانال‌های لاگر`; all actions remain role-authorized by `telegram.admin_ids`.
 
-### Accepted-submission mirror
+### Successful-output mirror
 
-After a download submission is durably accepted, the original Telegram message is copied to each
-enabled logger destination. URL text, photo, video, document, audio, animation, supported media,
-captions, and media groups are included; `/start`, `/menu`, help, callbacks, payment navigation,
-and back actions are not. Telegram-native `copyMessage`/`copyMessages` is preferred so media,
-captions, and album ordering remain faithful without unnecessary forward attribution. Albums have
-one logical submission identity. The original user-entered URL is preserved in the private copy and
-canonical/provider classification is recorded separately for correlation.
+Only a durable `SUCCEEDED` download creates a `DOWNLOAD_OUTPUT_DELIVERED` media-copy event.
+Acceptance never copies the original Telegram input or sends a separate accepted/delivered report.
+Single-file success creates one logger media message; albums, collections, and multipart output
+retain their necessary confirmed media items, without a metadata text message.
 
-Copies are scheduled through a durable asynchronous outbox after acceptance. `PENDING`,
-`COMPLETED`, and `UNCERTAIN` (or equivalent) states acknowledge Telegram ambiguity without claiming
-exactly-once delivery. Logger failure cannot fail, delay, cancel, or change the user’s download.
+Each copied item preserves its actual delivered description and bot attribution, then appends the
+numeric user ID (not the recipient chat ID), optional saved username, and clickable complete safe
+canonical source URL. The existing final source line is replaced, not duplicated. HTML escaping
+preserves literal untrusted text. The 1024-UTF-16-unit caption budget shortens only the descriptive
+prefix; an oversized visible URL uses a short label while keeping its full clickable target.
+User-facing captions and source-link replies are unchanged.
 
-After a download reaches durable `SUCCEEDED`, the same operator gate also mirrors the actual
-Telegram output with a separate `DOWNLOAD_OUTPUT_DELIVERED` event. Only ordered durable delivery
-items in `DELIVERED` state with concrete recipient message IDs are eligible; partial collections
-include only their confirmed items. Native `copyMessage`/`copyMessages` preserves the representation
-the user received without reading or re-uploading local media. A durable pre-delivery intent and
-restart reconciliation recover a crash after job completion but before outbox enqueue, while a
-deterministic `delivery-output:{job_id}` identity prevents duplicate effects. Delivery-uncertain or
-missing-receipt work is never inferred, and logger uncertainty remains quarantined without retry.
+Only ordered durable `DELIVERED` items with concrete recipient message IDs are eligible;
+partial collections include confirmed items only, not failed/uncertain items or text summaries.
+Telegram-native copies avoid local-media reads/reuploads. Bulk copies retain album grouping within
+strictly increasing runs and chunks of at most 100 source IDs, then edit mapped captions.
+Incomplete copy counts or any failure after a copy become `UNCERTAIN`, never an automatic recopy.
+
+Actual captions and a pre-delivery optional username snapshot are durable. A pre-delivery intent,
+restart reconciliation, and deterministic `delivery-output:{job_id}` identity close the completion/
+enqueue crash window even after profile changes. The existing `submission_mirror_enabled` setting
+now controls successful-output mirroring only, retaining the logger/privacy-attestation gate.
+
+Legacy missing-caption output effects terminalize locally; no caption is invented and channel
+health remains usable. Historical accepted-input effects in pending/retryable/leased state retire
+with cleared leases; sending/succeeded/uncertain history, event JSON, and existing group rows remain
+unchanged. Logger failure cannot change the user's outcome, receipt, usage, or cleanup.
 
 ### Privacy, retention, and future-feature boundary
 
@@ -254,7 +261,7 @@ reviewed against this exclusion list before adding events.
 
 Implementation is recorded in T026-T032 (typed sanitized event domain, durable destinations and
 outbox, administrator channel management, operational-alert migration with no admin-DM fallback,
-durable accepted-submission native-copy intents, versioned privacy/security controls, bounded
+durable successful-output native-copy intents, versioned privacy/security controls, bounded
 worker dispatch, health/metrics, backup, and state-preserving rollout operations),
 under accepted ADR-036 through ADR-038. This feature does not change current public download
 behavior,

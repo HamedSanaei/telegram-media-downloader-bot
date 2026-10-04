@@ -24,11 +24,11 @@ from telegram_media_bot.application.services.credential_resolution import Creden
 from telegram_media_bot.application.services.credential_vault import CredentialVault
 from telegram_media_bot.application.services.delivery_output_audit import (
     DeliveredOutputAuditService,
+    mirroring_enabled,
 )
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.entitlements import EntitlementService
 from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
-from telegram_media_bot.application.services.submission_audit import mirroring_enabled
 from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.bootstrap.payments import build_payment_runtime
 from telegram_media_bot.domain.audit import LoggerHealthSnapshot
@@ -145,6 +145,7 @@ async def startup(ctx: dict[str, Any]) -> None:
         )
         output_audit = DeliveredOutputAuditService(
             AuditService(audit_store, enabled=settings.telegram.logger.enabled),
+            repository,
             repository,
             enabled=mirroring_enabled(
                 logger_enabled=settings.telegram.logger.enabled,

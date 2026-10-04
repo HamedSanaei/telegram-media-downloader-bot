@@ -72,7 +72,7 @@ Telethon/MTProto staging-channel, Premium upload queue, or copy-delivery archite
 - T027 Durable logger destinations, configuration, and outbox — complete; depends on T026
 - T028 Administrator logger-channel management UX — complete; depends on T026/T027
 - T029 Operational error and Cookie Health notification migration — complete; depends on T026-T028
-- T030 Durable accepted-submission audit mirror — complete; depends on T026/T027
+- T030 Durable accepted-submission audit mirror — historical implementation complete; superseded by successful-output-only mirroring under ADR-038
 - T031 Privacy, retention, access, and secret-exclusion controls — complete; depends on T026-T030
 - T032 End-to-end logger rollout, migration, and operations — complete; depends on T026-T031
 
@@ -93,15 +93,15 @@ centrally sanitized audit event domain and a durable per-destination outbox with
 retry, `UNCERTAIN` quarantine, and config/runtime destination reconciliation. T028 adds the admin
 logger-channel management UX (add/list/test/enable/disable/remove with a typed verifier and
 reauthorized callbacks). T029 routes terminal operational failures and Cookie Health
-transitions/reminders as typed logger events with no admin-DM fallback. T030 now emits replay-safe
-accepted-submission events after durable job creation, resolves bounded album source identities,
-and supplies native `copyMessage`/`copyMessages` delivery. T031 adds the exact Persian disclosure,
+transitions/reminders as typed logger events with no admin-DM fallback. T030's original input-copy
+contract has been replaced by confirmed output-only native copies with durable captions and
+pre-delivery usernames, no standalone success reports. T031 retains the exact Persian disclosure,
 explicit operator attestation, indefinite retention, and the permanent secret-exclusion boundary.
 Since v1.4.0-rc.2 the privacy disclosure is informational only (`/privacy`): no per-user
 acknowledgement is required, requested, or consulted in the acceptance path, and legacy
 acknowledgement rows are retained for backward compatibility only. T032 wires bounded worker
 draining, aggregate health and metrics, destination lifecycle isolation, consistent backups, and
-staged rollout/incident/rollback runbooks. Alerts and submission mirroring are separately enabled;
+staged rollout/incident/rollback runbooks. Alerts and successful-output mirroring are separately enabled;
 mirroring requires the operator privacy attestation and a usable private destination. Audit
 content has indefinite retention and no automatic Telegram deletion. ADR-036 through ADR-038 are
 accepted.

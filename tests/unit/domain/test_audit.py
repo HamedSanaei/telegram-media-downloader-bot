@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -11,6 +12,7 @@ from telegram_media_bot.domain.audit import (
     AuditEvent,
     AuditEventType,
     AuditSeverity,
+    DeliveredOutputAuditContext,
     TelegramSourceReference,
 )
 from telegram_media_bot.infrastructure.persistence.sqlite_audit import (
@@ -177,3 +179,109 @@ def test_sanitizer_is_idempotent_for_persistence_boundary() -> None:
 def test_secret_bearing_metadata_identifiers_are_rejected(field: str, value: str) -> None:
     with pytest.raises(ValueError, match="safe identifier"):
         _event(**{field: value})
+
+
+@pytest.mark.parametrize("username", [None, "sample_user", "A", "a" * 32])
+def test_output_context_accepts_safe_identity_and_caption_snapshots(username: str | None) -> None:
+    context = DeliveredOutputAuditContext(
+        "https://example.com/media/post?v=123",
+        ("", "توضیح <literal> & 😀\nخط دوم"),
+        username,
+    )
+    event = _event(
+        event_type=AuditEventType.DOWNLOAD_OUTPUT_DELIVERED,
+        category=AuditCategory.USER_SUBMISSION,
+        source=TelegramSourceReference(4242, (101, 100)),
+        output=context,
+    )
+    assert event.output == context
+    assert context.captions == ("", "توضیح <literal> & 😀\nخط دوم")
+    assert deserialize_event(serialize_event(event)) == event
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "/media/post",
+        "https:///media/post",
+        "ftp://example.com/media",
+        "https://user:password@example.com/media",  # pragma: allowlist secret
+        "https://@example.com/media",
+        "https://example.com:bad/media",
+        "https://[invalid/media",
+        "https://example.com/media\nsecret",
+        " https://example.com/media",
+    ],
+)
+def test_output_context_rejects_unsafe_or_non_absolute_source_urls(url: str) -> None:
+    with pytest.raises(ValueError, match="absolute HTTP"):
+        DeliveredOutputAuditContext(url, ("caption",))
+
+
+@pytest.mark.parametrize("username", ["", "@sample_user", "a" * 33, "user-name", "نام", "u\n"])
+def test_output_context_rejects_unnormalized_usernames(username: str) -> None:
+    with pytest.raises(ValueError, match="username"):
+        DeliveredOutputAuditContext("https://example.com/media", ("",), username)
+
+
+@pytest.mark.parametrize("captions", [["caption"], "caption", (None,), (1,)])
+def test_output_context_requires_immutable_string_caption_snapshots(captions: object) -> None:
+    with pytest.raises(ValueError, match="tuple of strings"):
+        DeliveredOutputAuditContext(
+            "https://example.com/media",
+            captions,  # type: ignore[arg-type]
+        )
+
+
+def test_output_context_is_not_valid_for_other_event_types() -> None:
+    context = DeliveredOutputAuditContext("https://example.com/media", ("caption",))
+    with pytest.raises(ValueError, match="only valid"):
+        _event(source=TelegramSourceReference(4242, (1,)), output=context)
+    with pytest.raises(ValueError, match="only valid"):
+        _event(
+            event_type=AuditEventType.USER_SUBMISSION_RECEIVED,
+            category=AuditCategory.USER_SUBMISSION,
+            source=TelegramSourceReference(4242, (1,)),
+            output=context,
+        )
+
+
+@pytest.mark.parametrize("captions", [(), ("one",), ("one", "two", "three")])
+def test_output_event_requires_one_caption_per_source_message(captions: tuple[str, ...]) -> None:
+    with pytest.raises(ValueError, match="one caption per source"):
+        _event(
+            event_type=AuditEventType.DOWNLOAD_OUTPUT_DELIVERED,
+            category=AuditCategory.USER_SUBMISSION,
+            source=TelegramSourceReference(4242, (1, 2)),
+            output=DeliveredOutputAuditContext("https://example.com/media", captions),
+        )
+
+
+def test_historical_output_events_without_caption_context_remain_readable() -> None:
+    event = _event(
+        event_type=AuditEventType.DOWNLOAD_OUTPUT_DELIVERED,
+        category=AuditCategory.USER_SUBMISSION,
+        source=TelegramSourceReference(4242, (1,)),
+    )
+    payload = json.loads(serialize_event(event))
+    payload.pop("output", None)
+    assert deserialize_event(json.dumps(payload)) == event
+    payload["output"] = None
+    assert deserialize_event(json.dumps(payload)) == event
+
+
+def test_output_context_does_not_truncate_complete_source_targets() -> None:
+    source_url = "https://example.com/" + "segment/" * 200 + "post"
+    context = DeliveredOutputAuditContext(source_url, ("",))
+    assert context.source_url == source_url
+
+
+def test_event_rejects_untyped_output_payloads() -> None:
+    with pytest.raises(ValueError, match="typed delivered output context"):
+        _event(
+            event_type=AuditEventType.DOWNLOAD_OUTPUT_DELIVERED,
+            category=AuditCategory.USER_SUBMISSION,
+            source=TelegramSourceReference(4242, (1,)),
+            output={"source_url": "https://example.com/media", "captions": [""]},
+        )

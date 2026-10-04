@@ -87,11 +87,12 @@ _MAX_REASON_CHARACTERS = 512
 _MAX_PATH_CHARACTERS = 180
 
 
-def sanitize_url(url: str) -> str:
+def sanitize_url(url: str, *, truncate_path: bool = True) -> str:
     """Return ``scheme://hostname/path`` with secrets and tracking query parameters removed.
 
     Query parameters are dropped unless explicitly classified safe. Credentials embedded in
-    the URL are never reproduced.
+    the URL are never reproduced. Set ``truncate_path=False`` to retain the complete safe
+    source target rather than the bounded diagnostic path.
     """
     candidate = (url or "").strip()
     try:
@@ -107,7 +108,7 @@ def sanitize_url(url: str) -> str:
         for key, value in parse_qsl(parsed.query, keep_blank_values=True)
         if key.casefold() in SAFE_QUERY_PARAMETERS
     )
-    path = _truncate_path(parsed.path)
+    path = _truncate_path(parsed.path) if truncate_path else parsed.path
     rebuilt = urlunsplit((scheme, hostname, path, "", ""))
     if safe_query:
         try:

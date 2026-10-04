@@ -1322,10 +1322,15 @@ def _receipt(message: Message, method: DeliveryMethod) -> DeliveryReceipt:
     if media is None:
         raise DeliveryError("Telegram response did not contain an uploaded file")
     return DeliveryReceipt(
-        method=method,
-        message_id=message.message_id,
-        file_id=media.file_id,
-        file_unique_id=media.file_unique_id,
+        items=(
+            DeliveryItemReceipt(
+                method=method,
+                message_id=message.message_id,
+                file_id=media.file_id,
+                file_unique_id=media.file_unique_id,
+                caption=message.caption or "",
+            ),
+        ),
     )
 
 

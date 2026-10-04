@@ -118,6 +118,9 @@ class FakeUsers:
     def upsert_user(self, *_args: object, **_kwargs: object) -> None:
         return None
 
+    def get_username(self, _user_id: int) -> str | None:
+        return None
+
 
 @pytest.mark.parametrize(
     ("data", "expected_text"),
