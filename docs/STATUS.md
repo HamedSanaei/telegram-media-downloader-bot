@@ -2,6 +2,47 @@
 
 Last updated: 2026-10-07
 
+## v1.4.0-rc.8 publication and Netherlands deployment (2026-10-07)
+
+- Human-authored commit `8985c6f080593de7c9855d528452c653e9b7c26b` and annotated tag
+  `v1.4.0-rc.8` are pushed. Full CI run `37588172134` passed, including dependency audit,
+  both installer lanes, packaging, image runtime, and privileged updater integration.
+  The tagged image's runtime/SQLite/filesystem checks and reproducible archive build passed.
+- The publication action uploaded all six source/updater assets to the existing release draft,
+  but created an empty duplicate release and failed finalization with a tag-name conflict.
+  Only that empty duplicate was removed; the original human-authored release was published
+  using the authenticated release CLI. Payload checksums, uploaded digests, archive version,
+  and executable updater symlink layout were verified. The tag was not rewritten and stable
+  `v1.3.8` remains the latest stable release.
+- A fresh isolated ARQ worker using the published image completed 20 real jobs with zero
+  failures: the reported Instagram post delivered ten exact-byte Documents, a direct Highlight
+  delivered all 29 items with ordered receipts, and eighteen inspections used two maintained
+  public YouTube fixtures. Test messages, downloads, temporary files, and the isolated Redis
+  container were removed. The default minimum-20-job / maximum-2-percentage-point promotion
+  gate passed against the historical last-20-terminal-job baseline (five failures/uncertain
+  jobs). This repeated-fixture canary is not a matched production failure-rate experiment.
+  A preliminary instrumentation run stopped in an incomplete observational delivery proxy;
+  the proxy was corrected before the fresh valid canary, without changing released code.
+- The Netherlands installation was promoted from `v1.4.0-rc.6` through the existing
+  `TMB_RELEASE_TAG=v1.4.0-rc.8 tmb update` transaction. Both application containers run
+  commit `8985c6f080593de7c9855d528452c653e9b7c26b`, with image digest
+  `sha256:b307026a1eb919fc0525b6c53f8bae9067067189bf57e3a1ec16909999f3f5f5`.
+  Runtime package versions are `1.4.0-rc.8`, yt-dlp `2026.8.19`, and gallery-dl `1.32.8`.
+  Bot, worker, Local Bot API, and Redis are running with zero restarts; the three configured
+  healthchecks are healthy. The existing Redis container was preserved.
+- Post-update version/status/online-doctor commands passed. Local API status now reports
+  the managed process running, endpoint reachable, and the active migration endpoint local.
+  The rollback archive `backups/tmb-20261007T083302Z.tar.gz` verifies as an operational
+  `v1.4.0-rc.6` backup; archive and checksum modes are `0600`.
+- Configuration bytes and operator environment lines other than `TMB_IMAGE` match the backup.
+  The backup's cookie hash matches the pre-update snapshot. The live jar retains all 111
+  cookie identities and identical Instagram/YouTube rows; one SoundCloud session value
+  differs after runtime startup, so live-cookie byte identity is not claimed. No manual
+  cookie modification or stale-cookie restoration was performed.
+  The original uncertain Instagram job still has `delivery_uncertain` with zero item receipts
+  and was not reset or replayed. Two existing queued jobs remain queued; the isolated canary
+  did not enter the production queue or database.
+
 ## v1.4.0-rc.8 release preparation (2026-10-07)
 
 The next release candidate contains the Instagram document/Highlight fixes verified below and
