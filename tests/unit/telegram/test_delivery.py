@@ -22,6 +22,7 @@ from aiogram.types import (
     Message,
     MessageId,
     PhotoSize,
+    Sticker,
     Video,
 )
 
@@ -955,6 +956,91 @@ async def test_instagram_document_delivery_preserves_exact_bytes_and_format(
     assert bot.last_upload["caption"] == (
         f"caption\n\n{SOURCE_URL_LABEL} https://www.instagram.com/p/Original123/"
     )
+
+
+@pytest.mark.parametrize("count", [1, 10, 11])
+async def test_webp_document_delivery_never_becomes_a_sticker(
+    settings: Settings, tmp_path: Path, count: int
+) -> None:
+    payloads: list[bytes] = []
+    artifacts: list[DownloadArtifact] = []
+    for index in range(count):
+        payload = b"RIFF\x10\x00\x00\x00WEBP" + bytes([index]) * 16
+        path = tmp_path / f"{index + 1:04d}-image.webp"
+        path.write_bytes(payload)
+        payloads.append(payload)
+        artifacts.append(
+            DownloadArtifact(
+                path, len(payload), MediaKind.IMAGE, "image/webp", source_index=index + 1
+            )
+        )
+    result = DownloadResult(
+        JobId("webp-documents"),
+        "post",
+        "WebP carousel",
+        "instagram",
+        MediaKind.IMAGE if count == 1 else MediaKind.PLAYLIST,
+        artifacts[0].file_path,
+        sum(len(payload) for payload in payloads),
+        artifacts=tuple(artifacts),
+        image_delivery_mode=ImageDeliveryMode.DOCUMENT,
+    )
+
+    class WebpTelegramBot(FakeBot):
+        received: list[bytes]
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.received = []
+
+        async def send_media_group(self, **kwargs: object) -> list[Message]:
+            raise TelegramBadRequest(
+                method=SendMediaGroup(chat_id=1, media=cast(Any, kwargs["media"])),
+                message="Unsupported document type in album",
+            )
+
+        async def send_document(self, **kwargs: object) -> Message:
+            upload = cast(InputFile, kwargs["document"])
+            body = bytearray()
+            async for chunk in upload.read(cast(Bot, cast(Any, self))):
+                body.extend(chunk)
+            self.received.append(bytes(body))
+            if not kwargs.get("disable_content_type_detection"):
+                return Message(
+                    message_id=len(self.received),
+                    date=datetime.now(UTC),
+                    chat=Chat(id=1, type="private"),
+                    sticker=Sticker(
+                        file_id="sticker",
+                        file_unique_id="sticker-unique",
+                        type="regular",
+                        width=1440,
+                        height=1440,
+                        is_animated=False,
+                        is_video=False,
+                    ),
+                )
+            return _message("document", len(self.received))
+
+    bot = WebpTelegramBot()
+    persisted: list[int] = []
+
+    async def persist(item: object) -> None:
+        ordinal = cast(Any, item).ordinal
+        assert artifacts[ordinal - 1].file_path.exists()
+        persisted.append(ordinal)
+
+    receipt = await RoutedDeliveryGateway(cast(Bot, cast(Any, bot)), settings).deliver(
+        chat_id=1,
+        result=result,
+        caption="caption",
+        item_delivered=persist,
+    )
+
+    assert bot.received == payloads
+    assert all(item.method is DeliveryMethod.DOCUMENT for item in receipt.items)
+    assert [item.ordinal for item in receipt.items] == persisted == list(range(1, count + 1))
+    assert not any(artifact.file_path.exists() for artifact in artifacts)
 
 
 async def test_instagram_document_albums_use_documents_and_exact_ten_boundaries(

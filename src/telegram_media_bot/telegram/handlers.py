@@ -69,6 +69,7 @@ from telegram_media_bot.domain.models import (
     ErrorCategory,
     ImageDeliveryMode,
     JobId,
+    JobKind,
     JobRecord,
     JobStatus,
     MediaFormatOption,
@@ -95,6 +96,7 @@ from telegram_media_bot.telegram.texts import (
     ACCESS_DENIED_TEXT,
     CANCELLED_TEXT,
     CANNOT_CANCEL_TEXT,
+    DELIVERY_UNCERTAIN_TEXT,
     HIGHLIGHT_TRAY_QUEUED_TEXT,
     INSPECTION_ACTIVE_TEXT,
     INSPECTION_QUEUED_TEXT,
@@ -973,8 +975,16 @@ def build_router(
         parts = callback.data.split(":", maxsplit=3)
         try:
             await access_policy.authorize_request(callback.from_user.id, consume_rate_limit=False)
-            if len(parts) == 3 and parts[1] == "open":
-                username = parts[2]
+            if len(parts) == 3 and parts[2] == "open":
+                selection = await asyncio.to_thread(
+                    repository.get_selection,
+                    SelectionToken(parts[1]),
+                    callback.from_user.id,
+                )
+                source = canonicalize_media_url(selection.media.webpage_url)
+                if source.instagram_kind != "avatar":
+                    raise SelectionOwnershipError("Highlight browser was not offered")
+                username = urlsplit(source.canonical_url).path.strip("/").split("/")[0]
                 _validate_instagram_username(username)
                 record, created = await asyncio.to_thread(
                     jobs.create_highlight_tray,
@@ -988,7 +998,7 @@ def build_router(
                 if isinstance(callback.message, Message):
                     await callback.message.edit_text(
                         HIGHLIGHT_TRAY_QUEUED_TEXT,
-                        reply_markup=None,
+                        reply_markup=cancellation_keyboard(record.job_id),
                     )
                     await asyncio.to_thread(
                         repository.set_status_message, record.job_id, callback.message.message_id
@@ -1003,9 +1013,12 @@ def build_router(
                     )
                 await callback.answer("در حال دریافت فهرست هایلایت‌ها…")  # noqa: RUF001
                 return
-            if len(parts) != 4 or parts[0] != "h2":
+            if len(parts) not in {3, 4} or parts[0] != "h2":
                 raise SelectionOwnershipError("Invalid highlight callback")
-            token, action, payload = parts[1], parts[2], parts[3]
+            token, action = parts[1], parts[2]
+            if (action == "close" and len(parts) != 3) or (action != "close" and len(parts) != 4):
+                raise SelectionOwnershipError("Invalid highlight callback")
+            payload = parts[3] if len(parts) == 4 else ""
             tray = await asyncio.to_thread(
                 repository.get_highlight_tray,
                 SelectionToken(token),
@@ -1036,6 +1049,9 @@ def build_router(
                 url=f"https://www.instagram.com/stories/highlights/{payload}/",
                 mode=DownloadMode.INSTAGRAM_HIGHLIGHT,
             )
+            if record.status is JobStatus.DELIVERY_UNCERTAIN:
+                await callback.answer(DELIVERY_UNCERTAIN_TEXT, show_alert=True)
+                return
             if isinstance(callback.message, Message):
                 await callback.message.edit_text(
                     QUEUED_TEXT.format(job_id=record.job_id),
@@ -1177,12 +1193,31 @@ def build_router(
         intent = canonicalize_media_url(validated)
         if intent.youtube_video_id is not None:
             await logger.ainfo("youtube_url_canonicalized", **intent.log_fields)
-        record, created = await asyncio.to_thread(
-            jobs.create_inspection,
-            chat_id=message.chat.id,
-            user_id=message.from_user.id,
-            url=intent.canonical_url,
-        )
+        if intent.instagram_kind == "highlight_tray":
+            username = urlsplit(intent.canonical_url).path.strip("/").split("/")[0]
+            record, created = await asyncio.to_thread(
+                jobs.create_highlight_tray,
+                chat_id=message.chat.id,
+                user_id=message.from_user.id,
+                url=intent.canonical_url,
+                username=username,
+            )
+        elif intent.instagram_kind == "highlight":
+            record, created = await asyncio.to_thread(
+                jobs.create_download,
+                chat_id=message.chat.id,
+                user_id=message.from_user.id,
+                url=intent.canonical_url,
+                mode=DownloadMode.INSTAGRAM_HIGHLIGHT,
+            )
+        else:
+            record, created = await asyncio.to_thread(
+                jobs.create_inspection,
+                chat_id=message.chat.id,
+                user_id=message.from_user.id,
+                # Preserve the profile action before canonicalization rewrites it to avatar.
+                url=validated if intent.instagram_kind == "profile" else intent.canonical_url,
+            )
         if submission_audit is not None:
             try:
                 source = await asyncio.to_thread(
@@ -1254,14 +1289,38 @@ def build_router(
             )
             return outcome.message_id
 
-        if not created:
-            try:
+        async def enqueue_accepted_job() -> None:
+            if record.kind is JobKind.HIGHLIGHT_TRAY:
+                await queue.enqueue_highlight_tray(
+                    job_id=record.job_id,
+                    chat_id=record.chat_id,
+                    user_id=record.user_id,
+                    url=record.url,
+                    username=urlsplit(record.url).path.strip("/").split("/")[0],
+                )
+            elif record.kind is JobKind.DOWNLOAD:
+                await queue.enqueue_download(
+                    job_id=record.job_id,
+                    chat_id=record.chat_id,
+                    user_id=record.user_id,
+                    url=record.url,
+                    mode=DownloadMode.INSTAGRAM_HIGHLIGHT,
+                )
+            else:
                 await queue.enqueue_inspection(
                     job_id=record.job_id,
                     chat_id=record.chat_id,
                     user_id=record.user_id,
                     url=record.url,
                 )
+
+        if record.status is JobStatus.DELIVERY_UNCERTAIN:
+            await message.answer(DELIVERY_UNCERTAIN_TEXT, reply_markup=admin_markup)
+            return True
+
+        if not created:
+            try:
+                await enqueue_accepted_job()
             except Exception as exc:
                 await message.answer(
                     SERVICE_UNAVAILABLE_TEXT,
@@ -1275,7 +1334,12 @@ def build_router(
                 )
                 return True
             status_message_id = await send_inspection_status(
-                INSPECTION_ACTIVE_TEXT, reply_markup=admin_markup
+                INSPECTION_ACTIVE_TEXT,
+                reply_markup=(
+                    admin_markup
+                    if record.kind is JobKind.INSPECTION
+                    else cancellation_keyboard(record.job_id)
+                ),
             )
             if status_message_id is not None:
                 await asyncio.to_thread(
@@ -1289,7 +1353,16 @@ def build_router(
             )
             return True
         status_message_id = await send_inspection_status(
-            INSPECTION_QUEUED_TEXT.format(job_id=record.job_id)
+            (
+                HIGHLIGHT_TRAY_QUEUED_TEXT
+                if record.kind is JobKind.HIGHLIGHT_TRAY
+                else QUEUED_TEXT.format(job_id=record.job_id)
+                if record.kind is JobKind.DOWNLOAD
+                else INSPECTION_QUEUED_TEXT.format(job_id=record.job_id)
+            ),
+            reply_markup=(
+                None if record.kind is JobKind.INSPECTION else cancellation_keyboard(record.job_id)
+            ),
         )
         if status_message_id is not None:
             await asyncio.to_thread(repository.set_status_message, record.job_id, status_message_id)
@@ -1301,12 +1374,7 @@ def build_router(
             datetime.now(UTC).date(),
         )
         try:
-            await queue.enqueue_inspection(
-                job_id=record.job_id,
-                chat_id=record.chat_id,
-                user_id=record.user_id,
-                url=record.url,
-            )
+            await enqueue_accepted_job()
         except Exception as exc:
             await asyncio.to_thread(
                 repository.transition,

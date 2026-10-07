@@ -342,7 +342,7 @@ async def process_inspection_job(
             await asyncio.to_thread(repository.save_selection, selection)
             highlights_username = (
                 _instagram_username_from_url(info.webpage_url)
-                if record.url_classification == "profile"
+                if record.url_classification in {"profile", "avatar"}
                 else None
             )
             status_message_id = await _edit_or_send_inspection_message(
@@ -615,14 +615,26 @@ async def process_highlight_tray_job(
         if repository.is_cancel_requested(job_id):
             raise JobCancelledError("Highlight tray fetch was cancelled")
         repository.transition(job_id, JobStatus.RUNNING, attempt=attempt)
+        _gate_collection_cookies(ctx, DownloadMode.INSTAGRAM_HIGHLIGHT)
         fetch = getattr(engine, "fetch_highlight_tray", None)
         if not callable(fetch):
             raise RuntimeError("Gallery highlight tray fetch is unavailable")
-        highlights = await asyncio.to_thread(
-            fetch,
-            username,
-            max_highlights=settings.media.instagram.max_highlight_items,
-        )
+        operator_credential = cast(ResolvedCredential | None, ctx.get("credential_context"))
+        if operator_credential is None:
+            highlights = await asyncio.to_thread(
+                fetch,
+                username,
+                max_highlights=settings.media.instagram.max_highlight_items,
+            )
+        else:
+            highlights = await asyncio.to_thread(
+                fetch,
+                username,
+                max_highlights=settings.media.instagram.max_highlight_items,
+                credential=operator_credential,
+            )
+        if await asyncio.to_thread(repository.is_cancel_requested, job_id):
+            raise JobCancelledError("Highlight tray fetch was cancelled")
         if not highlights:
             raise MediaUnavailableError("Instagram account has no highlights")
         now = datetime.now(UTC)

@@ -364,6 +364,8 @@ class GalleryDlEngine:
         username: str,
         *,
         max_highlights: int = 100,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
     ) -> tuple[HighlightItem, ...]:
         """Fetch one Instagram account's highlight tray (authenticated, no media download)."""
         if not self._settings.gallery_dl.enabled:
@@ -371,7 +373,9 @@ class GalleryDlEngine:
         if "instagram" not in self._settings.gallery_dl.enabled_platforms:
             raise GalleryDlUnsupportedUrlError("Instagram is disabled")
         url = f"https://www.instagram.com/{username}/highlights/"
-        args = self._commands.inspect_url("instagram", url)
+        args = self._commands.inspect_url(
+            "instagram", url, credential=credential, cookie_file=cookie_file
+        )
         with self._process_slot():
             result = self._runner.run(
                 args, timeout_seconds=self._settings.gallery_dl.timeout_seconds
@@ -379,7 +383,7 @@ class GalleryDlEngine:
         if result.return_code != 0:
             self._raise_process_failure(result, provider="instagram")
         if _empty_gallery_events(result.stdout):
-            raise GalleryDlOutputChangedError("gallery-dl emitted no highlight tray events")
+            self._raise_empty_inspection(result, provider="instagram", canonical=url)
         return parse_highlight_tray(
             result.stdout,
             expected_provider="instagram",

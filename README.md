@@ -29,6 +29,20 @@ application commands.
 - Persists durable job state in SQLite/WAL with Redis for queueing, and cleans every job directory.
 - Supports Cloud Bot API and an opt-in Local Bot API mode (files up to 1900 MB).
 
+### Download Instagram Highlights
+
+Send `https://www.instagram.com/stories/highlights/HIGHLIGHT_ID/` to download every
+photo and video in that one highlight, in source order, with a cancellation button.
+Send `https://www.instagram.com/USERNAME/highlights/` to browse that account's highlights;
+choose a title from the paginated list to download only that highlight. You can also send
+the account's profile URL and choose **⭐ هایلایت‌ها** from its profile-picture menu.
+Highlight menus expire and can be used only by the requesting Telegram user.
+
+Instagram requires valid cookies for Stories/Highlights; authentication or visibility
+failures are reported rather than bypassed. Private content additionally requires the
+installation's VIP/private-media policy and a connected account that already has access.
+A plain profile URL downloads only its profile picture, never the account's post history.
+
 ## Requirements
 
 - A Linux server (x86_64 or aarch64). Windows is supported via `install.ps1` + `tmb.ps1`.

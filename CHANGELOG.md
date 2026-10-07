@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v1.4.0-rc.8 - 2026-10-07
+
+### Fixed
+
+- Preserve original WebP images sent as files: disable Telegram document content-type
+  detection so individual sends and rejected-album fallback produce document receipts
+  instead of stickers. Existing uncertain deliveries remain quarantined, not silently retried.
+- Route direct Instagram Highlight links into bounded downloads and `/USERNAME/highlights/`
+  into the Highlight browser. Restore profile/avatar browser entry, validate gallery-dl 1.32.8
+  tray IDs/titles, bind callbacks to the owning selection, propagate request credentials,
+  and stop cancelled tray fetches before publication.
+- Update the frozen yt-dlp lock from `2026.7.4` to `2026.8.19`; keep gallery-dl,
+  yt-dlp-ejs, the supported yt-dlp minimum, and Python requirements unchanged.
+- Resolve the existing dependency-audit release blocker with patched multidict `6.9.1`,
+  PyJWT `2.15.1`, urllib3 `2.8.0`, and virtualenv `21.14.5`. The required development
+  transitives advance to python-discovery `1.6.1` and pip `26.2.1`; audit policy is unchanged.
+
 ### Fixed (targeting v1.4.0-rc.7)
 
 - `tmb local-api status` now reads runtime reachability and migration state

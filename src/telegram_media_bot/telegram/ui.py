@@ -273,7 +273,7 @@ def instagram_image_delivery_keyboard(
             [
                 InlineKeyboardButton(
                     text="⭐ هایلایت‌ها",  # noqa: RUF001
-                    callback_data=f"h2:open:{highlights_username}",
+                    callback_data=f"h2:{selection.token}:open",
                 )
             ]
         )

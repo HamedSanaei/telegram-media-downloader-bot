@@ -205,4 +205,4 @@ def test_instagram_user_highlights_tray_url_stays_distinct() -> None:
     intent = canonicalize_media_url("https://www.instagram.com/exampleuser/highlights/?igsh=share")
 
     assert intent.canonical_url == "https://www.instagram.com/exampleuser/highlights/"
-    assert intent.instagram_kind == "unsupported"
+    assert intent.instagram_kind == "highlight_tray"

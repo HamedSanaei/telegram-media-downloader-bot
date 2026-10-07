@@ -763,3 +763,45 @@ async def test_highlight_tray_empty_is_unavailable(settings: Settings, tmp_path:
     persisted = repository.get_job(tray_record.job_id)
     assert persisted is not None and persisted.status is JobStatus.FAILED
     assert persisted.error_category is ErrorCategory.MEDIA_UNAVAILABLE
+
+
+async def test_highlight_tray_cancelled_during_fetch_never_publishes(
+    settings: Settings, tmp_path: Path
+) -> None:
+    configured = _settings(settings, tmp_path)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    record, _ = JobService(repository).create_highlight_tray(
+        chat_id=10,
+        user_id=20,
+        url="https://www.instagram.com/exampleuser/highlights/",
+        username="exampleuser",
+    )
+    repository.set_status_message(record.job_id, 30)
+    bot = FakeBot()
+
+    class CancelDuringFetch(TrayFakeEngine):
+        def fetch_highlight_tray(
+            self, username: str, **kwargs: object
+        ) -> tuple[HighlightItem, ...]:
+            repository.request_cancel(record.job_id, record.user_id)
+            return (HighlightItem("111", "Trip", 2),)
+
+    context: dict[str, Any] = {
+        "settings": configured,
+        "repository": repository,
+        "gallery_engine": CancelDuringFetch(),
+        "bot": bot,
+        "delivery": BatchDelivery(),
+        "metrics": MetricsRegistry(),
+        "job_id": str(record.job_id),
+        "job_try": 1,
+    }
+    await process_highlight_tray_job(
+        context, chat_id=10, user_id=20, url=record.url, username="exampleuser"
+    )
+
+    persisted = repository.get_job(record.job_id)
+    assert persisted is not None and persisted.status is JobStatus.CANCELLED
+    assert bot.messages == bot.edits == []

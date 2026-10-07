@@ -441,6 +441,8 @@ class TelegramDeliveryGateway(DeliveryGateway):
             chat_id=chat_id,
             document=upload,
             caption=caption,
+            # Preserve files such as WebP as documents rather than Telegram stickers.
+            disable_content_type_detection=True,
             request_timeout=request_timeout,
         )
 

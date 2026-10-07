@@ -28,6 +28,7 @@ _INSTAGRAM_STORY_PATTERN = re.compile(
 )
 _INSTAGRAM_STORY_ACCOUNT_PATTERN = re.compile(r"^/stories/(?P<username>[A-Za-z0-9_.]+)/?$")
 _INSTAGRAM_HIGHLIGHT_PATTERN = re.compile(r"^/stories/highlights/(?P<highlight_id>[0-9]+)/?$")
+_INSTAGRAM_HIGHLIGHT_TRAY_PATTERN = re.compile(r"^/(?P<username>[A-Za-z0-9_.]+)/highlights/?$")
 _PLAYLIST_QUERY_PARAMETERS = frozenset(
     {
         "list",
@@ -53,8 +54,8 @@ class MediaUrlIntent:
     single_video_forced: bool = False
     youtube_playlist: bool = False
     removed_query_parameters: tuple[str, ...] = ()
-    #: Explicit Instagram URL class per the routing contract: post, reel, story, story_account,
-    #: profile, avatar, or highlight. A plain profile canonicalizes to its avatar target.
+    #: Explicit Instagram URL class: post, reel, story, story_account, profile, avatar,
+    #: highlight, or highlight_tray. A plain profile canonicalizes to its avatar target.
     instagram_kind: str | None = None
 
     @property
@@ -149,6 +150,15 @@ def _canonicalize_instagram(path: str, query: list[tuple[str, str]]) -> MediaUrl
       gallery adapter.
     """
     removed = tuple(dict.fromkeys(key.casefold() for key, _value in query))
+    tray = _INSTAGRAM_HIGHLIGHT_TRAY_PATTERN.fullmatch(path)
+    if tray is not None:
+        canonical = f"https://www.instagram.com/{tray.group('username')}/highlights/"
+        return MediaUrlIntent(
+            original_url=canonical,
+            canonical_url=canonical,
+            removed_query_parameters=removed,
+            instagram_kind="highlight_tray",
+        )
     if _INSTAGRAM_HIGHLIGHT_PATTERN.fullmatch(path) is not None:
         canonical = f"https://www.instagram.com{path.rstrip('/')}/"
         return MediaUrlIntent(

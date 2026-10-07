@@ -1,0 +1,5 @@
+[2,{"category":"instagram","subcategory":"highlights","post_id":"222","post_shortcode":"DO","post_url":"https://www.instagram.com/stories/highlights/222/","highlight_title":"سفر","type":"highlight","count":2,"username":"exampleuser"}]
+[3,"https://cdn.example.invalid/highlights/222/1.jpg",{"category":"instagram","subcategory":"highlights","post_id":"222","highlight_title":"سفر","type":"highlight","count":2,"media_id":"9001","num":1,"extension":"jpg"}]
+[3,"ytdl:https://www.instagram.com/stories/highlights/222/2.mp4",{"category":"instagram","subcategory":"highlights","post_id":"222","highlight_title":"سفر","type":"highlight","count":2,"media_id":"9002","num":2,"extension":"mp4"}]
+[2,{"category":"instagram","subcategory":"highlights","post_id":"111","post_shortcode":"Bv","post_url":"https://www.instagram.com/stories/highlights/111/","highlight_title":"زندگی","type":"highlight","count":1,"username":"exampleuser"}]
+[3,"https://cdn.example.invalid/highlights/111/1.jpg",{"category":"instagram","subcategory":"highlights","post_id":"111","highlight_title":"زندگی","type":"highlight","count":1,"media_id":"8001","num":1,"extension":"jpg"}]

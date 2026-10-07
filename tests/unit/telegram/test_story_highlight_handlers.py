@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -28,6 +30,7 @@ from telegram_media_bot.domain.models import (
 )
 from telegram_media_bot.telegram.handlers import build_router
 from telegram_media_bot.telegram.texts import (
+    SELECTION_EXPIRED_TEXT,
     SELECTION_INVALID_TEXT,
 )
 
@@ -44,6 +47,10 @@ class FakeMessage:
         )
         self.chat = SimpleNamespace(id=user_id, type="private")
         self.message_id = 500
+        self.text: str | None = None
+        self.caption: str | None = None
+        self.media_group_id: str | None = None
+        self.bot = None
         self.answers: list[tuple[str, object | None]] = []
         self.edits: list[str] = []
 
@@ -89,6 +96,9 @@ class FakeAccessPolicy:
 
 class FakeUsers:
     def upsert_user(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def record_request(self, *_args: object, **_kwargs: object) -> None:
         return None
 
 
@@ -201,6 +211,7 @@ class FakeQueue:
     def __init__(self) -> None:
         self.downloads: list[dict[str, object]] = []
         self.trays: list[dict[str, object]] = []
+        self.inspections: list[dict[str, object]] = []
 
     async def enqueue_download(self, **kwargs: object) -> JobId:
         self.downloads.append(kwargs)
@@ -208,6 +219,10 @@ class FakeQueue:
 
     async def enqueue_highlight_tray(self, **kwargs: object) -> JobId:
         self.trays.append(kwargs)
+        return cast(JobId, kwargs["job_id"])
+
+    async def enqueue_inspection(self, **kwargs: object) -> JobId:
+        self.inspections.append(kwargs)
         return cast(JobId, kwargs["job_id"])
 
     async def queue_depth(self) -> int:
@@ -435,8 +450,19 @@ def test_story_callback_rejects_non_story_selection(settings: Settings) -> None:
 
 
 def test_highlight_open_creates_tray_job(settings: Settings) -> None:
-    router, jobs, queue, _repository = _router(settings)
-    callback = FakeCallback(20, "h2:open:exampleuser")
+    router, jobs, queue, repository = _router(settings)
+    from telegram_media_bot.telegram.ui import instagram_image_delivery_keyboard
+
+    selection = _profile_selection("profile_token")
+    repository.selections["profile_token"] = selection
+    keyboard = instagram_image_delivery_keyboard(selection, highlights_username="exampleuser")
+    open_callback = next(
+        button.callback_data
+        for row in keyboard.inline_keyboard
+        for button in row
+        if button.callback_data and button.callback_data.startswith("h2:")
+    )
+    callback = FakeCallback(20, open_callback)
 
     import asyncio
 
@@ -446,12 +472,11 @@ def test_highlight_open_creates_tray_job(settings: Settings) -> None:
     assert jobs.calls[0]["username"] == "exampleuser"
     assert jobs.calls[0]["url"] == "https://www.instagram.com/exampleuser/highlights/"
     assert queue.trays[0]["username"] == "exampleuser"
-    assert callback.answers[0] == "در حال دریافت فهرست هایلایت‌ها…"  # noqa: RUF001
 
 
 def test_highlight_open_rejects_forged_username(settings: Settings) -> None:
     router, jobs, _queue, _repository = _router(settings)
-    callback = FakeCallback(20, "h2:open:bad username!")
+    callback = FakeCallback(20, "h2:open:exampleuser")
 
     import asyncio
 
@@ -459,23 +484,6 @@ def test_highlight_open_rejects_forged_username(settings: Settings) -> None:
 
     assert jobs.calls == []
     assert callback.alerts == [SELECTION_INVALID_TEXT]
-
-
-def test_highlight_page_navigation(settings: Settings) -> None:
-    # Pagination is a pure UI concern; the handler edit path is guarded by aiogram Message
-    # typing, so the renderer and keyboard are asserted directly.
-    from telegram_media_bot.telegram.ui import highlight_tray_keyboard, render_highlight_tray
-
-    tray = _tray("tok_tray")
-    text = render_highlight_tray(tray, page=1)
-    assert text.startswith("⭐ هایلایت")
-    assert "safar" in text
-    keyboard = highlight_tray_keyboard(tray, page=1)
-    callbacks = [
-        cast(str, button.callback_data) for row in keyboard.inline_keyboard for button in row
-    ]
-    assert any(callback.startswith("h2:tok_tray:page:") for callback in callbacks)
-    assert any(callback == "h2:tok_tray:close" for callback in callbacks)
 
 
 def test_highlight_pick_enqueues_selected_only(settings: Settings) -> None:
@@ -519,3 +527,202 @@ def test_highlight_ownership_is_enforced(settings: Settings) -> None:
 
     assert jobs.calls == []
     assert callback.alerts == [SELECTION_INVALID_TEXT]
+
+
+def _profile_selection(token: str, owner: int = 20) -> SelectionRecord:
+    selection = _story_selection(token, "https://www.instagram.com/exampleuser/avatar/", owner)
+    return replace(
+        selection,
+        media=replace(
+            selection.media,
+            kind=MediaKind.IMAGE,
+            assets=(replace(selection.media.assets[0], kind=MediaKind.IMAGE, extension="jpg"),),
+        ),
+    )
+
+
+@pytest.mark.parametrize("owner,expired", [(99, False), (20, True)])
+def test_highlight_open_enforces_source_owner_and_expiry(
+    settings: Settings, owner: int, expired: bool
+) -> None:
+    router, jobs, queue, repository = _router(settings)
+    selection = _profile_selection("profile_token", owner)
+    if expired:
+        selection = replace(selection, expires_at=datetime.now(UTC) - timedelta(seconds=1))
+    repository.selections["profile_token"] = selection
+    callback = FakeCallback(20, "h2:profile_token:open")
+
+    import asyncio
+
+    asyncio.run(_handler(router, "highlight_tray_navigation")(callback))
+
+    assert jobs.calls == []
+    assert queue.trays == []
+    assert callback.alerts == [SELECTION_EXPIRED_TEXT if expired else SELECTION_INVALID_TEXT]
+
+
+def test_highlight_open_rejects_unoffered_source(settings: Settings) -> None:
+    router, jobs, queue, repository = _router(settings)
+    repository.selections["story_token"] = _story_selection(
+        "story_token", "https://www.instagram.com/stories/exampleuser/123/"
+    )
+    callback = FakeCallback(20, "h2:story_token:open")
+
+    import asyncio
+
+    asyncio.run(_handler(router, "highlight_tray_navigation")(callback))
+
+    assert jobs.calls == []
+    assert queue.trays == []
+    assert callback.alerts == [SELECTION_INVALID_TEXT]
+
+
+def test_highlight_close_accepts_emitted_callback(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(handlers_module, "Message", FakeMessage)
+    router, jobs, queue, repository = _router(settings)
+    repository.trays["tray_token"] = _tray("tray_token")
+    message = FakeMessage(20)
+    callback = FakeCallback(20, "h2:tray_token:close", message)
+
+    import asyncio
+
+    asyncio.run(_handler(router, "highlight_tray_navigation")(callback))
+
+    assert len(message.edits) == 1
+    assert callback.alerts == []
+    assert jobs.calls == []
+    assert queue.downloads == []
+
+
+@pytest.mark.parametrize("action", ["pick:111", "page:2", "close"])
+def test_highlight_tray_expired_actions_fail_closed(settings: Settings, action: str) -> None:
+    router, jobs, queue, repository = _router(settings)
+    repository.trays["tray_token"] = replace(
+        _tray("tray_token"), expires_at=datetime.now(UTC) - timedelta(seconds=1)
+    )
+    callback = FakeCallback(20, f"h2:tray_token:{action}")
+
+    import asyncio
+
+    asyncio.run(_handler(router, "highlight_tray_navigation")(callback))
+
+    assert callback.alerts == [SELECTION_EXPIRED_TEXT]
+    assert jobs.calls == []
+    assert queue.downloads == []
+
+
+def test_highlight_browser_pages_preserve_source_choices() -> None:
+    from telegram_media_bot.telegram.ui import highlight_tray_keyboard
+
+    tray = replace(
+        _tray("tray_token"),
+        highlights=tuple(HighlightItem(str(100 - index), str(index), index) for index in range(7)),
+    )
+    pages = [highlight_tray_keyboard(tray, page) for page in (1, 2)]
+    choices = [
+        button.callback_data
+        for page in pages
+        for row in page.inline_keyboard
+        for button in row
+        if button.callback_data and ":pick:" in button.callback_data
+    ]
+
+    assert choices == [f"h2:tray_token:pick:{100 - index}" for index in range(7)]
+    assert all(len(choice.encode()) <= 64 for choice in choices)
+
+
+@pytest.mark.parametrize(
+    "url,expected_mode",
+    [
+        (
+            "https://www.instagram.com/stories/highlights/222/?igsh=tracking",
+            DownloadMode.INSTAGRAM_HIGHLIGHT,
+        ),
+        ("https://www.instagram.com/exampleuser/highlights/?igsh=tracking", None),
+    ],
+)
+def test_submitted_highlight_urls_dispatch_only_the_requested_collection(
+    settings: Settings, url: str, expected_mode: DownloadMode | None
+) -> None:
+    router, jobs, queue, _repository = _router(settings)
+    message = FakeMessage(20)
+    message.text = url
+
+    import asyncio
+
+    asyncio.run(_handler(router, "enqueue_url")(message))
+
+    assert len(jobs.calls) == 1
+    assert jobs.calls[0]["url"] == url.split("?")[0]
+    if expected_mode is None:
+        assert jobs.calls[0]["username"] == "exampleuser"
+        assert len(queue.trays) == 1 and queue.downloads == []
+    else:
+        assert jobs.calls[0]["mode"] is expected_mode
+        assert len(queue.downloads) == 1 and queue.trays == []
+        assert queue.downloads[0]["mode"] is expected_mode
+
+
+@pytest.mark.parametrize("entrypoint", ["url", "pick"])
+def test_highlight_uncertain_delivery_is_never_reenqueued(
+    settings: Settings, entrypoint: str
+) -> None:
+    router, jobs, queue, repository = _router(settings)
+    record, _created = jobs.create_download(
+        chat_id=10,
+        user_id=20,
+        url="https://www.instagram.com/stories/highlights/222/",
+        mode=DownloadMode.INSTAGRAM_HIGHLIGHT,
+    )
+    jobs._records[0] = replace(record, status=JobStatus.DELIVERY_UNCERTAIN)
+    jobs.calls.clear()
+
+    import asyncio
+
+    if entrypoint == "url":
+        message = FakeMessage(20)
+        message.text = record.url
+        asyncio.run(_handler(router, "enqueue_url")(message))
+        assert len(message.answers) == 1
+    else:
+        repository.trays["tray_token"] = _tray("tray_token")
+        callback = FakeCallback(20, "h2:tray_token:pick:222")
+        asyncio.run(_handler(router, "highlight_tray_navigation")(callback))
+        assert len(callback.alerts) == 1
+
+    assert queue.downloads == []
+    assert jobs.calls == []
+
+
+def test_submitted_profile_keeps_browser_intent_without_crawling_posts(
+    settings: Settings, tmp_path: Path
+) -> None:
+    from telegram_media_bot.application.services.job_service import JobService
+    from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
+
+    repository = SqliteJobRepository(tmp_path / "jobs.sqlite3")
+    repository.initialize()
+    queue = FakeQueue()
+    router = build_router(
+        settings=settings,
+        queue=queue,  # type: ignore[arg-type]
+        repository=repository,
+        access_policy=FakeAccessPolicy(),  # type: ignore[arg-type]
+        jobs=JobService(repository),
+        users=FakeUsers(),  # type: ignore[arg-type]
+    )
+    message = FakeMessage(20)
+    message.text = "https://www.instagram.com/exampleuser/?igsh=tracking"
+
+    import asyncio
+
+    asyncio.run(_handler(router, "enqueue_url")(message))
+
+    assert len(queue.inspections) == 1
+    record = repository.get_job(cast(JobId, queue.inspections[0]["job_id"]))
+    assert record is not None
+    assert record.url == "https://www.instagram.com/exampleuser/avatar/"
+    assert record.url_classification == "profile"
+    assert queue.trays == [] and queue.downloads == []

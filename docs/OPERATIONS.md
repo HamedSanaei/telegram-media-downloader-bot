@@ -381,12 +381,25 @@ are stripped:
 | `/stories/USERNAME/` | Story account | Rejected as bulk; one exact story media id is required |
 | `/USERNAME/` | Profile | Treated as a profile-avatar action; canonicalizes to `/USERNAME/avatar/`; never downloads the post history |
 | `/USERNAME/avatar/` | Avatar | Gallery-dl avatar extractor; original JPEG delivered as photo or file/document |
-| `/stories/highlights/ID/` | Highlight | Gallery-dl highlight extractor (existing) |
+| `/stories/highlights/ID/` | Highlight | Queues a bounded `instagram_highlight` download, preserving source order and the existing batch receipts/cancellation policy |
+| `/USERNAME/highlights/` | Highlight tray | Queues profile-tray discovery and presents owner-bound Highlight choices; a profile/avatar Photo/File keyboard can open the same browser |
 
 Cookies are required for private profiles and for most Stories; expired or login-required access
 surfaces the dedicated authentication category, while an expired/deleted Story surfaces the
 unavailable category. The canonical combined cookie file at `yt_dlp.cookies_file` is the single
 source for all Instagram access.
+
+Highlights require the configured Instagram cookies and obey `max_highlight_items`; they do
+not enable private-account access outside the installation's existing policy. A successful-empty
+profile tray is `media_unavailable`, not evidence of expired cookies. Instagram returned empty
+trays for the public profiles used in the 2026-10-07 live verification even when an owner's direct
+Highlight was accessible. Use an actual `/stories/highlights/ID/` link when available; do not
+silently switch authentication contexts or run automatic alternate-API probes.
+
+For original images delivered as File/Document, document sends disable Telegram content-type
+detection. This prevents WebP from becoming a sticker response and preserves the original bytes.
+Existing `delivery_uncertain` jobs still require operator reconciliation before any deliberate
+retry; the delivery fix does not reset their receipts or automatically enqueue them.
 
 ## Controlled yt-dlp update
 
@@ -401,7 +414,8 @@ docker build -t telegram-media-downloader-bot:canary .
 The upgrade script records old/new versions in ignored `data/state/upgrade-reports/`, runs adapter
 tests, and runs all configured source contracts only when `RUN_CONTRACT_TESTS=1`. Contract variables
 are `CONTRACT_YOUTUBE_URL`, `CONTRACT_SOUNDCLOUD_URL`, `CONTRACT_INSTAGRAM_URL`,
-`CONTRACT_TWITTER_URL`, `CONTRACT_PINTEREST_URL`, and `CONTRACT_TIKTOK_URL`.
+`CONTRACT_INSTAGRAM_STORY_URL`, `CONTRACT_INSTAGRAM_HIGHLIGHT_URL`, `CONTRACT_TWITTER_URL`,
+`CONTRACT_PINTEREST_URL`, and `CONTRACT_TIKTOK_URL`.
 
 Deploy the candidate to a staging bot/queue with a separate config and database. Export baseline and
 canary counters as JSON with `jobs_total` and `failures_total`, then run:
@@ -413,6 +427,42 @@ canary counters as JSON with `jobs_total` and `failures_total`, then run:
 Promotion requires the configured sample and regression threshold. No dependency bot may auto-merge
 yt-dlp. For an emergency extractor breakage, use the same branch, adapter/contracts, full gates, and
 shortened but nonzero canary; document the exception in the release record.
+
+### Locked candidate: 2026.8.19
+
+The reviewed resolver update advances `yt-dlp` from `2026.7.4` to `2026.8.19`, the stable
+release reported by [PyPI](https://pypi.org/pypi/yt-dlp/json) and
+[upstream](https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19) on 2026-10-07.
+Only that package's lock entry changes; `yt-dlp-ejs` remains `0.8.0`, gallery-dl remains
+`1.32.8`, and the other locked packages remain unchanged. The existing
+`yt-dlp[default]>=2026.7.4` supported minimum is unchanged: ADR-005 makes `uv.lock` the
+production update authority, and deployment must still use `uv sync --frozen`.
+
+The release fixes logged-in Instagram extraction by using the web API host for the web
+client and recognizing root-path login redirects
+([upstream patch](https://github.com/yt-dlp/yt-dlp/commit/1f1101d0dc8a0ee316540fc938edbaca43e4977b)).
+It also updates YouTube clients/fallbacks/live fragments, TikTok extraction/formats/share
+URLs, and Twitter broadcast events. Its utility deprecations do not affect the adapter's
+current imports; no project contract migration is identified by the release review.
+PyPI declares Python `>=3.10` and the default extra still requires `yt-dlp-ejs==0.8.0`,
+so this candidate does not require a Python or JavaScript-runtime change.
+
+Resolver success is not adapter or live-extraction verification. Before promotion, run
+the adapter suite and full project gates, then the opt-in source contracts with safe
+fixtures and valid configured credentials. Include authenticated Instagram video posts
+and mixed-carousel child resolution, YouTube native-format inspection/download and
+single-video intent, TikTok direct/share URLs, and Twitter HLS. Exercise Story and
+Highlight routing through the combined gallery/yt-dlp pipeline rather than treating the
+upstream login fix as proof of those flows. Use the staging canary procedure above; its
+default gate requires at least 20 jobs and at most a two-percentage-point failure-rate
+regression. No running container or dependency self-update is part of this lock change.
+
+For `v1.4.0-rc.8` publication, the existing scheduled dependency audit also requires targeted
+security updates: multidict `6.9.1`, PyJWT `2.15.1`, urllib3 `2.8.0`, virtualenv `21.14.5`,
+python-discovery `1.6.1`, and pip `26.2.1`. These release prerequisites are separate from the
+yt-dlp-only engine resolver change above. Keep them frozen in `uv.lock`; the candidate audit must
+pass without advisory exclusions before publication and deployment.
+
 
 ## Rollback and cleanup
 

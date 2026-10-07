@@ -1,6 +1,57 @@
 # Project status
 
-Last updated: 2026-09-04
+Last updated: 2026-10-07
+
+## v1.4.0-rc.8 release preparation (2026-10-07)
+
+The next release candidate contains the Instagram document/Highlight fixes verified below and
+the frozen yt-dlp `2026.8.19` update. Package metadata, the in-code version, and the lockfile
+agree on `1.4.0-rc.8` (normalized distribution version `1.4.0rc8`).
+
+The existing scheduled CI dependency lane reported 26 vulnerability entries in multidict, PyJWT,
+urllib3, and virtualenv. Targeted resolver upgrades select multidict `6.9.1`, PyJWT `2.15.1`,
+urllib3 `2.8.0`, virtualenv `21.14.5`, its required python-discovery `1.6.1`, and pip `26.2.1`.
+The frozen candidate audit reports no known vulnerabilities; no advisory ignore or CI gate
+relaxation was added. Full local compatibility checks passed 1,401 tests, 10 skips, and 80.69%
+coverage after these updates; CLI, native selection, and native Telegram UI smoke commands passed.
+
+The production baseline is `v1.4.0-rc.6`. Publication uses the existing tag-only GHCR/release
+workflow after the full CI gate; server promotion uses a separate canary queue/database and the
+version-pinned transactional updater, including writer-stop backup, exact service restoration,
+offline/online doctors, and rollback. The earlier isolated verification is not a production
+deployment record.
+
+## Instagram delivery, Highlights, and yt-dlp verification (2026-10-07)
+
+- The reported Instagram post downloaded all ten original WebP images, but Telegram classified
+  the first individual `sendDocument` response as a sticker. The receipt boundary correctly
+  quarantined the job as `delivery_uncertain`. Document sends now disable content-type detection;
+  they preserve the originals without accepting sticker responses as document receipts.
+  A temporary container on the Netherlands server delivered all ten files as documents and
+  verified their returned SHA-256 hashes against the originals. Test messages were deleted.
+  The existing quarantined production job was not retried or changed.
+- Direct `/stories/highlights/ID/` input now creates a bounded `instagram_highlight` download
+  instead of generic inspection. `/USERNAME/highlights/` opens the tray workflow; profile/avatar
+  keyboards open it with an owner-bound, expiring selection token rather than a username callback.
+  Tray parsing follows gallery-dl 1.32.8 `post_id`/`highlight_title` metadata, preserves source
+  order, and rejects invalid IDs and foreign-provider events. Fetches use the request credential
+  context and recheck cancellation before publishing.
+- A real worker run in the isolated server container downloaded and delivered all 29 image/video
+  items of a public direct Highlight, persisted ordered receipts 1–29, reached `succeeded`, and
+  left no download or temporary files. Test messages were deleted. Live profile-tray discovery
+  returned successful-empty output for the public accounts checked, including the direct
+  Highlight's owner; this remains `media_unavailable`, not an authentication guess or an automatic
+  alternate-API/private-account probe. Direct Highlight links remain independently usable.
+- `uv.lock` advances only `yt-dlp` from `2026.7.4` to `2026.8.19`; gallery-dl and yt-dlp-ejs are
+  unchanged. Lock/frozen-sync, Ruff, formatting, mypy, and routing-context gates passed. The
+  targeted suite passed 294 tests; the full non-contract suite passed 1,401 tests with 10 skips
+  and 80.69% coverage. The native-selection command passed with no libx264 invocation.
+  The local opt-in YouTube contracts hit Windows DNS failures; the same three contract cases
+  passed in the isolated Netherlands container with the locked candidate and configured cookies.
+  Unconfigured optional source fixtures were skipped, not treated as verified.
+- Verification used temporary candidate code and read-only production config/data mounts.
+  Running production containers and dependencies were not replaced or restarted. Promotion still
+  requires the documented source-contract/canary gate; these checks are not a production rollout.
 
 ## Release state
 
