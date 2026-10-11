@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 import structlog
 from aiogram import F, Router
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
@@ -43,14 +43,25 @@ from telegram_media_bot.application.services.native_options import (
     is_native_video_option,
     native_video_codec,
 )
+from telegram_media_bot.application.services.private_media_policy import (
+    PrivateMediaRequestAuthorization,
+    authorize_private_request,
+)
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.application.services.usage_analytics import UsageAnalyticsService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.bootstrap.payments import PaymentRuntime
+from telegram_media_bot.domain.credential_resolution import ContentAccessScope, CredentialPolicy
 from telegram_media_bot.domain.errors import (
     AccessDeniedError,
+    CredentialChallengeRequiredError,
+    CredentialExpiredError,
+    CredentialNotFoundError,
+    EntitlementBackendError,
+    EntitlementDeniedError,
     InvalidUrlError,
     MembershipRequiredError,
+    PersistenceError,
     PolicyBackendError,
     SelectionExpiredError,
     SelectionOwnershipError,
@@ -95,6 +106,9 @@ from telegram_media_bot.telegram.texts import (
     INSPECTION_ACTIVE_TEXT,
     INSPECTION_QUEUED_TEXT,
     INVALID_URL_TEXT,
+    PRIVATE_CONNECT_REQUIRED_TEXT,
+    PRIVATE_RECONNECT_REQUIRED_TEXT,
+    PRIVATE_VIP_REQUIRED_TEXT,
     QUEUED_TEXT,
     RATE_LIMIT_TEXT,
     SELECTION_EXPIRED_TEXT,
@@ -117,6 +131,21 @@ from telegram_media_bot.telegram.ui import (
     story_delivery_mode_keyboard,
 )
 from telegram_media_bot.telegram.url_extractor import extract_first_url
+from telegram_media_bot.telegram.user_menu import (
+    INSTAGRAM_CONNECT_BUTTON,
+    INSTAGRAM_DISCONNECT_BUTTON,
+    INSTAGRAM_STATUS_BUTTON,
+    PRIVATE_DOWNLOAD_BUTTON,
+    PRIVATE_DOWNLOAD_PROMPT,
+    PRIVATE_INSTAGRAM_ONLY_TEXT,
+    PUBLIC_DOWNLOAD_BUTTON,
+    PUBLIC_DOWNLOAD_PROMPT,
+    USER_MENU_BUTTON,
+    USER_REFRESH_BUTTON,
+    UserDownloadState,
+    build_user_main_keyboard,
+    private_job_fields,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -147,6 +176,50 @@ def build_router(
         reject_private_networks=settings.security.reject_private_network_urls
     )
 
+    async def authorize_continuation(
+        source_job_id: JobId | None,
+        owner: int,
+        callback: CallbackQuery,
+    ) -> tuple[bool, PrivateMediaRequestAuthorization | None]:
+        if source_job_id is None:
+            return True, None
+        try:
+            parent = await asyncio.to_thread(repository.get_job, source_job_id)
+            if parent is None or parent.user_id != owner:
+                raise SelectionOwnershipError(
+                    "Selection source is missing or belongs to another user"
+                )
+            if (
+                parent.credential_policy is not CredentialPolicy.USER_ONLY
+                and parent.content_access_scope is not ContentAccessScope.USER_RESTRICTED
+            ):
+                return True, None
+            authorization = await asyncio.to_thread(
+                authorize_private_request,
+                owner_user_id=owner,
+                entitlements=entitlements,
+                connection=connection,
+                accepted_at=datetime.now(UTC),
+            )
+            if authorization.user_credential_generation != parent.user_credential_generation:
+                await callback.answer(PRIVATE_RECONNECT_REQUIRED_TEXT, show_alert=True)
+                return False, None
+            return True, authorization
+        except EntitlementDeniedError:
+            text = PRIVATE_VIP_REQUIRED_TEXT
+        except CredentialNotFoundError:
+            text = PRIVATE_CONNECT_REQUIRED_TEXT
+        except CredentialExpiredError, CredentialChallengeRequiredError:
+            text = PRIVATE_RECONNECT_REQUIRED_TEXT
+        except EntitlementBackendError, PersistenceError:
+            text = SERVICE_UNAVAILABLE_TEXT
+        except SelectionOwnershipError:
+            text = SELECTION_INVALID_TEXT
+        await callback.answer(text, show_alert=True)
+        if isinstance(callback.message, Message):
+            await callback.message.answer(text, reply_markup=build_user_main_keyboard())
+        return False, None
+
     @router.message(CommandStart())
     async def start(message: Message, state: FSMContext) -> None:
         await state.clear()
@@ -172,7 +245,11 @@ def build_router(
             return
         await message.answer(
             START_TEXT,
-            reply_markup=build_admin_main_keyboard() if _is_admin(message, settings) else None,
+            reply_markup=(
+                build_admin_main_keyboard()
+                if _is_admin(message, settings)
+                else build_user_main_keyboard()
+            ),
         )
 
     @router.callback_query(F.data == "membership:recheck")
@@ -227,9 +304,13 @@ def build_router(
             f"Queue depth: {depth}"
         )
 
+    @router.message(F.text == INSTAGRAM_CONNECT_BUTTON)
+    @router.message(F.text == INSTAGRAM_STATUS_BUTTON)
+    @router.message(F.text == INSTAGRAM_DISCONNECT_BUTTON)
     @router.message(Command("instagram"))
-    async def instagram_command(message: Message) -> None:
+    async def instagram_command(message: Message, state: FSMContext) -> None:
         """Owner-bound Instagram connect/reconnect/disconnect/status entry point (T018)."""
+        await state.clear()
         if message.from_user is None:
             return
         owner = message.from_user.id
@@ -237,7 +318,11 @@ def build_router(
             await message.answer(render_instagram_unavailable())
             return
         parts = (message.text or "/instagram").split()[1:]
-        action = parts[0].casefold() if parts else "status"
+        action = {
+            INSTAGRAM_CONNECT_BUTTON: "connect",
+            INSTAGRAM_STATUS_BUTTON: "status",
+            INSTAGRAM_DISCONNECT_BUTTON: "disconnect",
+        }.get(message.text or "", parts[0].casefold() if parts else "status")
         try:
             if action == "connect":
                 link = await asyncio.to_thread(connection.create_connect_link, owner)
@@ -343,6 +428,11 @@ def build_router(
                 token,
                 callback.from_user.id,
             )
+            authorized, private = await authorize_continuation(
+                selection.source_job_id, callback.from_user.id, callback
+            )
+            if not authorized:
+                return
             catalog = build_native_option_catalog(selection.media)
             view = catalog.resolve(option_id)
             if view is None or view.mode not in selection.allowed_modes:
@@ -404,6 +494,7 @@ def build_router(
             container_policy=matching_option.container_policy,
             native_video_codec=native_video_codec(view.video_codec),
             selected_format_ids=view.selected_format_ids,
+            **private_job_fields(private),
         )
         if record.status is JobStatus.DELIVERY_UNCERTAIN:
             await callback.answer(
@@ -469,6 +560,11 @@ def build_router(
                 SelectionToken(raw_token),
                 callback.from_user.id,
             )
+            authorized, private = await authorize_continuation(
+                selection.source_job_id, callback.from_user.id, callback
+            )
+            if not authorized:
+                return
             if not requires_instagram_image_confirmation(selection.media):
                 raise SelectionOwnershipError("Image delivery confirmation was not offered")
             option = instagram_default_bundle_option(selection.media)
@@ -505,6 +601,7 @@ def build_router(
             mode=option.mode,
             selected_format_ids=option.selected_format_ids,
             image_delivery_mode=image_delivery_mode,
+            **private_job_fields(private),
         )
         if record.status is JobStatus.DELIVERY_UNCERTAIN:
             await callback.answer(
@@ -571,6 +668,11 @@ def build_router(
                 SelectionToken(raw_token),
                 callback.from_user.id,
             )
+            authorized, private = await authorize_continuation(
+                selection.source_job_id, callback.from_user.id, callback
+            )
+            if not authorized:
+                return
             if requires_instagram_image_confirmation(selection.media):
                 raise SelectionOwnershipError(
                     "Instagram image posts require an explicit delivery choice"
@@ -612,6 +714,7 @@ def build_router(
             url=selection.media.webpage_url,
             mode=mode,
             selected_format_ids=option.selected_format_ids,
+            **private_job_fields(private),
         )
         if record.status is JobStatus.DELIVERY_UNCERTAIN:
             await callback.answer(
@@ -676,6 +779,11 @@ def build_router(
                 token,
                 callback.from_user.id,
             )
+            authorized, _private = await authorize_continuation(
+                selection.source_job_id, callback.from_user.id, callback
+            )
+            if not authorized:
+                return
             catalog = build_native_option_catalog(selection.media)
             if not catalog.for_container(container):
                 raise SelectionOwnershipError("Container was not offered")
@@ -723,6 +831,11 @@ def build_router(
                 token,
                 callback.from_user.id,
             )
+            authorized, _private = await authorize_continuation(
+                selection.source_job_id, callback.from_user.id, callback
+            )
+            if not authorized:
+                return
         except SelectionExpiredError:
             if isinstance(callback.message, Message):
                 await callback.message.edit_text(
@@ -756,6 +869,11 @@ def build_router(
                 token,
                 callback.from_user.id,
             )
+            authorized, _private = await authorize_continuation(
+                selection.source_job_id, callback.from_user.id, callback
+            )
+            if not authorized:
+                return
         except SelectionExpiredError:
             if isinstance(callback.message, Message):
                 await callback.message.edit_text(f"{SELECTION_EXPIRED_TEXT}\n{START_TEXT}")
@@ -791,6 +909,11 @@ def build_router(
                 SelectionToken(raw_token),
                 callback.from_user.id,
             )
+            authorized, private = await authorize_continuation(
+                selection.source_job_id, callback.from_user.id, callback
+            )
+            if not authorized:
+                return
             story_url = canonicalize_media_url(selection.media.webpage_url)
             if story_url.instagram_kind != "story":
                 raise SelectionOwnershipError("Story action was not offered")
@@ -858,6 +981,7 @@ def build_router(
                 url=selection.media.webpage_url,
                 mode=option.mode,
                 selected_format_ids=option.selected_format_ids,
+                **private_job_fields(private),
             )
             if isinstance(callback.message, Message):
                 await callback.message.edit_text(
@@ -909,6 +1033,11 @@ def build_router(
                 SelectionToken(raw_token),
                 callback.from_user.id,
             )
+            authorized, private = await authorize_continuation(
+                selection.source_job_id, callback.from_user.id, callback
+            )
+            if not authorized:
+                return
             story_url = canonicalize_media_url(selection.media.webpage_url)
             if story_url.instagram_kind != "story":
                 raise SelectionOwnershipError("Story action was not offered")
@@ -922,6 +1051,7 @@ def build_router(
                 url=f"https://www.instagram.com/stories/{username}/",
                 mode=DownloadMode.INSTAGRAM_ALL_STORIES,
                 story_delivery_mode=mode,
+                **private_job_fields(private),
             )
             if isinstance(callback.message, Message):
                 await callback.message.edit_text(
@@ -972,6 +1102,11 @@ def build_router(
                     SelectionToken(parts[1]),
                     callback.from_user.id,
                 )
+                authorized, private = await authorize_continuation(
+                    selection.source_job_id, callback.from_user.id, callback
+                )
+                if not authorized:
+                    return
                 source = canonicalize_media_url(selection.media.webpage_url)
                 if source.instagram_kind != "avatar":
                     raise SelectionOwnershipError("Highlight browser was not offered")
@@ -985,6 +1120,7 @@ def build_router(
                     user_id=callback.from_user.id,
                     url=f"https://www.instagram.com/{username}/highlights/",
                     username=username,
+                    **private_job_fields(private),
                 )
                 if isinstance(callback.message, Message):
                     await callback.message.edit_text(
@@ -1015,6 +1151,11 @@ def build_router(
                 SelectionToken(token),
                 callback.from_user.id,
             )
+            authorized, private = await authorize_continuation(
+                tray.source_job_id, callback.from_user.id, callback
+            )
+            if not authorized:
+                return
             if action == "close":
                 if isinstance(callback.message, Message):
                     await callback.message.edit_text("فهرست هایلایت‌ها بسته شد.")  # noqa: RUF001
@@ -1039,6 +1180,7 @@ def build_router(
                 user_id=tray.owner_user_id,
                 url=f"https://www.instagram.com/stories/highlights/{payload}/",
                 mode=DownloadMode.INSTAGRAM_HIGHLIGHT,
+                **private_job_fields(private),
             )
             if record.status is JobStatus.DELIVERY_UNCERTAIN:
                 await callback.answer(DELIVERY_UNCERTAIN_TEXT, show_alert=True)
@@ -1100,13 +1242,16 @@ def build_router(
             )
         if isinstance(callback.message, Message) and not cancellation.already_cancelled:
             await callback.message.edit_text(CANCELLED_TEXT)
-        if (
-            isinstance(callback.message, Message)
-            and callback.from_user.id in settings.telegram.admin_ids
-        ):
+        if isinstance(callback.message, Message):
             await callback.message.answer(
-                ADMIN_MENU_TEXT,
-                reply_markup=build_admin_main_keyboard(),
+                ADMIN_MENU_TEXT
+                if callback.from_user.id in settings.telegram.admin_ids
+                else START_TEXT,
+                reply_markup=(
+                    build_admin_main_keyboard()
+                    if callback.from_user.id in settings.telegram.admin_ids
+                    else build_user_main_keyboard()
+                ),
             )
         await logger.ainfo(
             "job_cancelled",
@@ -1132,6 +1277,7 @@ def build_router(
         invalid_markup: ReplyKeyboardMarkup | None = None,
         *,
         durable_update_id: int | None = None,
+        private_mode: bool = False,
     ) -> bool:
         if message.from_user is None:
             return False
@@ -1166,6 +1312,35 @@ def build_router(
             await message.answer(INVALID_URL_TEXT, reply_markup=invalid_markup)
             return False
         intent = canonicalize_media_url(validated)
+        authorization = None
+        if private_mode:
+            if intent.instagram_kind is None:
+                await message.answer(
+                    PRIVATE_INSTAGRAM_ONLY_TEXT, reply_markup=build_user_main_keyboard()
+                )
+                return False
+            text: str | None
+            try:
+                authorization = await asyncio.to_thread(
+                    authorize_private_request,
+                    owner_user_id=message.from_user.id,
+                    entitlements=entitlements,
+                    connection=connection,
+                    accepted_at=datetime.now(UTC),
+                )
+            except EntitlementDeniedError:
+                text = PRIVATE_VIP_REQUIRED_TEXT
+            except CredentialNotFoundError:
+                text = PRIVATE_CONNECT_REQUIRED_TEXT
+            except CredentialExpiredError, CredentialChallengeRequiredError:
+                text = PRIVATE_RECONNECT_REQUIRED_TEXT
+            except EntitlementBackendError, PersistenceError:
+                text = SERVICE_UNAVAILABLE_TEXT
+            else:
+                text = None
+            if text is not None:
+                await message.answer(text, reply_markup=build_user_main_keyboard())
+                return False
         if intent.youtube_video_id is not None:
             await logger.ainfo("youtube_url_canonicalized", **intent.log_fields)
         if intent.instagram_kind == "highlight_tray":
@@ -1176,6 +1351,7 @@ def build_router(
                 user_id=message.from_user.id,
                 url=intent.canonical_url,
                 username=username,
+                **private_job_fields(authorization),
             )
         elif intent.instagram_kind == "highlight":
             record, created = await asyncio.to_thread(
@@ -1184,6 +1360,7 @@ def build_router(
                 user_id=message.from_user.id,
                 url=intent.canonical_url,
                 mode=DownloadMode.INSTAGRAM_HIGHLIGHT,
+                **private_job_fields(authorization),
             )
         else:
             record, created = await asyncio.to_thread(
@@ -1192,6 +1369,7 @@ def build_router(
                 user_id=message.from_user.id,
                 # Preserve the profile action before canonicalization rewrites it to avatar.
                 url=validated if intent.instagram_kind == "profile" else intent.canonical_url,
+                **private_job_fields(authorization),
             )
         is_admin = message.from_user.id in settings.telegram.admin_ids
         effect_key = (
@@ -1199,7 +1377,7 @@ def build_router(
             if durable_update_id is not None
             else None
         )
-        admin_markup = build_admin_main_keyboard() if is_admin else None
+        main_markup = build_admin_main_keyboard() if is_admin else build_user_main_keyboard()
 
         async def send_inspection_status(
             text: str,
@@ -1265,7 +1443,7 @@ def build_router(
                 )
 
         if record.status is JobStatus.DELIVERY_UNCERTAIN:
-            await message.answer(DELIVERY_UNCERTAIN_TEXT, reply_markup=admin_markup)
+            await message.answer(DELIVERY_UNCERTAIN_TEXT, reply_markup=main_markup)
             return True
 
         if not created:
@@ -1274,7 +1452,7 @@ def build_router(
             except Exception as exc:
                 await message.answer(
                     SERVICE_UNAVAILABLE_TEXT,
-                    reply_markup=admin_markup,
+                    reply_markup=main_markup,
                 )
                 await logger.aexception(
                     "inspection_reconcile_failed",
@@ -1286,7 +1464,7 @@ def build_router(
             status_message_id = await send_inspection_status(
                 INSPECTION_ACTIVE_TEXT,
                 reply_markup=(
-                    admin_markup
+                    None
                     if record.kind is JobKind.INSPECTION
                     else cancellation_keyboard(record.job_id)
                 ),
@@ -1295,6 +1473,9 @@ def build_router(
                 await asyncio.to_thread(
                     repository.set_status_message, record.job_id, status_message_id
                 )
+            await message.answer(
+                ADMIN_MENU_TEXT if is_admin else START_TEXT, reply_markup=main_markup
+            )
             await logger.ainfo(
                 "inspection_reconciled",
                 job_id=record.job_id,
@@ -1316,8 +1497,7 @@ def build_router(
         )
         if status_message_id is not None:
             await asyncio.to_thread(repository.set_status_message, record.job_id, status_message_id)
-        if is_admin:
-            await message.answer(ADMIN_MENU_TEXT, reply_markup=admin_markup)
+        await message.answer(ADMIN_MENU_TEXT if is_admin else START_TEXT, reply_markup=main_markup)
         await asyncio.to_thread(
             users.record_request,
             message.from_user.id,
@@ -1347,25 +1527,70 @@ def build_router(
             )
         return True
 
-    _vip_admin = None
-    if payment_runtime is not None and subscription_store is not None:
-        from telegram_media_bot.application.services.vip_admin import VipAdminService
-        from telegram_media_bot.telegram.vip_ux import build_vip_router
+    @router.message(F.text == USER_MENU_BUTTON)
+    @router.message(F.text == USER_REFRESH_BUTTON)
+    async def user_menu(message: Message, state: FSMContext) -> None:
+        await state.clear()
+        await message.answer(
+            START_TEXT,
+            reply_markup=(
+                build_admin_main_keyboard()
+                if _is_admin(message, settings)
+                else build_user_main_keyboard()
+            ),
+        )
 
-        if entitlements is not None:
-            _vip_admin = VipAdminService(
+    @router.message(F.text == PUBLIC_DOWNLOAD_BUTTON)
+    async def begin_public_download(message: Message, state: FSMContext) -> None:
+        await state.set_state(UserDownloadState.public_url)
+        await message.answer(PUBLIC_DOWNLOAD_PROMPT, reply_markup=build_user_main_keyboard())
+
+    @router.message(F.text == PRIVATE_DOWNLOAD_BUTTON)
+    async def begin_private_download(message: Message, state: FSMContext) -> None:
+        if message.from_user is None:
+            return
+        await state.clear()
+        try:
+            await asyncio.to_thread(
+                authorize_private_request,
+                owner_user_id=message.from_user.id,
                 entitlements=entitlements,
-                plans=subscription_store,
-                subscriptions=subscription_store,
-                logger=payment_runtime.logger,
-            )
-        router.include_router(
-            build_vip_router(
-                settings=settings,
-                payments=payment_runtime,
-                subscriptions=subscription_store,
                 connection=connection,
+                accepted_at=datetime.now(UTC),
             )
+        except EntitlementDeniedError:
+            text = PRIVATE_VIP_REQUIRED_TEXT
+        except CredentialNotFoundError:
+            text = PRIVATE_CONNECT_REQUIRED_TEXT
+        except CredentialExpiredError, CredentialChallengeRequiredError:
+            text = PRIVATE_RECONNECT_REQUIRED_TEXT
+        except EntitlementBackendError, PersistenceError:
+            text = SERVICE_UNAVAILABLE_TEXT
+        else:
+            await state.set_state(UserDownloadState.private_url)
+            await message.answer(PRIVATE_DOWNLOAD_PROMPT, reply_markup=build_user_main_keyboard())
+            return
+        await message.answer(text, reply_markup=build_user_main_keyboard())
+
+    _vip_admin = None
+    from telegram_media_bot.application.services.vip_admin import VipAdminService
+    from telegram_media_bot.telegram.vip_ux import build_vip_router
+
+    router.include_router(
+        build_vip_router(
+            settings=settings,
+            payments=payment_runtime,
+            subscriptions=subscription_store,
+            connection=connection,
+        )
+    )
+
+    if payment_runtime is not None and subscription_store is not None and entitlements is not None:
+        _vip_admin = VipAdminService(
+            entitlements=entitlements,
+            plans=subscription_store,
+            subscriptions=subscription_store,
+            logger=payment_runtime.logger,
         )
 
     router.include_router(
@@ -1395,6 +1620,27 @@ def build_router(
     )
 
     url_router = Router(name="url")
+
+    @url_router.message(StateFilter(UserDownloadState.private_url))
+    async def enqueue_private_url(
+        message: Message, state: FSMContext, durable_update_id: int | None = None
+    ) -> None:
+        if await submit_url(
+            message,
+            build_user_main_keyboard(),
+            durable_update_id=durable_update_id,
+            private_mode=True,
+        ):
+            await state.clear()
+
+    @url_router.message(StateFilter(UserDownloadState.public_url))
+    async def enqueue_public_url(
+        message: Message, state: FSMContext, durable_update_id: int | None = None
+    ) -> None:
+        if await submit_url(
+            message, build_user_main_keyboard(), durable_update_id=durable_update_id
+        ):
+            await state.clear()
 
     @url_router.message()
     async def enqueue_url(message: Message, durable_update_id: int | None = None) -> None:

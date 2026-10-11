@@ -1,6 +1,36 @@
 # Project status
 
-Last updated: 2026-10-08
+Last updated: 2026-10-11
+
+## Ordinary-user menu and owner-bound VIP downloads (2026-10-11)
+
+- `/start` and `/menu` separate ordinary-user and administrator keyboards; stale/forged management
+  actions are denied and restore the ordinary menu. Users can choose public download, subscription
+  type/status, Premium Downloader / VIP purchase, private VIP download, and personal Instagram
+  connect/status/disconnect. Account navigation clears pending public/private URL state.
+- The subscription dashboard works with purchasing off. Enabled configured plans and gateways drive
+  actual checkout; the runtime now registers those gateways with billing. No plan/provider creates
+  no order, and a checkout link or browser redirect creates no VIP grant.
+- Private submission, callbacks, and workers require active bot VIP at acceptance plus the owner's
+  healthy personal session. Safe owner-bound snapshots and exact generations survive automatic
+  children/retries; later callbacks reauthorize and reject expired entitlement/replaced sessions.
+  Selection/Highlight source links are additive and keep source authorization alive until expiry.
+- Public Instagram is explicitly anonymous, never borrowing the operator's private follows or a
+  user's connected account. Login-required Instagram URLs use explicit VIP personal mode; public
+  non-Instagram provider behavior is unchanged. Private failures never fall back to the operator.
+- Offline runtime smoke exercised actual aiogram dispatch, role keyboards, subscription/purchase
+  screens, Free denial with zero jobs, private selection authorization, stale-generation rejection,
+  and the composed real UniquePay adapter with offline HTTP transport: checkout pending, zero grants.
+  The real worker/service/router/vault/resolver completed an already accepted private job after
+  entitlement expiry, shared one owner session across mixed native-video/image children, removed all
+  materialized credentials, rejected queued disconnect before extraction, and selected `NONE` for
+  public Instagram despite an installed operator context. Upstream media/Telegram/HTTP transports
+  were deterministic fixtures, not live private accounts, real payments, or a deployment.
+- Verification: 240 focused regressions passed; the complete non-contract suite passed 1,652 tests,
+  with 12 platform/opt-in skips and 82.56% coverage on Python 3.14.5. Frozen lock/sync, Ruff lint/format,
+  mypy, and the agent-context guard passed. Full-suite temporary data was isolated outside the
+  repository to preserve the read-only-application inspection test's working-directory boundary.
+
 
 ## Successful-output-only logger posts (2026-10-08)
 

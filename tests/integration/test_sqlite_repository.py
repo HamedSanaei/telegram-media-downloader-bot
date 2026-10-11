@@ -18,6 +18,8 @@ from telegram_media_bot.domain.models import (
     DeliveryProvider,
     DownloadMode,
     ErrorCategory,
+    HighlightItem,
+    HighlightTrayRecord,
     ImageDeliveryMode,
     JobId,
     JobKind,
@@ -591,6 +593,104 @@ def test_legacy_idempotency_key_is_preserved_without_container(
     )
     assert not created
     assert found.job_id == existing.job_id
+
+
+@pytest.mark.parametrize("kind", ["selection", "highlight-tray"])
+def test_live_private_choice_retains_source_authorization_until_expiry(
+    repository: SqliteJobRepository, kind: str
+) -> None:
+    now = datetime.now(UTC)
+    parent = replace(
+        _job(JobId("private-source"), JobStatus.SUCCEEDED, now - timedelta(days=30)),
+        user_id=1,
+        kind=JobKind.INSPECTION,
+    )
+    repository.create_job(parent)
+    token = SelectionToken("owner-bound-choice")
+    expires = now + timedelta(minutes=5)
+    if kind == "selection":
+        repository.save_selection(
+            SelectionRecord(
+                token=token,
+                owner_user_id=1,
+                chat_id=1,
+                media=_media(),
+                allowed_modes=(DownloadMode.BEST,),
+                created_at=now,
+                expires_at=expires,
+                source_job_id=parent.job_id,
+            )
+        )
+    else:
+        repository.save_highlight_tray(
+            HighlightTrayRecord(
+                token=token,
+                owner_user_id=1,
+                chat_id=1,
+                username="fixture",
+                highlights=(HighlightItem("123", "Highlight", 1),),
+                created_at=now,
+                expires_at=expires,
+                source_job_id=parent.job_id,
+            )
+        )
+    restarted = SqliteJobRepository(repository._path)
+    restarted.initialize()
+    choice = (
+        restarted.get_selection(token, 1)
+        if kind == "selection"
+        else restarted.get_highlight_tray(token, 1)
+    )
+    assert choice.source_job_id == parent.job_id
+    restarted.purge_expired(now, job_retention_days=1)
+    assert restarted.get_job(parent.job_id) == parent
+    restarted.purge_expired(expires + timedelta(seconds=1), job_retention_days=1)
+    assert restarted.get_job(parent.job_id) is None
+
+
+def test_legacy_choices_migrate_without_losing_owner_or_expiration(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-choices.sqlite3"
+    now = datetime.now(UTC)
+    repository = SqliteJobRepository(path)
+    repository.initialize()
+    selection = SelectionRecord(
+        token=SelectionToken("legacy-selection"),
+        owner_user_id=1,
+        chat_id=1,
+        media=_media(),
+        allowed_modes=(DownloadMode.BEST,),
+        created_at=now,
+        expires_at=now + timedelta(minutes=5),
+    )
+    tray = HighlightTrayRecord(
+        token=SelectionToken("legacy-tray"),
+        owner_user_id=1,
+        chat_id=1,
+        username="fixture",
+        highlights=(HighlightItem("123", "Highlight", 1),),
+        created_at=now,
+        expires_at=now + timedelta(minutes=5),
+    )
+    repository.save_selection(selection)
+    repository.save_highlight_tray(tray)
+    with closing(sqlite3.connect(path)) as connection:
+        connection.executescript(
+            """
+            DROP INDEX selections_source_job_idx;
+            DROP INDEX highlight_trays_source_job_idx;
+            ALTER TABLE selections DROP COLUMN source_job_id;
+            ALTER TABLE highlight_trays DROP COLUMN source_job_id;
+            """
+        )
+    migrated = SqliteJobRepository(path)
+    migrated.initialize()
+    migrated.initialize()
+    assert migrated.get_selection(selection.token, 1) == selection
+    assert migrated.get_highlight_tray(tray.token, 1) == tray
+    with pytest.raises(SelectionOwnershipError):
+        migrated.get_selection(selection.token, 2)
+    with pytest.raises(SelectionOwnershipError):
+        migrated.get_highlight_tray(tray.token, 2)
 
 
 def _media() -> MediaInfo:

@@ -7,7 +7,7 @@ import threading
 from collections.abc import Callable
 from contextlib import closing
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -25,9 +25,12 @@ from telegram_media_bot.application.services.cookie_health_service import (
     CookieHealthAlert,
     CookieHealthService,
 )
+from telegram_media_bot.application.services.credential_resolution import CredentialResolver
+from telegram_media_bot.application.services.credential_vault import CredentialVault
 from telegram_media_bot.application.services.delivery_output_audit import (
     DeliveredOutputAuditService,
 )
+from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.audit import (
@@ -43,15 +46,22 @@ from telegram_media_bot.domain.cookie_health import (
     StaticCookieCheck,
 )
 from telegram_media_bot.domain.cookies import CookieService
-from telegram_media_bot.domain.credential_resolution import CredentialContext
+from telegram_media_bot.domain.credential_resolution import (
+    ContentAccessScope,
+    CredentialKind,
+    CredentialPolicy,
+    ResolvedCredential,
+)
 from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
+    CredentialMaterializationError,
     DeliveryError,
     DownloadFailedError,
     GalleryDlCookiesExpiredError,
     JobCancelledError,
     LocalRuntimeError,
     MediaTooLargeError,
+    MediaUnavailableError,
     RateLimitedError,
 )
 from telegram_media_bot.domain.failures import (
@@ -59,6 +69,7 @@ from telegram_media_bot.domain.failures import (
     FailureStage,
     render_failure_notification,
 )
+from telegram_media_bot.domain.instagram_credentials import InstagramCredentialState
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DeliveryItemReceipt,
@@ -66,7 +77,9 @@ from telegram_media_bot.domain.models import (
     DeliveryProgressEvent,
     DeliveryReceipt,
     DeliveryStage,
+    DownloadArtifact,
     DownloadMode,
+    DownloadRequest,
     DownloadResult,
     ErrorCategory,
     JobId,
@@ -79,6 +92,7 @@ from telegram_media_bot.domain.models import (
     MediaKind,
     OutputContainer,
     ProgressEvent,
+    SelectionToken,
     SizeConfidence,
 )
 from telegram_media_bot.domain.subscriptions import (
@@ -87,8 +101,15 @@ from telegram_media_bot.domain.subscriptions import (
     GrantId,
     PlanId,
 )
+from telegram_media_bot.infrastructure.credentials.key_ring import CredentialCryptor, VaultKeyRing
+from telegram_media_bot.infrastructure.credentials.materializer import RestrictedCookieMaterializer
+from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
+from telegram_media_bot.infrastructure.media_engine_router import RoutedMediaEngine
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
+from telegram_media_bot.infrastructure.persistence.sqlite_instagram_credentials import (
+    SqliteInstagramCredentialRepository,
+)
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.storage.workspace import WorkspaceCleanupReport
 from telegram_media_bot.workers import jobs as jobs_module
@@ -249,7 +270,7 @@ class FakeYoutubeInspectionService:
 
 
 class FakeInstagramImageInspectionService:
-    def inspect(self, url: str) -> MediaInfo:
+    def inspect(self, url: str, *, credential: object | None = None) -> MediaInfo:
         assets = (
             MediaAsset(1, "image", MediaKind.IMAGE, "jpg", "image/jpeg", "post", "instagram"),
             MediaAsset(2, "video", MediaKind.VIDEO, "mp4", "video/mp4", "post", "instagram"),
@@ -482,8 +503,13 @@ async def test_real_output_context_failure_keeps_user_success_receipt_usage_and_
 async def test_recovered_youtube_mix_job_is_normalized_at_execution_boundary(
     worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
 ) -> None:
-    context, _repository, service, _delivery = worker_context
+    context, repository, service, _delivery = worker_context
     raw = "https://www.youtube.com/watch?v=DGbwtVtthu8&list=RDDGbwtVtthu8&start_radio=1"
+    previous = repository.get_job(JobId(context["job_id"]))
+    assert previous is not None
+    record = replace(previous, job_id=JobId("legacy-mix"), url=raw, idempotency_key="legacy-mix")
+    repository.create_job(record)
+    context["job_id"] = record.job_id
 
     await process_download_job(
         context,
@@ -494,7 +520,7 @@ async def test_recovered_youtube_mix_job_is_normalized_at_execution_boundary(
     )
 
     assert service.urls == ["https://www.youtube.com/watch?v=DGbwtVtthu8"]
-    assert _delivery.last_source_url == "https://example.com/media"
+    assert _delivery.last_source_url == raw
 
 
 @pytest.mark.parametrize(
@@ -551,93 +577,6 @@ async def test_instagram_auto_download_create_and_enqueue_share_native_policy(
     assert persisted.status_message_id == 901
     assert len(bot.edits) == 1
     assert len(bot.messages) == 1
-
-
-class _StubCredentialResolver:
-    """Test-only resolver: yields an operator-less USER credential without touching a vault."""
-
-    def resolve(
-        self, *, owner_user_id: int, context: CredentialContext, workspace: Path
-    ) -> _StubResolution:
-        from telegram_media_bot.domain.credential_resolution import ResolvedCredential
-
-        del owner_user_id, workspace
-        return _StubResolution(ResolvedCredential(context, materialized_cookie_path=None))
-
-
-class _StubResolution:
-    def __init__(self, credential: object) -> None:
-        self._credential = credential
-
-    def __enter__(self) -> object:
-        return self._credential
-
-    def __exit__(self, *_: object) -> None:
-        return None
-
-
-async def test_instagram_auto_download_inherits_parent_entitlement_snapshot(
-    settings: Settings,
-    tmp_path: Path,
-) -> None:
-    """An automatically created child download inherits the already-accepted parent snapshot.
-
-    This is a system-generated continuation of an already-authorized user intent, so it must NOT be
-    reauthorized as a new request. Public inspections carry no snapshot, so the child is unchanged.
-    """
-    raw = settings.model_dump()
-    raw["storage"]["root_directory"] = str(tmp_path)
-    configured = Settings.model_validate(raw)
-    configured.create_runtime_directories()
-    repository = SqliteJobRepository(configured.database_path())
-    repository.initialize()
-    now = datetime.now(UTC)
-    snapshot = EntitlementSnapshot(
-        capability=Capability.INSTAGRAM_PRIVATE_MEDIA,
-        accepted_at=now,
-        authorized_until=now,
-        plan_id=PlanId("vip-1"),
-        grant_id=GrantId("g1"),
-    )
-    parent = JobRecord(
-        job_id=JobId("parent-inspection"),
-        kind=JobKind.INSPECTION,
-        status=JobStatus.QUEUED,
-        chat_id=10,
-        user_id=99,
-        url="https://example.test/reel/DbQqWqBDLXS",
-        mode=None,
-        idempotency_key="parent-key",
-        created_at=now,
-        updated_at=now,
-        entitlement_snapshot=snapshot,
-    )
-    repository.create_job(parent)
-    repository.set_status_message(parent.job_id, 30)
-    queue = CapturingQueue()
-    context: dict[str, Any] = {
-        "settings": configured,
-        "repository": repository,
-        "download_service": FakeInspectionService(),
-        "bot": FakeInspectionBot(fail_edit=True),
-        "metrics": MetricsRegistry(),
-        "queue": queue,
-        "job_id": str(parent.job_id),
-        "job_try": 1,
-        "credential_resolver": _StubCredentialResolver(),
-    }
-
-    await process_inspection_job(
-        context,
-        chat_id=10,
-        user_id=99,
-        url=parent.url,
-    )
-
-    assert queue.download is not None
-    child = repository.get_job(cast(JobId, queue.download["job_id"]))
-    assert child is not None
-    assert child.entitlement_snapshot == snapshot
 
 
 async def test_public_instagram_download_child_has_no_snapshot(
@@ -1146,6 +1085,13 @@ async def test_terminal_unexpected_download_failure_alert_is_redacted(
     audit_store.reconcile_config((LOGGER_CHANNEL,))
     context["audit"] = AuditService(audit_store, enabled=True)
     service.failure = RuntimeError("unexpected download private detail")
+    accepted, _ = JobService(repository).create_download(
+        chat_id=10,
+        user_id=20,
+        url="https://example.com/media?token=secret",
+        mode=DownloadMode.BEST,
+    )
+    context["job_id"] = accepted.job_id
 
     await process_download_job(
         context,
@@ -1633,3 +1579,501 @@ def test_local_runtime_failure_context_preserves_the_real_safe_cause(
     assert "local_runtime" in text
     assert "inspection" in text
     assert "unknown" not in text
+
+
+class OwnerSessionEngine:
+    """Deterministic upstream boundary exercised through real service/router/resolver."""
+
+    def __init__(self, session: bytes) -> None:
+        self.session = session
+        self.attempts: list[tuple[str, ResolvedCredential]] = []
+        self.failure: Exception | None = None
+        self.mixed = False
+        self.public = False
+
+    def _observe(self, stage: str, credential: ResolvedCredential | None) -> None:
+        if credential is not None:
+            self.attempts.append((stage, credential))
+        assert credential is not None
+        if not self.public:
+            assert credential.context.kind is CredentialKind.USER_INSTAGRAM
+            assert credential.context.policy is CredentialPolicy.USER_ONLY
+            assert credential.context.user_generation == 1
+            assert credential.materialized_cookie_path is not None
+            assert Path(credential.materialized_cookie_path).read_bytes() == self.session
+        else:
+            assert credential.context.kind is not CredentialKind.USER_INSTAGRAM
+        if self.failure is not None:
+            raise self.failure
+
+    def inspect(self, url: str, **kwargs: Any) -> MediaInfo:
+        self._observe("inspect", kwargs.get("credential"))
+        if not self.mixed:
+            return MediaInfo("post", "Media", "instagram", MediaKind.VIDEO, url)
+        assets = (
+            MediaAsset(1, "image", MediaKind.IMAGE, "jpg", "image/jpeg", "post", "instagram"),
+            MediaAsset(2, "video", MediaKind.VIDEO, "mp4", "video/mp4", "post", "instagram"),
+        )
+        return MediaInfo(
+            "post",
+            "Media",
+            "instagram",
+            MediaKind.PLAYLIST,
+            url,
+            item_count=2,
+            format_options=(MediaFormatOption(DownloadMode.ALL_ORIGINAL_MEDIA),),
+            assets=assets,
+        )
+
+    @staticmethod
+    def is_gallery_social_url(_url: str) -> bool:
+        return True
+
+    @staticmethod
+    def owns_mode(mode: DownloadMode) -> bool:
+        return mode in {
+            DownloadMode.ALL_ORIGINAL_MEDIA,
+            DownloadMode.INSTAGRAM_ALL_STORIES,
+            DownloadMode.INSTAGRAM_HIGHLIGHT,
+            DownloadMode.IMAGE_ORIGINAL,
+        }
+
+    def _result(self, request: DownloadRequest, assets: tuple[MediaAsset, ...]) -> DownloadResult:
+        request.output_directory.mkdir(parents=True, exist_ok=True)
+        artifacts = []
+        for asset in assets:
+            path = request.output_directory / f"{asset.asset_id}.{asset.extension}"
+            path.write_bytes(b"media")
+            artifacts.append(
+                DownloadArtifact(
+                    file_path=path,
+                    file_size_bytes=5,
+                    kind=asset.kind,
+                    mime_type=asset.mime_type,
+                    source_index=asset.index,
+                )
+            )
+        return DownloadResult(
+            job_id=request.job_id,
+            media_id="post",
+            title="Media",
+            source="instagram",
+            kind=MediaKind.PLAYLIST if len(artifacts) > 1 else artifacts[0].kind,
+            file_path=artifacts[0].file_path,
+            file_size_bytes=5 * len(artifacts),
+            artifacts=tuple(artifacts),
+        )
+
+    def download(self, request: DownloadRequest, **kwargs: Any) -> DownloadResult:
+        self._observe("video", kwargs.get("credential"))
+        return self._result(
+            request,
+            (MediaAsset(1, "video", MediaKind.VIDEO, "mp4", "video/mp4", "post", "instagram"),),
+        )
+
+    def download_inspected(
+        self, request: DownloadRequest, info: MediaInfo, **kwargs: Any
+    ) -> DownloadResult:
+        self._observe("gallery_assets", kwargs.get("credential"))
+        assets = (
+            tuple(asset for asset in info.assets if asset.kind is MediaKind.IMAGE)
+            if request.mode is DownloadMode.IMAGES_ONLY
+            else info.assets
+        )
+        return self._result(request, assets)
+
+    def download_instagram_video_children(
+        self, request: DownloadRequest, **kwargs: Any
+    ) -> DownloadResult:
+        self._observe("native_video_child", kwargs.get("credential"))
+        assert kwargs["expected_parent_media_id"] == "post"
+        assert kwargs["expected_video_indices"] == (2,)
+        return self._result(
+            request,
+            (MediaAsset(2, "video", MediaKind.VIDEO, "mp4", "video/mp4", "post", "instagram"),),
+        )
+
+
+@pytest.fixture
+def private_runtime(settings: Settings, tmp_path: Path) -> dict[str, Any]:
+    raw = settings.model_dump()
+    raw["storage"]["root_directory"] = str(tmp_path)
+    configured = Settings.model_validate(raw)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    credential_repository = SqliteInstagramCredentialRepository(configured.database_path())
+    credential_repository.initialize()
+    ring = VaultKeyRing.from_hex_material(active_key_id="test", active_key="42" * 32)
+    cryptor = CredentialCryptor(ring)
+    vault = CredentialVault(credential_repository, cryptor)
+    session = b"owner-20-session"
+    vault.store_session(20, session)
+    vault.store_session(99, b"unrelated-owner-session")
+    resolver = CredentialResolver(
+        vault, RestrictedCookieMaterializer(credential_repository, cryptor)
+    )
+    engine = OwnerSessionEngine(session)
+    service = DownloadService(
+        RoutedMediaEngine(cast(GalleryDlEngine, engine), cast(Any, engine)),
+        frozenset({"instagram"}),
+    )
+    accepted = datetime.now(UTC) - timedelta(days=2)
+    snapshot = EntitlementSnapshot(
+        capability=Capability.INSTAGRAM_PRIVATE_MEDIA,
+        accepted_at=accepted,
+        authorized_until=accepted + timedelta(days=1),
+        plan_id=PlanId("vip"),
+        grant_id=GrantId("grant"),
+        owner_user_id=20,
+    )
+    return {
+        "settings": configured,
+        "repository": repository,
+        "download_service": service,
+        "credential_resolver": resolver,
+        "credential_context": ResolvedCredential.operator_public(),
+        "vault": vault,
+        "credential_repository": credential_repository,
+        "cryptor": cryptor,
+        "session_engine": engine,
+        "snapshot": snapshot,
+        "bot": FakeInspectionBot(fail_edit=False),
+        "delivery": FakeDelivery(),
+        "queue": CapturingQueue(),
+        "metrics": MetricsRegistry(),
+        "job_try": 1,
+    }
+
+
+def _private_job(runtime: dict[str, Any], *, inspect: bool = False) -> JobRecord:
+    service = JobService(runtime["repository"])
+    arguments: dict[str, Any] = {
+        "chat_id": 10,
+        "user_id": 20,
+        "url": "https://www.instagram.com/p/accepted/",
+        "entitlement_snapshot": runtime["snapshot"],
+        "credential_policy": CredentialPolicy.USER_ONLY,
+        "content_access_scope": ContentAccessScope.USER_RESTRICTED,
+        "user_credential_generation": 1,
+    }
+    record, _ = (
+        service.create_inspection(**arguments)
+        if inspect
+        else service.create_download(mode=DownloadMode.ALL_ORIGINAL_MEDIA, **arguments)
+    )
+    runtime["repository"].set_status_message(record.job_id, 30)
+    runtime["job_id"] = str(record.job_id)
+    return record
+
+
+async def test_private_auto_child_retains_expired_accepted_authorization_and_delivers(
+    private_runtime: dict[str, Any],
+) -> None:
+    runtime = private_runtime
+    parent = _private_job(runtime, inspect=True)
+    await process_inspection_job(runtime, chat_id=10, user_id=20, url=parent.url)
+    queued = runtime["queue"].download
+    assert queued is not None
+    child = runtime["repository"].get_job(queued["job_id"])
+    assert child is not None
+    assert child.entitlement_snapshot == parent.entitlement_snapshot
+    assert child.user_credential_generation == 1
+    assert child.credential_policy is CredentialPolicy.USER_ONLY
+    assert child.content_access_scope is ContentAccessScope.USER_RESTRICTED
+    assert not (runtime["settings"].storage.downloads_path() / str(parent.job_id)).exists()
+    runtime["job_id"] = str(child.job_id)
+    await process_download_job(
+        runtime,
+        chat_id=10,
+        user_id=20,
+        url=child.url,
+        mode=child.mode.value,
+        container=child.container.value if child.container else None,
+    )
+    assert runtime["repository"].get_job(child.job_id).status is JobStatus.SUCCEEDED
+    assert runtime["delivery"].file_present_during_delivery
+    assert all(
+        not Path(credential.materialized_cookie_path).parent.exists()
+        for _, credential in runtime["session_engine"].attempts
+    )
+
+
+async def test_private_mixed_selection_and_native_children_use_same_owner_lease(
+    private_runtime: dict[str, Any],
+) -> None:
+    runtime = private_runtime
+    runtime["session_engine"].mixed = True
+    parent = _private_job(runtime, inspect=True)
+    await process_inspection_job(runtime, chat_id=10, user_id=20, url=parent.url)
+    keyboard = runtime["bot"].edits[0]["reply_markup"]
+    callback = keyboard.inline_keyboard[0][0].callback_data
+    token = callback.split(":")[1]
+    selection = runtime["repository"].get_selection(SelectionToken(token), 20)
+    assert selection.source_job_id == parent.job_id
+    assert selection.owner_user_id == parent.user_id
+    child = _private_job(runtime)
+    assert child.mode is not None
+    await process_download_job(
+        runtime, chat_id=10, user_id=20, url=child.url, mode=child.mode.value
+    )
+    attempts = runtime["session_engine"].attempts
+    assert [stage for stage, _ in attempts][-2:] == ["native_video_child", "gallery_assets"]
+    assert attempts[-1][1] is attempts[-2][1]
+    assert runtime["repository"].get_job(child.job_id).status is JobStatus.SUCCEEDED
+    assert not Path(attempts[-1][1].materialized_cookie_path).parent.exists()
+
+
+@pytest.mark.parametrize("inspect", [True, False])
+@pytest.mark.parametrize("action", ["disconnect", "revoke", "reconnect", "expire", "challenge"])
+async def test_private_queued_credential_changes_stop_before_extraction(
+    private_runtime: dict[str, Any], action: str, inspect: bool
+) -> None:
+    runtime = private_runtime
+    record = _private_job(runtime, inspect=inspect)
+    if action == "disconnect":
+        runtime["vault"].disconnect(20)
+    elif action == "revoke":
+        runtime["vault"].revoke(20, actor_role="super_admin")
+    elif action == "reconnect":
+        runtime["vault"].store_session(20, b"new-session")
+    else:
+        state = (
+            InstagramCredentialState.EXPIRED
+            if action == "expire"
+            else InstagramCredentialState.CHALLENGE_REQUIRED
+        )
+        runtime["vault"].set_state_category(20, state)
+    if inspect:
+        await process_inspection_job(runtime, chat_id=10, user_id=20, url=record.url)
+    else:
+        await process_download_job(
+            runtime,
+            chat_id=10,
+            user_id=20,
+            url=record.url,
+            mode=cast(DownloadMode, record.mode).value,
+        )
+    assert runtime["repository"].get_job(record.job_id).status is JobStatus.FAILED
+    assert runtime["session_engine"].attempts == []
+    assert runtime["delivery"].deliveries == 0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"user_id": 99},
+        {"chat_id": 99},
+        {"url": "https://www.instagram.com/p/other/"},
+        {"mode": DownloadMode.INSTAGRAM_ALL_STORIES.value},
+    ],
+)
+async def test_private_forged_queue_payload_cannot_extract(
+    private_runtime: dict[str, Any], payload: dict[str, object]
+) -> None:
+    runtime = private_runtime
+    record = _private_job(runtime)
+    arguments: dict[str, Any] = {
+        "chat_id": 10,
+        "user_id": 20,
+        "url": record.url,
+        "mode": cast(DownloadMode, record.mode).value,
+    }
+    arguments.update(payload)
+    await process_download_job(runtime, **arguments)
+    assert runtime["repository"].get_job(record.job_id).status is JobStatus.FAILED
+    assert runtime["session_engine"].attempts == []
+    assert runtime["delivery"].deliveries == 0
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        AuthenticationRequiredError("sessionid=must-not-leak"),
+        MediaUnavailableError("private title must-not-leak"),
+        RateLimitedError("raw upstream must-not-leak"),
+        RuntimeError("secret must-not-leak"),
+    ],
+)
+async def test_private_retry_and_terminal_failures_never_use_operator(
+    private_runtime: dict[str, Any], failure: Exception
+) -> None:
+    runtime = private_runtime
+    record = _private_job(runtime)
+    runtime["session_engine"].failure = failure
+    try:
+        await process_download_job(
+            runtime,
+            chat_id=10,
+            user_id=20,
+            url=record.url,
+            mode=cast(DownloadMode, record.mode).value,
+        )
+    except Retry:
+        runtime["job_try"] = runtime["settings"].queue.max_tries
+        await process_download_job(
+            runtime,
+            chat_id=10,
+            user_id=20,
+            url=record.url,
+            mode=cast(DownloadMode, record.mode).value,
+        )
+    persisted = runtime["repository"].get_job(record.job_id)
+    assert persisted.status is JobStatus.FAILED
+    assert persisted.entitlement_snapshot == record.entitlement_snapshot
+    assert persisted.user_credential_generation == 1
+    assert persisted.error_summary == type(failure).__name__
+    assert all(
+        credential.context.kind is CredentialKind.USER_INSTAGRAM
+        for _, credential in runtime["session_engine"].attempts
+    )
+    assert runtime["delivery"].deliveries == 0
+    assert all("must-not-leak" not in text for text in runtime["delivery"].edits)
+    assert all(
+        not Path(credential.materialized_cookie_path).parent.exists()
+        for _, credential in runtime["session_engine"].attempts
+    )
+
+
+@pytest.mark.parametrize("inspect", [True, False])
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"entitlement_snapshot": None},
+        {"credential_policy": None},
+        {"content_access_scope": ContentAccessScope.UNKNOWN},
+        {"user_credential_generation": None},
+        {"operator_credential_generation": 1},
+        {"fallback_used": True},
+        {"snapshot_owner": 99},
+        {"snapshot_capability": Capability.INSTAGRAM_USER_SESSION_PREFERENCE},
+    ],
+)
+async def test_private_corrupt_durable_record_cannot_resolve_credentials(
+    private_runtime: dict[str, Any], inspect: bool, changed: dict[str, Any]
+) -> None:
+    runtime = private_runtime
+    accepted = _private_job(runtime, inspect=inspect)
+    changed = dict(changed)
+    snapshot_owner = changed.pop("snapshot_owner", None)
+    snapshot_capability = changed.pop("snapshot_capability", None)
+    if snapshot_owner is not None:
+        changed["entitlement_snapshot"] = replace(runtime["snapshot"], owner_user_id=snapshot_owner)
+    if snapshot_capability is not None:
+        changed["entitlement_snapshot"] = replace(
+            runtime["snapshot"], capability=snapshot_capability
+        )
+    corrupt = replace(
+        accepted, job_id=JobId("corrupt-private"), idempotency_key="corrupt-private", **changed
+    )
+    runtime["repository"].create_job(corrupt)
+    runtime["job_id"] = str(corrupt.job_id)
+    if inspect:
+        await process_inspection_job(runtime, chat_id=10, user_id=20, url=corrupt.url)
+    else:
+        await process_download_job(
+            runtime,
+            chat_id=10,
+            user_id=20,
+            url=corrupt.url,
+            mode=cast(DownloadMode, corrupt.mode).value,
+        )
+    assert runtime["session_engine"].attempts == []
+    assert runtime["repository"].get_job(corrupt.job_id).status is JobStatus.FAILED
+
+
+async def test_public_instagram_ignores_connected_session_and_private_capable_operator(
+    private_runtime: dict[str, Any],
+) -> None:
+    runtime = private_runtime
+    runtime["session_engine"].public = True
+    parent, _ = JobService(runtime["repository"]).create_inspection(
+        chat_id=10, user_id=20, url="https://www.instagram.com/p/public/"
+    )
+    runtime["job_id"] = str(parent.job_id)
+    await process_inspection_job(runtime, chat_id=10, user_id=20, url=parent.url)
+    queued = runtime["queue"].download
+    assert queued is not None
+    child = runtime["repository"].get_job(queued["job_id"])
+    assert child.entitlement_snapshot is None
+    assert child.user_credential_generation is None
+    runtime["job_id"] = str(child.job_id)
+    await process_download_job(
+        runtime,
+        chat_id=10,
+        user_id=20,
+        url=child.url,
+        mode=child.mode.value,
+        container=child.container.value if child.container else None,
+    )
+    assert runtime["repository"].get_job(child.job_id).status is JobStatus.SUCCEEDED
+    assert all(
+        credential.context.kind is CredentialKind.NONE
+        for _, credential in runtime["session_engine"].attempts
+    )
+
+
+@pytest.mark.parametrize("inspect", [True, False])
+async def test_private_partial_materialization_removes_secret_workspace_with_retention_disabled(
+    private_runtime: dict[str, Any], inspect: bool
+) -> None:
+    runtime = private_runtime
+    raw = runtime["settings"].model_dump()
+    raw["storage"]["delete_after_upload"] = False
+    runtime["settings"] = Settings.model_validate(raw)
+    record = _private_job(runtime, inspect=inspect)
+    materialized: list[Path] = []
+
+    class PartialMaterializer(RestrictedCookieMaterializer):
+        def _write_restricted(self, workspace: Path, plaintext: bytes) -> Path:
+            target = workspace / "cookies.txt"
+            target.write_bytes(plaintext)
+            materialized.append(target)
+            raise CredentialMaterializationError("private materialization details")
+
+    runtime["credential_resolver"] = CredentialResolver(
+        runtime["vault"],
+        PartialMaterializer(runtime["credential_repository"], runtime["cryptor"]),
+    )
+    if inspect:
+        await process_inspection_job(runtime, chat_id=10, user_id=20, url=record.url)
+    else:
+        await process_download_job(
+            runtime,
+            chat_id=10,
+            user_id=20,
+            url=record.url,
+            mode=cast(DownloadMode, record.mode).value,
+        )
+    assert materialized
+    assert all(not target.parent.exists() for target in materialized)
+    assert runtime["session_engine"].attempts == []
+    assert runtime["repository"].get_job(record.job_id).status is JobStatus.FAILED
+    assert runtime["vault"].get_view(20).generation == 1
+
+
+@pytest.mark.parametrize("inspect", [True, False])
+async def test_private_cancelled_extraction_releases_credential_workspace(
+    private_runtime: dict[str, Any], inspect: bool
+) -> None:
+    runtime = private_runtime
+    record = _private_job(runtime, inspect=inspect)
+    runtime["session_engine"].failure = JobCancelledError("cancelled")
+    if inspect:
+        await process_inspection_job(runtime, chat_id=10, user_id=20, url=record.url)
+    else:
+        await process_download_job(
+            runtime,
+            chat_id=10,
+            user_id=20,
+            url=record.url,
+            mode=cast(DownloadMode, record.mode).value,
+        )
+    assert runtime["repository"].get_job(record.job_id).status is JobStatus.CANCELLED
+    assert runtime["delivery"].deliveries == 0
+    assert runtime["session_engine"].attempts
+    assert all(
+        credential.context.kind is CredentialKind.USER_INSTAGRAM
+        and not Path(credential.materialized_cookie_path).parent.exists()
+        for _, credential in runtime["session_engine"].attempts
+    )

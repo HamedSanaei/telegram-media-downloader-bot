@@ -102,6 +102,7 @@ class EntitlementService:
             authorized_until=authorized_until.replace(tzinfo=UTC),
             plan_id=grant.plan_id,
             grant_id=grant.grant_id,
+            owner_user_id=user_id,
         )
 
     def activate_grant(

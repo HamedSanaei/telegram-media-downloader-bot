@@ -113,6 +113,10 @@ resolver call traces, logs, durable state, and end-to-end fixtures before activa
 
 ## Definition of done
 
-The application private-media policy is implemented locally with explicit VIP, connection,
-reconnect, visibility, and fail-closed decisions. Every allowed decision is `USER_ONLY`; adapter
-and worker wiring plus full media-kind acceptance remain gated by T022-T025.
+Private policy, Telegram entry points/callbacks, durable authorization linkage, and worker execution
+are implemented. Private jobs carry the owner-bound capability snapshot and exact connected-account
+generation throughout inspection, Stories/Highlights, mixed image/native-video children, and retries.
+Missing/corrupt authorization or a revoked/replaced session fails before extraction; public Instagram
+never supplies an implicit operator/personal fallback. Deterministic dispatcher, SQLite, vault,
+resolver/materializer, and worker scenarios cover these boundaries; no private upstream account was
+used for verification.

@@ -556,6 +556,17 @@ proves identity and a zero-follow count. User materialization enforces owner, ge
 state, lease, workspace, and cleanup checks. No public fallback or private authorization is enabled
 by this task.
 
+**Runtime access separation (2026-10-11):** the ordinary-user menu explicitly distinguishes public
+downloads from VIP personal-account downloads. Public Instagram attempts select `NONE`, not the
+canonical operator or a connected user's session: current normalized media does not supply
+trustworthy privacy classification. This deliberately keeps operator visibility out of Free/public
+access; URLs requiring login use the owner-bound VIP path. Other public providers are unchanged.
+Private acceptance and execution require a snapshot bound to the same owner, `USER_ONLY`,
+`USER_RESTRICTED`, and the exact credential generation. Automatically accepted children inherit the
+snapshot; later callbacks reauthorize through their durable source job. Reconnect cannot silently
+replace the generation accepted by an existing choice or queued job.
+
+
 ## ADR-035: One least-privilege web companion separates account links and payment callbacks
 
 **Status:** accepted

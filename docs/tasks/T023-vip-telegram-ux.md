@@ -21,8 +21,9 @@ application services rather than button text, FSM state, or provider-specific ha
 
 ## Scope
 
-- Add an all-user `/vip` owner-bound inline dashboard without introducing a persistent regular-user
-  keyboard or changing the shared URL-download entry point.
+- Add an all-user persistent menu with subscription type/status, Premium Downloader / VIP purchase,
+  public/private download modes, and personal Instagram controls. `/vip` provides the owner-bound
+  inline dashboard, and `/start`/`/menu` replace stale keyboards according to the current role.
 - Show Free/active/expired status, UTC-derived localized expiry, available enabled plans, buy/renew,
   current pending order, and connected/expired/challenged/disconnected Instagram state.
 - Provide connect/reconnect/disconnect actions to Free and VIP users.
@@ -116,6 +117,8 @@ and service-level reauthorization are mandatory.
 
 ## Definition of done
 
-The sanitized VIP dashboard renderer and provider-unavailable presentation are implemented locally;
-full handler callbacks, billing mutations, and admin controls remain gated until T024 provider
-selection and the final rollout task.
+The ordinary-user menu and owner-bound VIP dashboard are wired to subscription, real configured
+billing, and existing HTTPS account-connection services. Status remains available with purchasing
+disabled. Opaque expiring plan choices and durable order ownership protect selection/checkout/check
+callbacks; replay cannot duplicate checkout or economic grants. Account/status/purchase navigation
+clears URL FSM state, and administrator controls remain inaccessible to ordinary users.

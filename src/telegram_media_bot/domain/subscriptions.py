@@ -147,8 +147,8 @@ class Subscription:
 class EntitlementSnapshot:
     """Immutable, safe authorization snapshot persisted with an accepted protected job.
 
-    Contains only what execution requires (capability, acceptance time, authorized expiry, and the
-    grant/plan reference that justified the acceptance). It never contains payment secrets,
+    Contains only what execution requires (owner, capability, acceptance time, authorized expiry,
+    and the grant/plan reference that justified acceptance). It never contains payment secrets,
     Instagram credentials, cookies, or callback payloads. An accepted job may finish after the
     subscription expires because the snapshot was captured at durable acceptance time.
     """
@@ -158,6 +158,7 @@ class EntitlementSnapshot:
     authorized_until: datetime
     plan_id: PlanId
     grant_id: GrantId
+    owner_user_id: int | None = None
 
 
 def ordered_valid_grants(grants: Iterable[EntitlementGrant]) -> tuple[EntitlementGrant, ...]:
@@ -219,6 +220,7 @@ def entitlement_snapshot_to_dict(snapshot: EntitlementSnapshot) -> dict[str, obj
         "authorized_until": snapshot.authorized_until.isoformat(),
         "plan_id": str(snapshot.plan_id),
         "grant_id": str(snapshot.grant_id),
+        "owner_user_id": snapshot.owner_user_id,
     }
 
 
@@ -229,4 +231,7 @@ def entitlement_snapshot_from_dict(data: dict[str, object]) -> EntitlementSnapsh
         authorized_until=datetime.fromisoformat(str(data["authorized_until"])),
         plan_id=PlanId(str(data["plan_id"])),
         grant_id=GrantId(str(data["grant_id"])),
+        owner_user_id=int(str(data["owner_user_id"]))
+        if data.get("owner_user_id") is not None
+        else None,
     )

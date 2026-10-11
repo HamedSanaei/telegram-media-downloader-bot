@@ -101,11 +101,12 @@ playlist. Genuine `/playlist?list=...` URLs retain the configured bounded-playli
 - guaranteed support for every upstream extractor;
 - disguising alternate-source downloads as direct Spotify downloads.
 
-## Planned VIP / authenticated Instagram access
+## VIP / authenticated Instagram access
 
-**Planning status:** future Milestone 4 only. None of the behavior in this section is implemented or
-available in production. Current public downloads continue to use the existing canonical operator
-cookie path.
+**Implementation status:** the ordinary-user menu, bot VIP entitlement, purchasing, and personal
+Instagram download paths are implemented. Real checkout and personal account connection remain
+controlled by the existing operator configuration; no price, provider credential, or session is
+invented.
 
 The Telegram product term is **VIP**. Internal code will use project-owned `SubscriptionPlan`,
 `Subscription`, `Entitlement`, `EntitlementGrant`, `EntitlementSnapshot`, `Capability`,
@@ -115,9 +116,15 @@ Premium/Telethon/MTProto uploader, staging channel, Premium queue, or copy-messa
 
 ### Product and authorization rules
 
+- `/start` and `/menu` replace any stale keyboard with the current role's menu. Ordinary users see
+  public download, subscription type/status, Premium Downloader / VIP purchase, private VIP download,
+  and personal Instagram connect/status/disconnect; administrator controls remain role-authorized.
 - Every Free or VIP user may connect their own Instagram account through a short-lived signed link
-  and HTTPS page. Connection alone does not grant VIP.
-- Free public downloading remains supported and does not require account connection.
+  and HTTPS page. Connection alone does not grant VIP, nor does Telegram Premium.
+- Free public downloading remains supported and does not require account connection. Public
+  Instagram extraction is anonymous for both Free and VIP users; other providers retain their
+  existing public credential behavior. Instagram URLs requiring login use the explicit private VIP
+  mode, never an implicit operator or personal session.
 - Private/restricted Instagram posts, Reels, Stories, Highlights, mixed media, and Close Friends
   content require an active `instagram_private_media` entitlement and a healthy connected account.
 - Authenticated extraction may see only content that the voluntarily connected Instagram account
@@ -126,33 +133,32 @@ Premium/Telethon/MTProto uploader, staging channel, Premium queue, or copy-messa
 - A protected request durably accepted while entitlement is active may finish after expiry. New
   requests and later user callbacks after expiry must reauthorize.
 
-The operator Instagram credential must be a dedicated account verified as following zero accounts.
-Its attestation is invalidated when the canonical file's Instagram records change. It may authorize
-only results explicitly classified `PUBLIC`; unknown/restricted results fail closed.
+The canonical operator Instagram session cannot authorize public-mode requests: without trustworthy
+normalized visibility, it could expose the operator's private follows. Public Instagram requests
+therefore explicitly select no credential. The zero-follow attestation service is not an alternative
+to owner-bound private authorization.
 
 ### Authoritative credential matrix
 
 | User | VIP | Instagram connected | Content | Credential policy |
 |---|---|---|---|---|
-| User | No | No | Public | Operator/public |
-| User | No | Yes | Public | Operator/public |
+| User | No | No | Public | Anonymous Instagram / existing public provider access |
+| User | No | Yes | Public | Anonymous Instagram / existing public provider access |
 | User | No | Yes | Private | Deny + offer VIP |
-| User | Yes | No | Public | Operator/public |
+| User | Yes | No | Public | Anonymous Instagram / existing public provider access |
 | User | Yes | No | Private | Require Instagram connection |
-| User | Yes | Yes | Public | User first, operator fallback once |
+| User | Yes | Yes | Public | Anonymous Instagram / existing public provider access |
 | User | Yes | Yes | Private | User only, never operator fallback |
 
-For public media, the one operator switch is eligible only after a typed user-session expiry,
-invalid/login-required, or credential-rejected failure. Filesystem, FFmpeg, adapter schema,
-post-processing, size, Telegram delivery, cancellation, local-runtime, and generic failures never
-switch credentials. Credential phase/fallback use is durable so retries and restarts cannot loop.
+Public mode never borrows a personal Instagram session or switches to the operator's Instagram
+session. A private failure never retries through public credentials.
 
 **Private-content invariant:** once content is known or accepted as user-restricted, every
 inspection, gallery/yt-dlp child resolution, download, retry, and recovery attempt is `USER_ONLY`.
 The operator credential is never a private authorization fallback. Unknown privacy fails closed and
 must not reveal whether content exists.
 
-### Planned subscription and payment behavior
+### Subscription and payment behavior
 
 - Plans accept any positive calendar-month duration, integer minor-unit price, currency, enabled
   state, and typed capabilities. No commercial price or payment provider is selected yet.
@@ -164,7 +170,7 @@ must not reveal whether content exists.
 - Financial/audit records are retained separately from media zero-retention and never store card
   numbers, CVV, payment credentials, raw callbacks, or provider secrets.
 
-### Planned credential and connection behavior
+### Credential and connection behavior
 
 - Users never send Instagram passwords or 2FA codes in Telegram. The companion HTTPS flow keeps
   them only in bounded memory, discards them, and persists only an encrypted session.

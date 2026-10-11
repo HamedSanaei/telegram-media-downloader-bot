@@ -257,9 +257,9 @@ async def startup(ctx: dict[str, Any]) -> None:
                 audit=audit,
                 payment_events_enabled=settings.telegram.logger.payment_events_enabled,
             ),
-            # Public-Instagram jobs use the attested operator public credential; PRIVATE
-            # Instagram jobs resolve USER_ONLY credentials from the job's accepted snapshot
-            # (see jobs.py) and NEVER fall back to the operator account.
+            # Other public providers retain canonical operator cookies. Public Instagram
+            # attempts explicitly select no credential in jobs.py; private Instagram jobs
+            # resolve only the requesting owner's accepted USER_ONLY session.
             credential_context=ResolvedCredential.operator_public(),
         )
         cutoff = datetime.now(UTC)

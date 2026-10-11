@@ -139,10 +139,12 @@ caption and put source-only captions on later items where Telegram permits them.
 
 ### Administrator presentation and analytics
 
-`telegram/admin_handlers.py` is a role-aware presentation adapter. `/start`, `/menu`, and the
-backward-compatible `/panel` expose a persistent reply keyboard only when the current
-`telegram.admin_ids` contains the sender. Every management message and callback repeats that
-authorization; keyboard visibility and FSM state are never trusted.
+`/start` and `/menu` install the keyboard matching the sender's current `telegram.admin_ids`
+membership. `telegram/user_menu.py` owns the ordinary-user public/private download actions,
+subscription/purchase entry points, and personal Instagram controls; `telegram/admin_handlers.py`
+owns management and the administrator-only `/panel`. Every management message and callback repeats
+authorization; keyboard visibility and FSM state are never trusted. A denied management message
+clears stale state and restores the ordinary-user keyboard.
 
 The admin download prompt injects the same `submit_url` callable consumed by the ordinary URL
 router. Once a URL is accepted there is no admin-specific job, service, queue payload, worker,
@@ -436,7 +438,7 @@ VipAdminService, the real payment gateways (UniquePay/Tetraminator/HooshPay), an
 USER_ONLY private-media policy with zero operator fallback. `FakeInstagramSessionAcquirer` is
 test-only; production uses `RealInstagramSessionAcquirer`.
 
-### Planned system view
+### Runtime system view
 
 ```text
 Telegram /vip and account-link UI
@@ -492,16 +494,17 @@ successfully authorized and durably accepted persists an immutable `EntitlementS
 must reauthorize. Subscription expiry never invalidates an already accepted snapshot, but
 credential revoke/disconnect (T017+) remains an entirely separate authority.
 
-### Planned economic state beyond T014
+### Billing state
 
 T015 implements a provider-neutral billing foundation: payment orders, attempts, and unique
 provider transaction references (`payment_orders`, `payment_attempts`,
 `provider_transaction_claims`). Confirmation and refund each use one immediate transaction for
 verification, order transition, unique transaction claim, entitlement grant change, and
-subscription recomputation. No real gateway/callback route is wired yet; only the deterministic
-test fake exists behind the provider-neutral port.
+subscription recomputation. Configured real gateways are registered with the same `BillingService`
+used by Telegram checkout and reconciliation. With no enabled plan/provider, the user dashboard
+remains informational and creates no payment order; redirects never activate a subscription.
 
-### Planned credential boundary and policy
+### Runtime credential boundary and policy
 
 The business vocabulary is:
 
@@ -511,10 +514,10 @@ CredentialPolicy: OPERATOR_PUBLIC | USER_FIRST_PUBLIC_FALLBACK | USER_ONLY
 ContentAccessScope: PUBLIC | USER_RESTRICTED | UNKNOWN
 ```
 
-The current canonical cookie file remains the operator credential. Before Milestone 4 routing is
-enabled, its Instagram account must be explicitly verified as following zero accounts. Attestation
-is bound to the Instagram-cookie generation/keyed verifier and becomes stale on replacement. There
-is no scheduled provider probe.
+The canonical cookie file remains the operator credential for existing public non-Instagram
+providers. Public Instagram extraction explicitly uses `CredentialKind.NONE`, including Stories,
+Highlights, profile resolution, and image/video child calls. The separate zero-follow operator
+attestation service cannot establish private authorization or compensate for unknown visibility.
 
 Each user credential is a distinct owner/generation AES-256-GCM envelope. The key ring lives outside
 SQLite in ignored least-privilege YAML. SQLite stores ciphertext, state, safe timestamps, sanitized
@@ -526,10 +529,9 @@ owner, generation, state, and lease before materializing a restrictive cookie fi
 job's workspace. The worker passes one explicit ephemeral context through inspection, router,
 gallery images, yt-dlp video children, and download. Adapters know no subscription/VIP rule.
 
-Free public jobs and VIP public jobs without a healthy session use `OPERATOR_PUBLIC`. A connected
-VIP public job uses the user's session first and may persist one switch to the operator only after a
-typed credential failure. No local/schema/post-processing/size/delivery/cancellation error switches
-credentials. Operator results are deliverable only when explicitly public.
+Free and VIP public Instagram jobs never borrow a personal or operator Instagram session. A
+login-required Instagram URL must be submitted through the explicit private VIP mode. Other
+supported public-provider behavior is unchanged.
 
 Private/restricted media is `USER_ONLY` for inspection through delivery. The connected account must
 already have visibility. Unknown scope fails closed without existence disclosure. The operator
@@ -537,10 +539,12 @@ credential cannot be resolved after `USER_RESTRICTED`, including during retry/re
 
 ### Persistence, recovery, and observability
 
-The nullable entitlement-snapshot field on jobs is **implemented** (T014). Credential policy/kind/
-owner/generation, access scope, current credential phase, and fallback-used fields remain planned
-(T020-T022); T019's explicit attempt context is carried at the worker composition seam without
-persisting secrets. No cookie/ciphertext/password/code enters jobs, selections, ARQ payloads, logs,
+Jobs persist owner-bound entitlement snapshots plus safe credential policy/generation, access scope,
+attempt phase, and fallback state. Legacy snapshot JSON remains readable, but a private job missing
+its owner, capability, `USER_ONLY`, restricted scope, or exact positive generation fails closed.
+Selections and Highlight trays persist `source_job_id`; retention keeps that authorization source
+until the choice expires. Later callbacks reload the source and reauthorize current entitlement and
+generation. No cookie/ciphertext/password/code enters durable jobs, selections, ARQ payloads, logs,
 metrics, Telegram, or failure summaries.
 
 Per-user session failures update only that owner/generation. Reconnect may make eligible same-owner
@@ -552,13 +556,13 @@ Metrics use bounded state/capability/outcome/provider labels only. Telegram user
 usernames, URLs, cookie values, credential/job/order/transaction identifiers, and upstream error
 text are forbidden labels. Admin actions are role-authorized, sanitized, and audited.
 
-### Planned rollout boundary
+### Rollout boundary
 
-All features default off. Rollout applies additive schema first, then Free-user connection, then
-VIP user-first public routing after operator attestation, then private user-only access, and finally
-payments after a real provider passes T024. Backup/restore includes SQLite/WAL/SHM, canonical
-cookies, companion configuration, signing keys, and the vault key ring. Rollback preserves new
-audit/credential tables and restores configuration readable by the prior strict model.
+Purchasing and personal Instagram connection remain opt-in through existing configuration. The
+ordinary-user menu and subscription status remain usable with purchasing disabled; missing plans or
+gateway configuration cannot create unusable orders. Backup/restore includes SQLite/WAL/SHM,
+canonical cookies, companion configuration, signing keys, and the vault key ring. Additive nullable
+selection/tray source columns and owner-aware snapshot JSON preserve legacy public state.
 
 This architecture is unrelated to and must not resurrect ADR-013's removed Telegram Premium,
 Telethon/MTProto session, staging-channel, Premium queue, or copy-message delivery path.

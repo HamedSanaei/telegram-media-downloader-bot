@@ -410,6 +410,7 @@ class SelectionRecord:
     allowed_modes: tuple[DownloadMode, ...]
     created_at: datetime
     expires_at: datetime
+    source_job_id: JobId | None = None
 
     @property
     def expired(self) -> bool:
@@ -434,6 +435,7 @@ class HighlightTrayRecord:
     highlights: tuple[HighlightItem, ...]
     created_at: datetime
     expires_at: datetime
+    source_job_id: JobId | None = None
 
     @property
     def expired(self) -> bool:

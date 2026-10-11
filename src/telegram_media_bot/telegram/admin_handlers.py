@@ -81,6 +81,7 @@ from telegram_media_bot.telegram.admin_menu import (
 )
 from telegram_media_bot.telegram.texts import ACCESS_DENIED_TEXT, START_TEXT
 from telegram_media_bot.telegram.ui import cookie_health_status_text
+from telegram_media_bot.telegram.user_menu import build_user_main_keyboard
 
 logger = structlog.get_logger(__name__)
 
@@ -179,13 +180,13 @@ def build_admin_router(
         if _is_admin_user(message.from_user.id if message.from_user else None, settings):
             await message.answer(ADMIN_MENU_TEXT, reply_markup=build_admin_main_keyboard())
         else:
-            await message.answer(START_TEXT)
+            await message.answer(START_TEXT, reply_markup=build_user_main_keyboard())
 
     @router.message(Command("panel"))
     async def panel(message: Message, state: FSMContext) -> None:
         if not _is_admin_user(message.from_user.id if message.from_user else None, settings):
             await state.clear()
-            await message.answer(ACCESS_DENIED_TEXT)
+            await message.answer(ACCESS_DENIED_TEXT, reply_markup=build_user_main_keyboard())
             return
         await state.clear()
         await message.answer(ADMIN_MENU_TEXT, reply_markup=build_admin_main_keyboard())
@@ -646,7 +647,7 @@ def build_admin_router(
             await message.answer(ADMIN_MENU_TEXT, reply_markup=build_admin_main_keyboard())
             return
         await state.clear()
-        await message.answer(ACCESS_DENIED_TEXT)
+        await message.answer(ACCESS_DENIED_TEXT, reply_markup=build_user_main_keyboard())
 
     if vip_admin is not None and payment_runtime is not None:
         from telegram_media_bot.telegram.admin_vip import build_admin_vip_router
@@ -739,7 +740,7 @@ async def _authorize_message(
     if _is_admin_user(message.from_user.id if message.from_user else None, settings):
         return True
     await state.clear()
-    await message.answer(ACCESS_DENIED_TEXT)
+    await message.answer(ACCESS_DENIED_TEXT, reply_markup=build_user_main_keyboard())
     return False
 
 

@@ -12,7 +12,8 @@
 | `src/telegram_media_bot/application/services/diagnostic_sanitizer.py` | Central secret sanitizer: URL reduction to scheme+hostname+safe path, safe-parameter allowlist, redaction of cookies/tokens/headers/proxy passwords/CDN query secrets, bounded exception-message cleanup |
 | `src/telegram_media_bot/application/services/cookie_health_service.py` | Passive Cookie Health orchestration: provider-scoped or complete local static refresh, persisted transition/reminder deduplication, and same-request runtime auth-failure updates; it has no provider client |
 | `src/telegram_media_bot/application/services/native_options.py` | Builds the public native-only option catalog, enforces codec/transcode invariants, chooses truthful representatives, deduplicates actual plans, and creates opaque option IDs |
-| `src/telegram_media_bot/application/services/job_service.py` | Durable job creation and active-job idempotency |
+| `src/telegram_media_bot/application/services/job_service.py` | Durable job creation/idempotency and complete owner-bound private snapshot/policy/generation validation shared with workers |
+| `src/telegram_media_bot/application/services/private_media_policy.py` | Owner-bound private-request entitlement/session authorization and fail-closed private visibility decisions |
 | `src/telegram_media_bot/application/services/durable_update_inbox.py` | Durable inbound-update state transitions, bounded handler retry, and explicit non-replayable serialization quarantine semantics |
 | `src/telegram_media_bot/application/ports/inbound_update_repository.py` | Framework-free replayable-update and terminal-tombstone persistence contract |
 | `src/telegram_media_bot/application/services/instagram_delivery.py` | Selects the complete Instagram image/mixed bundle behind the Photo/File confirmation |
@@ -22,7 +23,7 @@
 | `src/telegram_media_bot/application/services/progress.py` | Framework-free download/delivery progress throttling |
 | `src/telegram_media_bot/application/services/access_policy.py` | Static/dynamic access, required-channel membership, and rate policy |
 | `src/telegram_media_bot/application/ports/membership.py` | Framework-free required-channel membership contract |
-| `src/telegram_media_bot/domain/subscriptions.py` | T014 VIP/subscription domain: plans, `Capability`, contract and validation, immutable `EntitlementGrant`, monotonic grant windows with UTC calendar-month arithmetic, `EntitlementSnapshot`, and JSON-safe snapshot serialization |
+| `src/telegram_media_bot/domain/subscriptions.py` | VIP plans/capabilities/grant windows, UTC calendar arithmetic, owner-bound accepted `EntitlementSnapshot`, and backward-readable JSON serialization |
 | `src/telegram_media_bot/application/services/entitlements.py` | `EntitlementService` (fail-closed `authorize`, grant activation, reversal recomputation, deterministic derived status); Telegram `is_premium` is never consulted |
 | `src/telegram_media_bot/application/ports/subscriptions.py` | Provider-neutral plan-catalog and subscription/grant persistence contracts |
 | `src/telegram_media_bot/infrastructure/persistence/sqlite_subscriptions.py` | WAL-backed plan/subscription/grant tables, exactly-once (user, source) unique grant index, additive idempotent schema |
@@ -33,7 +34,7 @@
 | `src/telegram_media_bot/infrastructure/image_validation.py` | Pillow signature/format/dimension/decompression-bomb validation without altering originals |
 | `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for AV1/H.264 MP4 and VP9 WebM selection, stream-copy arguments, and Best Original policy |
 | `src/telegram_media_bot/infrastructure/queue/` | ARQ enqueue plus official abort and transient-key finalization |
-| `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL jobs, durable-first cancellation, users, daily usage, delivery, block, and recovery store |
+| `src/telegram_media_bot/infrastructure/persistence/` | SQLite/WAL jobs, durable-first cancellation, users, usage, delivery, blocks, recovery, and selection/Highlight source-job retention through callback expiry |
 | `src/telegram_media_bot/infrastructure/persistence/sqlite_inbound_updates.py` | WAL-backed inbound Telegram payload journal, ordered replay queries, terminal serialization tombstones, and retention |
 | `src/telegram_media_bot/infrastructure/persistence/sqlite_usage_analytics.py` | Read-only mapping of durable SQLite jobs/events into project-owned usage activity |
 | `src/telegram_media_bot/infrastructure/analytics/` | Pillow usage dashboards, bundled-font doctor, and deterministic Docker smoke fixtures |
@@ -51,10 +52,13 @@
 | `src/telegram_media_bot/telegram/durable_polling.py` | Inbound-safe aiogram serialization without outbound Bot defaults, durable-prefix offset advancement, hard serialization-gap ordering barrier, and sequential dispatch/replay |
 | `src/telegram_media_bot/telegram/admin_menu.py` | Central administrator button constants (reports, cookie management, Cookie Health), FSM state, and reply/inline keyboard builders; `admin_handlers.py` verifies cookie writes, refreshes provider health immediately, and makes unchanged status edits idempotent |
 | `src/telegram_media_bot/telegram/admin_handlers.py` | Role-checked menu/download/report/cookie routing, private-chat secret export, bounded in-memory document intake, and per-admin report single-flight coordination |
-| `src/telegram_media_bot/telegram/handlers.py` | Shared URL submission, editable job-status ownership, active-job queue reconciliation, direct bounded Highlight download and profile-tray routing, owner/expiry/membership-bound Highlight callbacks, and cancellation routing |
+| `src/telegram_media_bot/telegram/handlers.py` | Role-specific start/main menus, shared public/private URL submission, personal Instagram controls, editable status ownership, source-bound callback reauthorization, Highlights/Stories and cancellation |
+| `src/telegram_media_bot/telegram/user_menu.py` | Ordinary-user keyboard labels/builders, public/private URL state, and typed presentation of accepted private job fields; no administrator controls |
+| `src/telegram_media_bot/telegram/vip_ux.py` | Subscription status independent of purchasing, configured plan/provider checkout, owner-bound expiring offers/orders, and URL-FSM clearing |
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction plus the bounded, cancellable Local Bot API startup readiness wait (`local_api_startup_wait`/`ready`/`timeout`) |
-| `src/telegram_media_bot/workers/` | ARQ worker settings and job functions, including explicit durable `JobRecord.url` delivery metadata, edit-or-send inspection publication, profile/avatar Highlight browsers, cookie-gated credential-bound tray fetches with cancellation rechecks, redacted terminal-failure alerts, passive same-request cookie-auth feedback, retries, receipts, and workspace cleanup; no Cookie Health cron is registered |
+| `src/telegram_media_bot/workers/` | ARQ composition/jobs, private authorization/child inheritance, exact-owner credential materialization/cleanup, anonymous public Instagram, unchanged public non-Instagram credentials, receipts/progress/recovery/terminal cleanup, and passive Cookie Health without attributing anonymous/personal Instagram failures to the operator |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, composition roots, and fail-fast effective-cookie path identity |
+| `src/telegram_media_bot/bootstrap/payments.py` | Configured gateway registration with billing/reconciliation so the real bot, companion and worker share executable checkout behavior |
 | `src/telegram_media_bot/cli.py` | Management CLI plus full, fail-closed offline-static, and explicitly service-selected online doctor modes |
 | `tests/unit/` | Fast deterministic tests |
 | `tests/fixtures/` | Versioned configuration and sanitized upstream-metadata fixtures for network-free regression tests |

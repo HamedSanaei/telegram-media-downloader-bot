@@ -1,23 +1,31 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 from aiogram.types import InlineKeyboardMarkup
 
-from telegram_media_bot.application.services.cookie_health_service import CookieHealthService
+from telegram_media_bot.application.services.credential_resolution import CredentialResolver
+from telegram_media_bot.application.services.credential_vault import CredentialVault
+from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.cookie_health import CookieHealthState, StaticCookieCheck
-from telegram_media_bot.domain.cookies import CookieService
+from telegram_media_bot.domain.credential_resolution import (
+    ContentAccessScope,
+    CredentialKind,
+    CredentialPolicy,
+    ResolvedCredential,
+)
 from telegram_media_bot.domain.models import (
     ContainerPolicy,
     DeliveryMethod,
     DeliveryReceipt,
     DownloadArtifact,
     DownloadMode,
+    DownloadRequest,
     DownloadResult,
     ErrorCategory,
     HighlightItem,
@@ -27,16 +35,22 @@ from telegram_media_bot.domain.models import (
     MediaFormatOption,
     MediaInfo,
     MediaKind,
+    SelectionToken,
     StoryDeliveryMode,
 )
+from telegram_media_bot.domain.subscriptions import (
+    Capability,
+    EntitlementSnapshot,
+    GrantId,
+    PlanId,
+)
+from telegram_media_bot.infrastructure.credentials.key_ring import CredentialCryptor, VaultKeyRing
+from telegram_media_bot.infrastructure.credentials.materializer import RestrictedCookieMaterializer
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
-from telegram_media_bot.infrastructure.persistence.sqlite_cookie_health import (
-    SqliteCookieHealthRepository,
+from telegram_media_bot.infrastructure.persistence.sqlite_instagram_credentials import (
+    SqliteInstagramCredentialRepository,
 )
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
-from telegram_media_bot.telegram.texts import (
-    INSTAGRAM_COOKIES_BLOCKED_TEXT,
-)
 from telegram_media_bot.workers.jobs import (
     process_download_job,
     process_highlight_tray_job,
@@ -59,7 +73,7 @@ class FakeBot:
 
 
 class StoryInspectionService:
-    def inspect(self, url: str) -> MediaInfo:
+    def inspect(self, url: str, *, credential: object | None = None) -> MediaInfo:
         asset = MediaAsset(
             index=1,
             asset_id="story-asset",
@@ -89,8 +103,8 @@ class StoryInspectionService:
 
 
 class StoryImageInspectionService(StoryInspectionService):
-    def inspect(self, url: str) -> MediaInfo:
-        info = super().inspect(url)
+    def inspect(self, url: str, *, credential: object | None = None) -> MediaInfo:
+        info = super().inspect(url, credential=credential)
         asset = MediaAsset(
             index=1,
             asset_id="story-image",
@@ -326,117 +340,6 @@ async def test_story_image_still_offers_single_via_photo_file_flow(
     assert callbacks[1].endswith(":all")
 
 
-async def test_collection_cookie_gating_fails_early_when_instagram_blocked(
-    settings: Settings, tmp_path: Path
-) -> None:
-    configured = _settings(settings, tmp_path)
-    configured.create_runtime_directories()
-    repository = SqliteJobRepository(configured.database_path())
-    repository.initialize()
-    store = SqliteCookieHealthRepository(configured.database_path())
-    store.initialize()
-
-    class BlockedChecker:
-        def check(self, provider: CookieService, **kwargs: object) -> StaticCookieCheck:
-            return StaticCookieCheck(
-                provider=provider,
-                status=CookieHealthState.EXPIRED,
-                file_ok=True,
-                safe_reason="cookies expired",
-            )
-
-    health = CookieHealthService(
-        store=store,
-        checker=BlockedChecker(),
-    )
-    health.refresh_static()
-    record, _ = JobService(repository).create_download(
-        chat_id=10,
-        user_id=20,
-        url="https://www.instagram.com/stories/exampleuser/",
-        mode=DownloadMode.INSTAGRAM_ALL_STORIES,
-    )
-    repository.set_status_message(record.job_id, 30)
-    bot = FakeBot()
-    delivery = BatchDelivery()
-    context: dict[str, Any] = {
-        "settings": configured,
-        "repository": repository,
-        "download_service": BatchDownloadService(artifacts=()),
-        "bot": bot,
-        "delivery": delivery,
-        "metrics": MetricsRegistry(),
-        "cookie_health_service": health,
-        "job_id": str(record.job_id),
-        "job_try": 1,
-    }
-    await process_download_job(
-        context,
-        chat_id=10,
-        user_id=20,
-        url=record.url,
-        mode=DownloadMode.INSTAGRAM_ALL_STORIES.value,
-    )
-    persisted = repository.get_job(record.job_id)
-    assert persisted is not None and persisted.status is JobStatus.FAILED
-    assert persisted.error_category is ErrorCategory.AUTHENTICATION
-    # The user-facing text explains the cookie problem instead of running a doomed job.
-    assert any(INSTAGRAM_COOKIES_BLOCKED_TEXT in text for text in delivery.edits)
-    assert delivery.batch_calls == 0
-
-
-async def test_collection_unverified_status_does_not_block(
-    settings: Settings, tmp_path: Path
-) -> None:
-    configured = _settings(settings, tmp_path)
-    configured.create_runtime_directories()
-    repository = SqliteJobRepository(configured.database_path())
-    repository.initialize()
-    store = SqliteCookieHealthRepository(configured.database_path())
-    store.initialize()
-
-    class UnverifiedChecker:
-        def check(self, provider: CookieService, **kwargs: object) -> StaticCookieCheck:
-            return StaticCookieCheck(
-                provider=provider,
-                status=CookieHealthState.UNVERIFIED,
-                file_ok=True,
-            )
-
-    health = CookieHealthService(store=store, checker=UnverifiedChecker())
-    health.refresh_static()
-    record, _ = JobService(repository).create_download(
-        chat_id=10,
-        user_id=20,
-        url="https://www.instagram.com/stories/exampleuser/",
-        mode=DownloadMode.INSTAGRAM_ALL_STORIES,
-    )
-    repository.set_status_message(record.job_id, 30)
-    paths = [tmp_path / "1.jpg", tmp_path / "2.jpg"]
-    for path in paths:
-        path.write_bytes(b"media")
-    context: dict[str, Any] = {
-        "settings": configured,
-        "repository": repository,
-        "download_service": BatchDownloadService(artifacts=tuple(paths)),
-        "bot": FakeBot(),
-        "delivery": BatchDelivery(),
-        "metrics": MetricsRegistry(),
-        "cookie_health_service": health,
-        "job_id": str(record.job_id),
-        "job_try": 1,
-    }
-    await process_download_job(
-        context,
-        chat_id=10,
-        user_id=20,
-        url=record.url,
-        mode=DownloadMode.INSTAGRAM_ALL_STORIES.value,
-    )
-    persisted = repository.get_job(record.job_id)
-    assert persisted is not None and persisted.status is JobStatus.SUCCEEDED
-
-
 async def test_batch_download_partial_failure_keeps_successes_and_summarizes(
     settings: Settings, tmp_path: Path
 ) -> None:
@@ -626,62 +529,6 @@ async def test_batch_download_all_failed_is_terminal_failure(
     assert persisted.error_category is ErrorCategory.DELIVERY
 
 
-async def test_runtime_auth_failure_updates_instagram_cookie_health(
-    settings: Settings, tmp_path: Path
-) -> None:
-    configured = _settings(settings, tmp_path)
-    configured.create_runtime_directories()
-    raw = configured.model_dump()
-    raw["telegram"]["admin_ids"] = [99]
-    configured = Settings.model_validate(raw)
-    repository = SqliteJobRepository(configured.database_path())
-    repository.initialize()
-    store = SqliteCookieHealthRepository(configured.database_path())
-    store.initialize()
-    health = CookieHealthService(
-        store=store,
-        checker=SimpleNamespace(
-            check=lambda provider, **kwargs: StaticCookieCheck(
-                provider=provider, status=CookieHealthState.HEALTHY, file_ok=True
-            )
-        ),
-    )
-    record, _ = JobService(repository).create_download(
-        chat_id=10,
-        user_id=20,
-        url="https://www.instagram.com/stories/exampleuser/",
-        mode=DownloadMode.INSTAGRAM_ALL_STORIES,
-    )
-    repository.set_status_message(record.job_id, 30)
-    paths = [tmp_path / "1.jpg"]
-    paths[0].write_bytes(b"media")
-    download_service = BatchDownloadService(artifacts=tuple(paths), fail=True)
-    context: dict[str, Any] = {
-        "settings": configured,
-        "repository": repository,
-        "download_service": download_service,
-        "bot": FakeBot(),
-        "delivery": BatchDelivery(),
-        "metrics": MetricsRegistry(),
-        "cookie_health_service": health,
-        "job_id": str(record.job_id),
-        "job_try": 1,
-    }
-    await process_download_job(
-        context,
-        chat_id=10,
-        user_id=20,
-        url=record.url,
-        mode=DownloadMode.INSTAGRAM_ALL_STORIES.value,
-    )
-    persisted = repository.get_job(record.job_id)
-    assert persisted is not None and persisted.status is JobStatus.FAILED
-    health_row = store.load(CookieService.INSTAGRAM)
-    assert health_row is not None
-    assert health_row.status is CookieHealthState.AUTH_FAILED
-    assert download_service.calls == 1
-
-
 async def test_highlight_tray_job_publishes_browser(settings: Settings, tmp_path: Path) -> None:
     configured = _settings(settings, tmp_path)
     configured.create_runtime_directories()
@@ -806,3 +653,201 @@ async def test_highlight_tray_cancelled_during_fetch_never_publishes(
     persisted = repository.get_job(record.job_id)
     assert persisted is not None and persisted.status is JobStatus.CANCELLED
     assert bot.messages == bot.edits == []
+
+
+class ConnectedStoryEngine(StoryInspectionService):
+    def __init__(self) -> None:
+        self.credentials: list[ResolvedCredential] = []
+        self.public = False
+
+    def _observe(self, credential: ResolvedCredential | None) -> None:
+        assert credential is not None
+        if self.public:
+            assert credential.context.kind is CredentialKind.NONE
+        else:
+            assert credential.context.kind is CredentialKind.USER_INSTAGRAM
+            assert credential.context.user_generation == 1
+            assert credential.context.policy is CredentialPolicy.USER_ONLY
+            assert credential.materialized_cookie_path is not None
+            assert Path(credential.materialized_cookie_path).read_bytes() == b"story-owner-session"
+        self.credentials.append(credential)
+
+    def inspect(self, url: str, *, credential: object | None = None) -> MediaInfo:
+        self._observe(cast(ResolvedCredential | None, credential))
+        return super().inspect(url, credential=credential)
+
+    def fetch_highlight_tray(self, username: str, **kwargs: Any) -> tuple[HighlightItem, ...]:
+        self._observe(kwargs.get("credential"))
+        assert username == "exampleuser"
+        return (HighlightItem("111", "Trip", 2),)
+
+    def download(self, request: DownloadRequest, **kwargs: Any) -> DownloadResult:
+        self._observe(kwargs.get("credential"))
+        request.output_directory.mkdir(parents=True, exist_ok=True)
+        paths = (request.output_directory / "1.jpg", request.output_directory / "2.jpg")
+        for path in paths:
+            path.write_bytes(b"media")
+        return BatchDownloadService(paths).download(job_id=request.job_id)
+
+
+def _connected_context(
+    settings: Settings, tmp_path: Path, *, public: bool = False
+) -> dict[str, Any]:
+    configured = _settings(settings, tmp_path)
+    configured.create_runtime_directories()
+    repository = SqliteJobRepository(configured.database_path())
+    repository.initialize()
+    credentials = SqliteInstagramCredentialRepository(configured.database_path())
+    credentials.initialize()
+    ring = VaultKeyRing.from_hex_material(active_key_id="test", active_key="42" * 32)
+    cryptor = CredentialCryptor(ring)
+    vault = CredentialVault(credentials, cryptor)
+    vault.store_session(20, b"story-owner-session")
+    vault.store_session(99, b"wrong-owner-session")
+    engine = ConnectedStoryEngine()
+    engine.public = public
+    accepted = datetime.now(UTC) - timedelta(days=2)
+    return {
+        "settings": configured,
+        "repository": repository,
+        "gallery_engine": engine,
+        "download_service": DownloadService(engine, frozenset({"instagram"})),
+        "credential_resolver": CredentialResolver(
+            vault, RestrictedCookieMaterializer(credentials, cryptor)
+        ),
+        "credential_context": ResolvedCredential.operator_public(),
+        "snapshot": EntitlementSnapshot(
+            capability=Capability.INSTAGRAM_PRIVATE_MEDIA,
+            accepted_at=accepted,
+            authorized_until=accepted + timedelta(days=1),
+            plan_id=PlanId("vip"),
+            grant_id=GrantId("grant"),
+            owner_user_id=20,
+        ),
+        "engine": engine,
+        "vault": vault,
+        "bot": FakeBot(),
+        "delivery": BatchDelivery(),
+        "metrics": MetricsRegistry(),
+        "job_try": 1,
+    }
+
+
+def _authorization(context: dict[str, Any]) -> dict[str, Any]:
+    if context["engine"].public:
+        return {}
+    return {
+        "entitlement_snapshot": context["snapshot"],
+        "credential_policy": CredentialPolicy.USER_ONLY,
+        "content_access_scope": ContentAccessScope.USER_RESTRICTED,
+        "user_credential_generation": 1,
+    }
+
+
+@pytest.mark.parametrize("public", [False, True])
+async def test_story_choice_binds_source_job_and_collection_preserves_access(
+    settings: Settings, tmp_path: Path, public: bool
+) -> None:
+    context = _connected_context(settings, tmp_path, public=public)
+    service = JobService(context["repository"])
+    parent, _ = service.create_inspection(
+        chat_id=10,
+        user_id=20,
+        url="https://www.instagram.com/stories/exampleuser/3964254748584813861/",
+        **_authorization(context),
+    )
+    context["job_id"] = str(parent.job_id)
+    await process_inspection_job(context, chat_id=10, user_id=20, url=parent.url)
+    keyboard = context["bot"].messages[0]["reply_markup"]
+    token = keyboard.inline_keyboard[0][0].callback_data.split(":")[1]
+    selection = context["repository"].get_selection(SelectionToken(token), 20)
+    assert selection.source_job_id == parent.job_id
+    child, _ = service.create_download(
+        chat_id=10,
+        user_id=20,
+        url="https://www.instagram.com/stories/exampleuser/",
+        mode=DownloadMode.INSTAGRAM_ALL_STORIES,
+        **_authorization(context),
+    )
+    context["job_id"] = str(child.job_id)
+    await process_download_job(
+        context,
+        chat_id=10,
+        user_id=20,
+        url=child.url,
+        mode=DownloadMode.INSTAGRAM_ALL_STORIES.value,
+    )
+    assert context["repository"].get_job(child.job_id).status is JobStatus.SUCCEEDED
+    assert context["delivery"].batch_calls == 1
+    assert all(
+        credential.materialized_cookie_path is None
+        or not Path(credential.materialized_cookie_path).parent.exists()
+        for credential in context["engine"].credentials
+    )
+
+
+@pytest.mark.parametrize("public", [False, True])
+async def test_highlight_tray_source_and_selected_download_preserve_owner_boundary(
+    settings: Settings, tmp_path: Path, public: bool
+) -> None:
+    context = _connected_context(settings, tmp_path, public=public)
+    service = JobService(context["repository"])
+    parent, _ = service.create_highlight_tray(
+        chat_id=10,
+        user_id=20,
+        url="https://www.instagram.com/exampleuser/highlights/",
+        username="exampleuser",
+        **_authorization(context),
+    )
+    context["job_id"] = str(parent.job_id)
+    await process_highlight_tray_job(
+        context, chat_id=10, user_id=20, url=parent.url, username="exampleuser"
+    )
+    keyboard = context["bot"].messages[0]["reply_markup"]
+    token = keyboard.inline_keyboard[0][0].callback_data.split(":")[1]
+    tray = context["repository"].get_highlight_tray(SelectionToken(token), 20)
+    assert tray.source_job_id == parent.job_id
+    assert tray.owner_user_id == 20
+    child, _ = service.create_download(
+        chat_id=10,
+        user_id=20,
+        url=f"https://www.instagram.com/stories/highlights/{tray.highlights[0].highlight_id}/",
+        mode=DownloadMode.INSTAGRAM_HIGHLIGHT,
+        **_authorization(context),
+    )
+    context["job_id"] = str(child.job_id)
+    await process_download_job(
+        context, chat_id=10, user_id=20, url=child.url, mode=DownloadMode.INSTAGRAM_HIGHLIGHT.value
+    )
+    assert context["repository"].get_job(child.job_id).status is JobStatus.SUCCEEDED
+    assert context["delivery"].batch_calls == 1
+    assert all(
+        credential.materialized_cookie_path is None
+        or not Path(credential.materialized_cookie_path).parent.exists()
+        for credential in context["engine"].credentials
+    )
+
+
+@pytest.mark.parametrize("forgery", ["owner", "target"])
+async def test_private_highlight_tray_rejects_forged_queue_owner_or_target(
+    settings: Settings, tmp_path: Path, forgery: str
+) -> None:
+    context = _connected_context(settings, tmp_path)
+    record, _ = JobService(context["repository"]).create_highlight_tray(
+        chat_id=10,
+        user_id=20,
+        url="https://www.instagram.com/exampleuser/highlights/",
+        username="exampleuser",
+        **_authorization(context),
+    )
+    context["job_id"] = str(record.job_id)
+    await process_highlight_tray_job(
+        context,
+        chat_id=10,
+        user_id=99 if forgery == "owner" else 20,
+        url=record.url,
+        username="wronguser" if forgery == "target" else "exampleuser",
+    )
+    assert context["repository"].get_job(record.job_id).status is JobStatus.FAILED
+    assert context["engine"].credentials == []
+    assert context["bot"].messages == []

@@ -233,6 +233,15 @@ class SqliteJobRepository(JobRepository):
                 """
             )
             _ensure_column(connection, "delivery_items", "caption", "TEXT")
+            _ensure_column(connection, "selections", "source_job_id", "TEXT")
+            _ensure_column(connection, "highlight_trays", "source_job_id", "TEXT")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS selections_source_job_idx ON selections(source_job_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS highlight_trays_source_job_idx "
+                "ON highlight_trays(source_job_id)"
+            )
             _ensure_column(connection, "jobs", "container", "TEXT")
             _ensure_column(
                 connection,
@@ -361,8 +370,8 @@ class SqliteJobRepository(JobRepository):
                 """
                 INSERT OR REPLACE INTO selections (
                     token, owner_user_id, chat_id, media_json, allowed_modes_json,
-                    created_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    created_at, expires_at, source_job_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     selection.token,
@@ -372,6 +381,7 @@ class SqliteJobRepository(JobRepository):
                     json.dumps([mode.value for mode in selection.allowed_modes]),
                     _dump_datetime(selection.created_at),
                     _dump_datetime(selection.expires_at),
+                    selection.source_job_id,
                 ),
             )
 
@@ -395,8 +405,8 @@ class SqliteJobRepository(JobRepository):
                 """
                 INSERT OR REPLACE INTO highlight_trays (
                     token, owner_user_id, chat_id, username, highlights_json,
-                    created_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    created_at, expires_at, source_job_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tray.token,
@@ -417,6 +427,7 @@ class SqliteJobRepository(JobRepository):
                     ),
                     _dump_datetime(tray.created_at),
                     _dump_datetime(tray.expires_at),
+                    tray.source_job_id,
                 ),
             )
 
@@ -446,6 +457,7 @@ class SqliteJobRepository(JobRepository):
             highlights=highlights,
             created_at=_load_datetime(str(row["created_at"])),
             expires_at=_load_datetime(str(row["expires_at"])),
+            source_job_id=JobId(str(row["source_job_id"])) if row["source_job_id"] else None,
         )
         if tray.expired:
             raise SelectionExpiredError("Highlight tray has expired")
@@ -1084,7 +1096,9 @@ class SqliteJobRepository(JobRepository):
             terminal = tuple(status.value for status in JobStatus if status.terminal)
             placeholders = ",".join("?" for _ in terminal)
             jobs = connection.execute(
-                f"DELETE FROM jobs WHERE status IN ({placeholders}) AND updated_at < ?",
+                f"DELETE FROM jobs WHERE status IN ({placeholders}) AND updated_at < ? "
+                "AND NOT EXISTS (SELECT 1 FROM selections WHERE source_job_id = jobs.job_id) "
+                "AND NOT EXISTS (SELECT 1 FROM highlight_trays WHERE source_job_id = jobs.job_id)",
                 (*terminal, retention_cutoff),
             ).rowcount
         return max(0, selections) + max(0, trays) + max(0, jobs)
@@ -1406,6 +1420,7 @@ def _selection_from_row(row: sqlite3.Row) -> SelectionRecord:
         ),
         created_at=_load_datetime(str(row["created_at"])),
         expires_at=_load_datetime(str(row["expires_at"])),
+        source_job_id=JobId(str(row["source_job_id"])) if row["source_job_id"] else None,
     )
 
 

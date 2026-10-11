@@ -258,6 +258,7 @@ def test_job_entitlement_snapshot_round_trip(tmp_path: Path) -> None:
         authorized_until=_utc(2026, 2, 1),
         plan_id=PlanId("vip-1"),
         grant_id=GrantId("g1"),
+        owner_user_id=2,
     )
     record = JobRecord(
         job_id=JobId("vip-job"),

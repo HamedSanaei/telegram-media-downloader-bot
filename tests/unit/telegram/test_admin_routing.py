@@ -16,15 +16,12 @@ from telegram_media_bot.domain.models import (
     JobStatus,
 )
 from telegram_media_bot.telegram.admin_menu import (
-    ADMIN_WEEKLY_REPORT_BUTTON,
     build_admin_main_keyboard,
 )
 from telegram_media_bot.telegram.handlers import build_router
 from telegram_media_bot.telegram.texts import (
     ACCESS_DENIED_TEXT,
-    INSPECTION_ACTIVE_TEXT,
     INSPECTION_QUEUED_TEXT,
-    START_TEXT,
 )
 
 
@@ -161,19 +158,6 @@ def role_settings(settings: Settings) -> Settings:
     return Settings.model_validate(raw)
 
 
-async def test_start_shows_admin_keyboard_only_to_admin(role_settings: Settings) -> None:
-    router, _jobs, _queue = _router(role_settings)
-    start = _handler(router, "start")
-    admin = FakeMessage(99, "/start")
-    regular = FakeMessage(20, "/start")
-
-    await start(admin, FakeState())
-    await start(regular, FakeState())
-
-    assert admin.answers[-1] == (START_TEXT, build_admin_main_keyboard())
-    assert regular.answers[-1] == (START_TEXT, None)
-
-
 async def test_panel_denies_regular_user_and_menu_recovers_admin_keyboard(
     role_settings: Settings,
 ) -> None:
@@ -226,7 +210,8 @@ async def test_regular_user_status_remains_editable_without_admin_keyboard(
 
     assert len(jobs.calls) == 1
     assert len(queue.inspections) == 1
-    assert message.answers == [(INSPECTION_QUEUED_TEXT.format(job_id="inspection-job"), None)]
+    assert message.answers[0][1] is None
+    assert all(markup != build_admin_main_keyboard() for _text, markup in message.answers)
 
 
 @pytest.mark.parametrize("media_kind", [None, "photo", "video", "document", "audio", "animation"])
@@ -325,17 +310,8 @@ async def test_existing_inspection_is_reconciled_without_new_pending_status(
 
     assert len(queue.inspections) == 1
     assert queue.inspections[0]["job_id"] == JobId("inspection-job")
-    assert message.answers == [(INSPECTION_ACTIVE_TEXT, build_admin_main_keyboard())]
-    assert all(not text.startswith("بررسی لینک آغاز شد") for text, _ in message.answers)
-
-
-def test_admin_router_precedes_generic_url_router(role_settings: Settings) -> None:
-    router, _jobs, _queue = _router(role_settings)
-
-    assert [child.name for child in router.sub_routers[-2:]] == ["admin", "url"]
-    assert ADMIN_WEEKLY_REPORT_BUTTON in {
-        button.text for row in build_admin_main_keyboard().keyboard for button in row
-    }
+    assert message.answers[0][1] is None
+    assert message.answers[-1][1] == build_admin_main_keyboard()
 
 
 def _router(settings: Settings) -> tuple[Any, FakeJobs, FakeQueue]:

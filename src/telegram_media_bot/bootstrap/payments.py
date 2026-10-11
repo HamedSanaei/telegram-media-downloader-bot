@@ -79,6 +79,8 @@ def build_payment_runtime(
     _register_hooshpay(payments.hooshpay, repository, gateways, requester)
     if not gateways:
         return None
+    for gateway in gateways.values():
+        billing.register_gateway(gateway)
     logger = (
         PaymentAuditLogger(audit, payment_events_enabled=payment_events_enabled)
         if audit is not None
