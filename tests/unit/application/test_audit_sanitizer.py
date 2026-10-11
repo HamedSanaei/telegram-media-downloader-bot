@@ -34,12 +34,18 @@ def test_caption_retains_full_description_for_transport_budgeting() -> None:
         ("عنوان\nAuthorization: Bearer synthetic-secret\nend", "synthetic-secret"),
         ("عنوان\nCookie: sessionid=first-secret; csrftoken=second-secret", "second-secret"),
         ("عنوان\npassword=synthetic-password\nend", "synthetic-password"),
-        ("عنوان\n123456:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123\nend", "ABCDEFGHIJKLMNOPQRSTUVWXYZ_123"),
         (
-            "عنوان\nhttps://proxy-user:proxy-pass@proxy.example\nend",
+            "عنوان\n123456:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123\nend",  # pragma: allowlist secret
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ_123",  # pragma: allowlist secret
+        ),
+        (
+            "عنوان\nhttps://proxy-user:proxy-pass@proxy.example\nend",  # pragma: allowlist secret
             "proxy-pass",
-        ),  # pragma: allowlist secret
-        ('عنوان\n{"payment_secret": "synthetic-payment"}', "synthetic-payment"),
+        ),
+        (
+            'عنوان\n{"payment_secret": "synthetic-payment"}',  # pragma: allowlist secret
+            "synthetic-payment",
+        ),
     ],
 )
 def test_caption_redacts_secrets_before_persistence(caption: str, secret: str) -> None:

@@ -74,7 +74,7 @@
 | `scripts/check_agent_context.py` | Deterministic CI guard for routing docs/Skills, query-first/source-authority guidance, preserved quality references, exclusions, and no runtime Graphify dependency |
 | `scripts/upgrade_ytdlp.py` | Reviewed engine upgrade, verification, and report workflow |
 | `scripts/compare_canary.py` | Baseline/canary failure-rate promotion gate |
-| `scripts/generate_file_manifest.py` | Deterministic SHA-256 source-manifest generation |
+| `scripts/generate_file_manifest.py` | Deterministic SHA-256 source-manifest generation with text-line-ending normalization; `--check` guards both quality lanes, and regeneration follows final source/test/documentation edits |
 | `scripts/check_package_assets.py` | Wheel/sdist font-license inspection and clean-wheel resource/decode smoke |
 | `scripts/check_gallerydl_fixtures.py` | Pinned 1.32.8 normalized-fixture upgrade contract and optional installed-version check |
 | `release-policy.json`, `scripts/check_release_policy.py` | Canonical withdrawn-release denylist and fail-closed build/publication check; v-prefixed and package versions normalize to the same target |

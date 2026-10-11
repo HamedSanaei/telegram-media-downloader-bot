@@ -347,6 +347,19 @@ job, how to rerun a failed lane, how to troubleshoot classifier/base-SHA failure
 measure cache behavior. Monitor queue time, job duration, cancellation rate, skipped/forced-heavy
 counts, classifier fallbacks, and final-gate outcomes with bounded metadata.
 
+If `quality` reports `FILE_MANIFEST.txt is stale`, regenerate the SHA-256 manifest **after the
+final source, test, and documentation edits**, then execute the quality lane:
+
+```bash
+uv run python scripts/generate_file_manifest.py
+uv run python scripts/generate_file_manifest.py --check
+bash scripts/ci_fast_quality.sh
+```
+
+Commit the regenerated manifest together with the changed files. Rerunning a stale commit cannot
+repair its release fingerprints. Keep CI's fail-closed `--check`; do not automatically rewrite the
+manifest in the workflow or bypass the check.
+
 ## Acceptance gates
 
 1. Ordinary Python/domain changes receive fast feedback without the irrelevant updater matrix.

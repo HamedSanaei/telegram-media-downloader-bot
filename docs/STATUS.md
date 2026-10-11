@@ -2,6 +2,29 @@
 
 Last updated: 2026-10-11
 
+## CI quality manifest and synthetic-secret repair (2026-10-11)
+
+- Push CI run `38160936035` on `60d75ac75559ea0039ee564caf08aec77d7933c0` stopped at
+  `scripts/generate_file_manifest.py --check`: source/test/documentation changes were not reflected
+  in `FILE_MANIFEST.txt`. The remote Docker-runtime and updater-integration lanes succeeded;
+  `final-ci-gate` correctly failed because `quality` failed.
+- Regenerated the deterministic 486-entry manifest. The subsequently exposed detect-secrets
+  failures were deliberately synthetic caption-redaction fixtures (token, proxy credentials,
+  payment secret). Only those literal lines are allowlisted; the ineffective proxy allowlist on
+  the tuple closer now sits on its literal. Fixture values/assertions, the baseline, detector
+  configuration, workflow, coverage threshold, and release safeguards are unchanged.
+- Actual `scripts/ci_fast_quality.sh` execution passed on Python 3.14.5: Linux 1,663 tests passed,
+  one opt-in skip, 82.61% coverage; Windows 1,652 passed, 12 platform/opt-in skips, 82.55% coverage.
+  Lock/frozen sync, architecture/context/text/manifest, Ruff, mypy, detect-secrets, and pip check
+  passed. A temporary unallowlisted synthetic password was still rejected by the configured hook.
+- Verification used isolated test/environment/cache paths. Linux hook sources used the existing
+  pinned public Git tags through a temporary local mirror because WSL could not resolve GitHub;
+  no checker was skipped or replaced. Existing Windows cache/pytest permission problems were
+  avoided with new private verification roots rather than changes to user caches or project checks.
+- T033 and the code map document regenerating the manifest after final source/test/documentation
+  edits and committing it with those files. No commit, push, hosted rerun, publication, or deployment
+  was performed in this repair.
+
 ## Ordinary-user menu and owner-bound VIP downloads (2026-10-11)
 
 - `/start` and `/menu` separate ordinary-user and administrator keyboards; stale/forged management
