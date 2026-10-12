@@ -213,6 +213,10 @@ class GalleryDlExtractionError(DownloadFailedError):
     pass
 
 
+class GalleryDlEmptyResponseError(GalleryDlExtractionError):
+    """No media events or definitive provider error; availability remains unknown."""
+
+
 class GalleryDlOutputChangedError(MediaBotError):
     pass
 

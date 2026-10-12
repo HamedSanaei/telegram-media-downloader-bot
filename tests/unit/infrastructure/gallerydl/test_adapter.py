@@ -16,6 +16,7 @@ from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
     GalleryDlAuthenticationRequiredError,
     GalleryDlCookiesExpiredError,
+    GalleryDlEmptyResponseError,
     GalleryDlExtractionError,
     GalleryDlOutputChangedError,
     GalleryDlUnsupportedUrlError,
@@ -413,18 +414,18 @@ def test_story_image_inspection_keeps_image_original() -> None:
     assert {option.mode for option in info.format_options} == {DownloadMode.IMAGE_ORIGINAL}
 
 
-def test_expired_story_empty_output_is_media_unavailable(settings: Settings) -> None:
+def test_empty_story_without_provider_evidence_does_not_claim_expiry(settings: Settings) -> None:
     engine = GalleryDlEngine(
         settings,
         runner=cast(GalleryDlRunner, _FixtureRunner(b"")),
     )
     engine._validator = cast(Any, _AllowValidator())
 
-    with pytest.raises(MediaUnavailableError, match="story is expired or unavailable"):
+    with pytest.raises(GalleryDlEmptyResponseError, match="no media events"):
         engine.inspect("https://www.instagram.com/stories/exampleuser/123/")
 
 
-def test_successful_empty_instagram_post_is_unavailable_not_output_changed(
+def test_successful_empty_instagram_post_is_ambiguous_not_content_deleted(
     settings: Settings,
 ) -> None:
     runner = _FixtureRunner(b"")
@@ -434,7 +435,7 @@ def test_successful_empty_instagram_post_is_unavailable_not_output_changed(
     )
     engine._validator = cast(Any, _AllowValidator())
 
-    with pytest.raises(MediaUnavailableError, match="unavailable or inaccessible"):
+    with pytest.raises(GalleryDlEmptyResponseError, match="no media events"):
         engine.inspect("https://www.instagram.com/p/Db8-JS3jOMs/?img_index=2&igsi=synthetic")
     assert runner.inspections == 1
     assert len(runner.commands) == 1

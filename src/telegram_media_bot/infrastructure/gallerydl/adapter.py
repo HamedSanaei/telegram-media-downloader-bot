@@ -23,6 +23,7 @@ from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
     DownloadFailedError,
+    GalleryDlEmptyResponseError,
     GalleryDlExtractionError,
     GalleryDlOutputChangedError,
     GalleryDlUnavailableError,
@@ -471,12 +472,9 @@ class GalleryDlEngine:
             if type(mapped) is not GalleryDlExtractionError:
                 error = mapped
         if error is None:
-            reason = (
-                "Instagram story is expired or unavailable"
-                if _is_instagram_story_url(canonical)
-                else "gallery content is unavailable or inaccessible"
+            error = GalleryDlEmptyResponseError(
+                "gallery-dl returned no media events without a definitive provider error"
             )
-            error = MediaUnavailableError(reason)
         if isinstance(error, MediaBotError) and error.extractor is None:
             error.extractor = provider
         logger.warning(

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v1.4.0-rc.10 - 2026-10-13
+
+### Fixed
+
+- Treat empty gallery-dl output without definitive provider evidence as an ambiguous extraction failure, never proof that an Instagram post is deleted or private.
+- Explain possible temporary Instagram or cookie/session problems to public users without declaring cookies expired, and record the distinct gallery-extraction category for operators.
+- Preserve explicit authentication, expired-cookie, and media-unavailable classifications with regression tests.
+
 ## v1.4.0-rc.9 - 2026-10-12
 
 ### Fixed

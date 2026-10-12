@@ -77,6 +77,7 @@ from telegram_media_bot.domain.errors import (
     CredentialError,
     DeliveryError,
     GalleryDlCookiesExpiredError,
+    GalleryDlEmptyResponseError,
     GalleryDlExtractionError,
     GalleryDlOutputChangedError,
     GalleryDlUnavailableError,
@@ -144,6 +145,7 @@ from telegram_media_bot.telegram.texts import (
     GALLERY_OUTPUT_CHANGED_TEXT,
     GALLERY_UNAVAILABLE_TEXT,
     INSTAGRAM_COOKIES_BLOCKED_TEXT,
+    INSTAGRAM_EMPTY_RESPONSE_TEXT,
     INVALID_IMAGE_TEXT,
     MEDIA_TOO_LARGE_TEXT,
     MEDIA_UNAVAILABLE_TEXT,
@@ -1658,6 +1660,8 @@ def _controlled_failure_text(exc: MediaBotError, *, private_attempt: bool = Fals
         return INSTAGRAM_COOKIES_BLOCKED_TEXT
     if isinstance(exc, GalleryDlCookiesExpiredError):
         return GALLERY_COOKIES_EXPIRED_TEXT
+    if isinstance(exc, GalleryDlEmptyResponseError) and exc.extractor == "instagram":
+        return INSTAGRAM_EMPTY_RESPONSE_TEXT
     if isinstance(exc, GalleryDlExtractionError):
         return GALLERY_EXTRACTION_TEXT
     if isinstance(exc, RateLimitedError):

@@ -5,6 +5,7 @@ from telegram_media_bot.domain.errors import (
     DeliveryTooLargeError,
     DeliveryUncertainError,
     GalleryDlCookiesExpiredError,
+    GalleryDlExtractionError,
     GeoRestrictedError,
     InstagramCookiesUnavailableError,
     InvalidUrlError,
@@ -24,6 +25,8 @@ from telegram_media_bot.domain.models import ErrorCategory
 def error_category(exc: BaseException) -> ErrorCategory:
     if isinstance(exc, GalleryDlCookiesExpiredError):
         return ErrorCategory.GALLERY_COOKIES_EXPIRED
+    if isinstance(exc, GalleryDlExtractionError):
+        return ErrorCategory.GALLERY_EXTRACTION
     if isinstance(exc, (AuthenticationRequiredError, InstagramCookiesUnavailableError)):
         return ErrorCategory.AUTHENTICATION
     if isinstance(exc, JobCancelledError):

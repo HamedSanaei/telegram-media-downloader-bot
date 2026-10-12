@@ -10,8 +10,8 @@ from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
     GalleryDlAuthenticationRequiredError,
+    GalleryDlEmptyResponseError,
     GalleryDlOutputChangedError,
-    MediaUnavailableError,
 )
 from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
 from telegram_media_bot.infrastructure.gallerydl.models import GalleryProcessResult
@@ -108,7 +108,7 @@ class _TrayRunner:
 @pytest.mark.parametrize(
     "stderr,error",
     [
-        (b"", MediaUnavailableError),
+        (b"", GalleryDlEmptyResponseError),
         (b"HTTP 403 Forbidden: login required", GalleryDlAuthenticationRequiredError),
     ],
 )
