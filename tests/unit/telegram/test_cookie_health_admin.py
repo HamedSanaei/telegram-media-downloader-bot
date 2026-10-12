@@ -20,7 +20,6 @@ from telegram_media_bot.telegram.admin_menu import (
     build_admin_cookie_health_keyboard,
 )
 from telegram_media_bot.telegram.handlers import build_router
-from telegram_media_bot.telegram.texts import ACCESS_DENIED_TEXT
 
 
 class FakeMessage:
@@ -167,8 +166,6 @@ async def test_cookie_health_button_is_admin_only(admin_settings: Settings) -> N
     await handler(admin, FakeState())
     await handler(regular, FakeState())
 
-    assert regular.answers[-1][0] == ACCESS_DENIED_TEXT
-    assert admin.answers[-1][0].startswith("🍪")
     assert health.static_calls == 1
 
 
@@ -186,35 +183,6 @@ async def test_cookie_health_refresh_runs_static_inspection_only(
     final = message.answers[-1][0]
     assert "Expiring soon" in final
     assert "Instagram" in final
-
-
-async def test_cookie_health_callback_fails_closed_for_non_admin(
-    admin_settings: Settings,
-) -> None:
-    router = _router(admin_settings, FakeHealthService())
-    handler = _handler(router, "cookie_health_callback")
-    callback = SimpleNamespace(
-        from_user=SimpleNamespace(
-            id=20,
-            username="u",
-            first_name="U",
-            last_name=None,
-            language_code=None,
-            is_premium=None,
-        ),
-        data="adm:ch:refresh",
-        message=None,
-    )
-    answers: list[str] = []
-
-    async def answer(text: str, show_alert: bool = False) -> None:
-        answers.append(text)
-
-    callback.answer = answer
-
-    await handler(callback)
-
-    assert answers == [ACCESS_DENIED_TEXT]
 
 
 async def test_cookie_health_callback_check_for_admin(

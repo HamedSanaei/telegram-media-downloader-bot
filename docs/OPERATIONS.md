@@ -199,6 +199,18 @@ the worker-level concurrency gate and optional `TMB_WORKER_CPUS` quota protect s
 
 ## Telegram administration
 
+Menu access and administrator authorization are separate. `/menu`, `🔄 تازه‌سازی منو`, and
+`🏠 منوی مدیریت` clear pending input and restore the sender's current role menu, even when Telegram
+has cached an administrator keyboard. Ordinary users receive public download, subscription/purchase,
+private VIP download, and personal Instagram controls, not management controls. A management refusal
+does not mean that the sender is banned from downloading.
+
+If `/start` or a download URL returns the whole-bot access-denied message, check the effective local
+`config.yaml`: a nonempty `security.allowed_user_ids` must include the numeric Telegram user ID;
+`security.blocked_user_ids` and durable `/block` bans still reject downloads. A cached-menu refresh
+never bypasses those rules. Public downloading does not require VIP. Configure `telegram.admin_ids`
+only for intended administrators; Telegram display names and Telegram Premium do not grant that role.
+
 Only IDs in `telegram.admin_ids` can use:
 
 - `/health`: Redis/database status and queue depth;

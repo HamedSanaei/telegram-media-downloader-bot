@@ -95,6 +95,8 @@ Follow existing Persian text organization and reusable keyboard/rendering conven
 - No provider/plan creates no payment order and presents a stable unavailable state.
 - Duplicate/replayed callbacks cannot duplicate orders, grants, revokes, or admin actions.
 - Admin views are aggregate/sanitized and every mutation is audited.
+- Cached administrator refresh/back buttons restore the current role and clear stale upload/URL
+  state without authorizing management; legitimate public downloads still enforce allowlists/bans.
 
 ## Tests
 
@@ -122,3 +124,7 @@ billing, and existing HTTPS account-connection services. Status remains availabl
 disabled. Opaque expiring plan choices and durable order ownership protect selection/checkout/check
 callbacks; replay cannot duplicate checkout or economic grants. Account/status/purchase navigation
 clears URL FSM state, and administrator controls remain inaccessible to ordinary users.
+
+The 2026-10-12 menu recovery fix routes refresh/back reply buttons through the shared current-role
+menu handler and scopes administrative denials to management. Real-dispatcher coverage includes
+ordinary/current/demoted roles, stale cookie/public/private states, and allowlist/static/durable bans.

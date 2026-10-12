@@ -1,6 +1,36 @@
 # Project status
 
-Last updated: 2026-10-11
+Last updated: 2026-10-12
+
+## Role-aware menu recovery and scoped administrator denials (2026-10-12)
+
+- The administrator refresh/back reply buttons incorrectly required administrator authorization,
+  so ordinary users with a cached keyboard received the whole-bot access-denied message. Both
+  navigation buttons now share `/menu` routing, clear pending FSM data/state, and install the
+  sender's current ordinary-user or administrator keyboard, including after role revocation.
+- Genuine management commands/buttons/callbacks remain administrator-only and use a management
+  refusal instead of claiming that all bot access is forbidden. Unauthorized logger callbacks
+  also clear stale administration state. General allowlist, static/durable bans, membership, and
+  rate-limit policy are unchanged; menu recovery grants neither administrator nor VIP capability.
+- All 130 focused routing/authorization regressions passed. An offline smoke drove seven actual
+  aiogram/SQLite scenarios: ordinary refresh/back, administrator refresh, demoted-administrator
+  back, and allowlist/static/durable bans. Correct keyboards and cleared FSM were observed;
+  forged management created no job; legitimate public requests persisted owner-bound jobs without
+  private authorization. Restrictions created zero jobs until explicitly removed in isolated
+  fixtures. Telegram/network/queue transports were fixtures, not a live bot deployment.
+- Two additional real-dispatcher logger callback smokes covered ordinary and demoted-administrator
+  callers: the scoped alert was emitted, FSM data/state cleared, a known durable destination stayed
+  enabled, and neither probes nor jobs were created. The actual ordinary refresh reply was the
+  welcome message, not an access denial.
+- Complete `scripts/ci_fast_quality.sh` gates passed on Python 3.14.5: Windows 1,671 passed,
+  12 platform/opt-in skips, 82.58% coverage; Linux 1,682 passed, one opt-in skip, 82.63% coverage.
+  Frozen lock/sync, architecture/context/text/manifest, Ruff lint/format, mypy, detect-secrets,
+  and pip checks passed. Test/cache/virtualenv paths were isolated outside the repository; native
+  Linux used the unchanged pinned hook tags via temporary Windows-fetched local mirrors.
+- Specification, architecture, ADR-024, operations troubleshooting, T023, and the code map document
+  current-role navigation and the distinction between management refusals and bot access policy.
+  The final source/documentation integrity manifest was regenerated. No configuration, commit,
+  push, publication, or deployment was performed.
 
 ## CI quality manifest and synthetic-secret repair (2026-10-11)
 

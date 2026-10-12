@@ -99,6 +99,7 @@ from telegram_media_bot.telegram.instagram_ux import (
 from telegram_media_bot.telegram.middleware import CorrelationMiddleware
 from telegram_media_bot.telegram.texts import (
     ACCESS_DENIED_TEXT,
+    ADMIN_ACCESS_DENIED_TEXT,
     CANCELLED_TEXT,
     CANNOT_CANCEL_TEXT,
     DELIVERY_UNCERTAIN_TEXT,
@@ -291,7 +292,7 @@ def build_router(
     @router.message(Command("health"))
     async def health(message: Message) -> None:
         if not _is_admin(message, settings) or message.from_user is None:
-            await message.answer(ACCESS_DENIED_TEXT)
+            await message.answer(ADMIN_ACCESS_DENIED_TEXT)
             return
         redis_ok, depth, database_ok = await asyncio.gather(
             queue.healthy(),
@@ -339,7 +340,7 @@ def build_router(
     @router.message(Command("queue"))
     async def queue_status(message: Message) -> None:
         if not _is_admin(message, settings):
-            await message.answer(ACCESS_DENIED_TEXT)
+            await message.answer(ADMIN_ACCESS_DENIED_TEXT)
             return
         depth, counts = await asyncio.gather(
             queue.queue_depth(), asyncio.to_thread(repository.counts)
@@ -352,7 +353,7 @@ def build_router(
     @router.message(Command("failed"))
     async def failed(message: Message) -> None:
         if not _is_admin(message, settings):
-            await message.answer(ACCESS_DENIED_TEXT)
+            await message.answer(ADMIN_ACCESS_DENIED_TEXT)
             return
         records = await asyncio.to_thread(repository.failed_jobs, 10)
         if not records:
@@ -367,7 +368,7 @@ def build_router(
     @router.message(Command("block", "unblock"))
     async def manage_block(message: Message) -> None:
         if not _is_admin(message, settings) or message.from_user is None:
-            await message.answer(ACCESS_DENIED_TEXT)
+            await message.answer(ADMIN_ACCESS_DENIED_TEXT)
             return
         parts = (message.text or "").split()
         if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
@@ -388,7 +389,7 @@ def build_router(
     @router.message(Command("resolve"))
     async def resolve_uncertain(message: Message) -> None:
         if not _is_admin(message, settings):
-            await message.answer(ACCESS_DENIED_TEXT)
+            await message.answer(ADMIN_ACCESS_DENIED_TEXT)
             return
         parts = (message.text or "").split()
         if len(parts) != 2:

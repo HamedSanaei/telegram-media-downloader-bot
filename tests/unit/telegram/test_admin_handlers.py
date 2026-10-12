@@ -45,7 +45,6 @@ from telegram_media_bot.telegram.admin_menu import (
     build_admin_cookie_keyboard,
     build_admin_main_keyboard,
 )
-from telegram_media_bot.telegram.texts import ACCESS_DENIED_TEXT
 
 
 class FakeState:
@@ -389,12 +388,12 @@ async def test_non_admin_forged_button_is_denied_without_state(
         chart_renderer=FakeRenderer(),
     )
     state = FakeState()
+    state.value = "pending-admin-operation"
     message = FakeMessage(20, ADMIN_DOWNLOAD_BUTTON)
 
     await _handler(router, "begin_admin_download")(message, state)
 
     assert state.value is None
-    assert message.answers[-1][0] == ACCESS_DENIED_TEXT
 
 
 async def test_report_generation_is_single_flight_per_admin(
@@ -490,7 +489,7 @@ async def test_forged_report_refresh_callback_is_denied(
 
     await _handler(router, "refresh_report")(callback)
 
-    assert callback.answers == [(ACCESS_DENIED_TEXT, True)]
+    assert callback.answers[-1][1] is True
     assert callback.message.photos == []
 
 
@@ -627,6 +626,7 @@ async def test_non_admin_cannot_download_or_upload_cookies(admin_settings: Setti
         cookie_manager=cookie_manager,
     )
     state = FakeState()
+    state.value = "pending-admin-operation"
     message = FakeMessage(
         20,
         document=SimpleNamespace(file_size=len(content), file_name="cookies.txt"),
@@ -638,7 +638,7 @@ async def test_non_admin_cannot_download_or_upload_cookies(admin_settings: Setti
 
     assert cookie_manager.uploads == []
     assert cookie_manager.exports == 0
-    assert all(answer[0] == ACCESS_DENIED_TEXT for answer in message.answers)
+    assert state.value is None
 
 
 async def test_cookie_export_is_rejected_outside_private_admin_chat(

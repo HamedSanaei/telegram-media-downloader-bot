@@ -119,6 +119,10 @@ Premium/Telethon/MTProto uploader, staging channel, Premium queue, or copy-messa
 - `/start` and `/menu` replace any stale keyboard with the current role's menu. Ordinary users see
   public download, subscription type/status, Premium Downloader / VIP purchase, private VIP download,
   and personal Instagram connect/status/disconnect; administrator controls remain role-authorized.
+  Refresh/back-to-menu reply buttons also clear pending state and render the current role, even
+  when Telegram still displays a cached administrator keyboard. Navigation does not authorize
+  management or bypass download access policy; management refusals are distinct from whole-bot
+  access denials.
 - Every Free or VIP user may connect their own Instagram account through a short-lived signed link
   and HTTPS page. Connection alone does not grant VIP, nor does Telegram Premium.
 - Free public downloading remains supported and does not require account connection. Public

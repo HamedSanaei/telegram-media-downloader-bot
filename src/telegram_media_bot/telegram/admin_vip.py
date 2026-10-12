@@ -30,7 +30,7 @@ from telegram_media_bot.telegram.admin_menu import (
     ADMIN_VIP_BUTTON,
     build_admin_main_keyboard,
 )
-from telegram_media_bot.telegram.texts import ACCESS_DENIED_TEXT
+from telegram_media_bot.telegram.texts import ADMIN_ACCESS_DENIED_TEXT
 
 _STATUS_LABELS: dict[str, str] = {
     SubscriptionStatus.ACTIVE.value: "active",
@@ -125,7 +125,7 @@ def build_admin_vip_router(
     @router.message(F.text == ADMIN_VIP_BUTTON)
     async def open_vip_panel(message: Message, state: FSMContext) -> None:
         if not _authorized(message.from_user.id if message.from_user else None):
-            await message.answer(ACCESS_DENIED_TEXT)
+            await message.answer(ADMIN_ACCESS_DENIED_TEXT)
             return
         if vip_admin is None:
             await message.answer(
@@ -139,7 +139,7 @@ def build_admin_vip_router(
     @router.callback_query(F.data.startswith("vipadm:"))
     async def vip_admin_callback(callback: CallbackQuery, state: FSMContext) -> None:
         if not _authorized(callback.from_user.id if callback.from_user else None):
-            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            await callback.answer(ADMIN_ACCESS_DENIED_TEXT, show_alert=True)
             return
         if vip_admin is None or callback.message is None:
             await callback.answer("not configured", show_alert=True)
@@ -183,7 +183,7 @@ def build_admin_vip_router(
     @router.callback_query(F.data.startswith("vipadm:plan:"))
     async def choose_grant_plan(callback: CallbackQuery, state: FSMContext) -> None:
         if not _authorized(callback.from_user.id if callback.from_user else None):
-            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            await callback.answer(ADMIN_ACCESS_DENIED_TEXT, show_alert=True)
             return
         if vip_admin is None or callback.message is None:
             await callback.answer("not configured", show_alert=True)
@@ -203,7 +203,7 @@ def build_admin_vip_router(
     @router.message(F.state == AdminVipState.awaiting_user_id)
     async def receive_user_id(message: Message, state: FSMContext) -> None:
         if not _authorized(message.from_user.id if message.from_user else None):
-            await message.answer(ACCESS_DENIED_TEXT)
+            await message.answer(ADMIN_ACCESS_DENIED_TEXT)
             return
         assert vip_admin is not None
         raw = (message.text or "").strip()
@@ -280,7 +280,7 @@ def build_admin_vip_router(
     @router.message(F.state == AdminVipState.awaiting_grant_months)
     async def receive_grant_months(message: Message, state: FSMContext) -> None:
         if not _authorized(message.from_user.id if message.from_user else None):
-            await message.answer(ACCESS_DENIED_TEXT)
+            await message.answer(ADMIN_ACCESS_DENIED_TEXT)
             return
         assert vip_admin is not None
         raw = (message.text or "").strip()

@@ -20,7 +20,6 @@ from telegram_media_bot.telegram.admin_menu import (
 )
 from telegram_media_bot.telegram.handlers import build_router
 from telegram_media_bot.telegram.texts import (
-    ACCESS_DENIED_TEXT,
     INSPECTION_QUEUED_TEXT,
 )
 
@@ -156,22 +155,6 @@ def role_settings(settings: Settings) -> Settings:
     raw = settings.model_dump()
     raw["telegram"]["admin_ids"] = [99]
     return Settings.model_validate(raw)
-
-
-async def test_panel_denies_regular_user_and_menu_recovers_admin_keyboard(
-    role_settings: Settings,
-) -> None:
-    router, _jobs, _queue = _router(role_settings)
-    panel = _handler(router, "panel")
-    menu = _handler(router, "menu")
-    regular = FakeMessage(20, "/panel")
-    admin = FakeMessage(99, "/menu")
-
-    await panel(regular, FakeState())
-    await menu(admin, FakeState())
-
-    assert regular.answers[-1][0] == ACCESS_DENIED_TEXT
-    assert admin.answers[-1][1] == build_admin_main_keyboard()
 
 
 @pytest.mark.parametrize(

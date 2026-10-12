@@ -79,7 +79,7 @@ from telegram_media_bot.telegram.admin_menu import (
     build_admin_main_keyboard,
     build_admin_report_inline_keyboard,
 )
-from telegram_media_bot.telegram.texts import ACCESS_DENIED_TEXT, START_TEXT
+from telegram_media_bot.telegram.texts import ADMIN_ACCESS_DENIED_TEXT, START_TEXT
 from telegram_media_bot.telegram.ui import cookie_health_status_text
 from telegram_media_bot.telegram.user_menu import build_user_main_keyboard
 
@@ -174,6 +174,8 @@ def build_admin_router(
     router = Router(name="admin")
     reports = AdminReportCoordinator()
 
+    @router.message(F.text == ADMIN_REFRESH_MENU_BUTTON)
+    @router.message(F.text == ADMIN_BACK_TO_MENU_BUTTON)
     @router.message(Command("menu"))
     async def menu(message: Message, state: FSMContext) -> None:
         await state.clear()
@@ -186,7 +188,7 @@ def build_admin_router(
     async def panel(message: Message, state: FSMContext) -> None:
         if not _is_admin_user(message.from_user.id if message.from_user else None, settings):
             await state.clear()
-            await message.answer(ACCESS_DENIED_TEXT, reply_markup=build_user_main_keyboard())
+            await message.answer(ADMIN_ACCESS_DENIED_TEXT, reply_markup=build_user_main_keyboard())
             return
         await state.clear()
         await message.answer(ADMIN_MENU_TEXT, reply_markup=build_admin_main_keyboard())
@@ -200,14 +202,6 @@ def build_admin_router(
             ADMIN_DOWNLOAD_PROMPT,
             reply_markup=build_admin_download_prompt_keyboard(),
         )
-
-    @router.message(F.text == ADMIN_REFRESH_MENU_BUTTON)
-    @router.message(F.text == ADMIN_BACK_TO_MENU_BUTTON)
-    async def refresh_admin_menu(message: Message, state: FSMContext) -> None:
-        if not await _authorize_message(message, state, settings):
-            return
-        await state.clear()
-        await message.answer(ADMIN_MENU_TEXT, reply_markup=build_admin_main_keyboard())
 
     @router.message(F.text == ADMIN_LOGGER_BUTTON)
     async def open_logger_menu(message: Message, state: FSMContext) -> None:
@@ -271,7 +265,8 @@ def build_admin_router(
     @router.callback_query(F.data.startswith("adm:lg:"))
     async def logger_callback(callback: CallbackQuery, state: FSMContext) -> None:
         if not _is_admin_user(callback.from_user.id if callback.from_user else None, settings):
-            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            await state.clear()
+            await callback.answer(ADMIN_ACCESS_DENIED_TEXT, show_alert=True)
             return
         if (
             audit_admin is None
@@ -282,7 +277,7 @@ def build_admin_router(
             return
         parsed = _parse_logger_callback(callback.data)
         if parsed is None:
-            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            await callback.answer(ADMIN_ACCESS_DENIED_TEXT, show_alert=True)
             return
         action, chat_id = parsed
         if action == "noop":
@@ -362,7 +357,7 @@ def build_admin_router(
     @router.callback_query(F.data.startswith("adm:ch:"))
     async def cookie_health_callback(callback: CallbackQuery) -> None:
         if not _is_admin_user(callback.from_user.id if callback.from_user else None, settings):
-            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            await callback.answer(ADMIN_ACCESS_DENIED_TEXT, show_alert=True)
             return
         if (
             cookie_health_service is None
@@ -377,7 +372,7 @@ def build_admin_router(
         elif action == "refresh":
             await callback.answer(COOKIE_HEALTH_CHECK_PROGRESS_TEXT)
         else:
-            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            await callback.answer(ADMIN_ACCESS_DENIED_TEXT, show_alert=True)
             return
         try:
             updated, _alerts = await asyncio.to_thread(cookie_health_service.refresh_static)
@@ -490,7 +485,7 @@ def build_admin_router(
     @router.callback_query(F.data == "adm:menu")
     async def callback_admin_menu(callback: CallbackQuery) -> None:
         if not _is_admin_user(callback.from_user.id if callback.from_user else None, settings):
-            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            await callback.answer(ADMIN_ACCESS_DENIED_TEXT, show_alert=True)
             return
         if isinstance(callback.message, Message):
             await callback.message.answer(
@@ -502,11 +497,11 @@ def build_admin_router(
     @router.callback_query(F.data.startswith("adm:rpt:"))
     async def refresh_report(callback: CallbackQuery) -> None:
         if not _is_admin_user(callback.from_user.id if callback.from_user else None, settings):
-            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            await callback.answer(ADMIN_ACCESS_DENIED_TEXT, show_alert=True)
             return
         period = _callback_period(callback.data)
         if period is None or not isinstance(callback.message, Message):
-            await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+            await callback.answer(ADMIN_ACCESS_DENIED_TEXT, show_alert=True)
             return
         await callback.answer(REPORT_PREPARING_TEXT)
         await _send_report(
@@ -647,7 +642,7 @@ def build_admin_router(
             await message.answer(ADMIN_MENU_TEXT, reply_markup=build_admin_main_keyboard())
             return
         await state.clear()
-        await message.answer(ACCESS_DENIED_TEXT, reply_markup=build_user_main_keyboard())
+        await message.answer(ADMIN_ACCESS_DENIED_TEXT, reply_markup=build_user_main_keyboard())
 
     if vip_admin is not None and payment_runtime is not None:
         from telegram_media_bot.telegram.admin_vip import build_admin_vip_router
@@ -740,7 +735,7 @@ async def _authorize_message(
     if _is_admin_user(message.from_user.id if message.from_user else None, settings):
         return True
     await state.clear()
-    await message.answer(ACCESS_DENIED_TEXT, reply_markup=build_user_main_keyboard())
+    await message.answer(ADMIN_ACCESS_DENIED_TEXT, reply_markup=build_user_main_keyboard())
     return False
 
 
@@ -896,7 +891,7 @@ async def _handle_logger_channel_action(
     elif action == "cancel":
         await callback.answer()
     else:
-        await callback.answer(ACCESS_DENIED_TEXT, show_alert=True)
+        await callback.answer(ADMIN_ACCESS_DENIED_TEXT, show_alert=True)
         return
     await _send_logger_list(message, audit_admin, logger_enabled=logger_enabled)
 

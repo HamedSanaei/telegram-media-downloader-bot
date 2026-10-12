@@ -139,12 +139,16 @@ caption and put source-only captions on later items where Telegram permits them.
 
 ### Administrator presentation and analytics
 
-`/start` and `/menu` install the keyboard matching the sender's current `telegram.admin_ids`
-membership. `telegram/user_menu.py` owns the ordinary-user public/private download actions,
+`/start`, `/menu`, and refresh/back-to-menu reply buttons install the keyboard matching the sender's
+current `telegram.admin_ids` membership and clear pending FSM state. Navigation buttons are not
+members of the privileged management-button set; cached administrator navigation still recovers an
+ordinary user's menu. `telegram/user_menu.py` owns the ordinary-user public/private download actions,
 subscription/purchase entry points, and personal Instagram controls; `telegram/admin_handlers.py`
-owns management and the administrator-only `/panel`. Every management message and callback repeats
-authorization; keyboard visibility and FSM state are never trusted. A denied management message
-clears stale state and restores the ordinary-user keyboard.
+owns shared menu recovery, management, and the administrator-only `/panel`. Every management message
+and callback repeats authorization; keyboard visibility and FSM state are never trusted. A denied
+management message clears stale state and restores the ordinary-user keyboard; a denied logger
+callback also clears stale state. Management refusals use a scoped message, not the whole-bot
+access-policy denial. Menu recovery never bypasses allowlists, bans, membership, or download limits.
 
 The admin download prompt injects the same `submit_url` callable consumed by the ordinary URL
 router. Once a URL is accepted there is no admin-specific job, service, queue payload, worker,

@@ -28,7 +28,6 @@ from telegram_media_bot.telegram.admin_menu import (
     ADMIN_LOGGER_BUTTON,
     AdminLoggerState,
 )
-from telegram_media_bot.telegram.texts import ACCESS_DENIED_TEXT
 
 CHANNEL = -1001234567890
 CONFIG_CHANNEL = -1002222222222
@@ -253,26 +252,32 @@ def test_admin_can_open_logger_menu(admin_settings: Settings, tmp_path: Path) ->
 
 
 def test_non_admin_forged_logger_button_denied(admin_settings: Settings, tmp_path: Path) -> None:
-    service, _repository, _verifier = _service(tmp_path)
+    service, repository, verifier = _service(tmp_path)
     router = _router(admin_settings, service)
     message = FakeMessage(20, ADMIN_LOGGER_BUTTON)
     state = FakeState()
+    state.value = "pending-admin-operation"
 
     asyncio.run(_handler(router, "open_logger_menu")(message, state))
 
     assert state.value is None
-    assert message.answers[-1][0] == ACCESS_DENIED_TEXT
+    assert repository.list_destinations() == ()
+    assert verifier.calls == []
 
 
 def test_forged_logger_callback_rejected(admin_settings: Settings, tmp_path: Path) -> None:
-    service, _repository, _verifier = _service(tmp_path)
+    service, repository, verifier = _service(tmp_path)
+    destination = service.add(CHANNEL)
     router = _router(admin_settings, service)
     callback = FakeCallback(20, f"adm:lg:test:{CHANNEL}")
 
     state = FakeState()
+    state.value = "pending-admin-operation"
     asyncio.run(_handler(router, "logger_callback")(callback, state))
 
-    assert callback.answers == [(ACCESS_DENIED_TEXT, True)]
+    assert callback.answers[-1][1] is True
+    assert verifier.calls == []
+    assert repository.list_destinations() == (destination,)
     assert state.value is None
 
 
@@ -281,10 +286,11 @@ def test_non_admin_cannot_complete_add_state(admin_settings: Settings, tmp_path:
     router = _router(admin_settings, service)
     message = FakeMessage(20, str(CHANNEL))
     state = FakeState()
+    state.value = "pending-admin-operation"
 
     asyncio.run(_handler(router, "receive_logger_chat_id")(message, state))
 
-    assert message.answers[-1][0] == ACCESS_DENIED_TEXT
+    assert state.value is None
     assert repository.list_destinations() == ()
 
 
@@ -366,7 +372,7 @@ def test_forged_inline_add_cannot_set_state(
 
     asyncio.run(_handler(router, "logger_callback")(callback, state))
 
-    assert callback.answers == [(ACCESS_DENIED_TEXT, True)]
+    assert callback.answers[-1][1] is True
     assert state.value is None
     assert repository.list_destinations() == ()
 

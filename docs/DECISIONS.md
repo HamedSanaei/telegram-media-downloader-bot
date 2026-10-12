@@ -309,6 +309,11 @@ Administrator capability discovery uses a persistent Telegram reply keyboard sho
 message and callback checks the sender against the currently loaded `telegram.admin_ids`. Forged
 button text fails closed, and FSM state is cleared when role authorization fails.
 
+Refresh/back-to-menu reply buttons are navigation, not privileged management actions. Like `/menu`,
+they clear pending state and render the sender's current role, including after an administrator is
+removed from configuration. A management refusal explains that the operation is restricted, rather
+than claiming that access to the whole bot is forbidden. General download policy remains unchanged.
+
 The administrator download prompt receives the same URL-submission callable as the ordinary URL
 router. It does not introduce an admin download service, job kind, worker, queue payload, delivery
 path, format contract, or workspace. The ordinary access policy—including the existing

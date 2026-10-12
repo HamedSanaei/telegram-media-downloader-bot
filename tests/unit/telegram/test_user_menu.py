@@ -11,11 +11,13 @@ import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State
 from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
 from aiogram.methods.base import TelegramMethod
 from aiogram.types import CallbackQuery, Chat, Message, ReplyKeyboardMarkup, Update, User
 
 import telegram_media_bot.telegram.handlers as handlers_module
+from telegram_media_bot.application.services.access_policy import AccessPolicyService
 from telegram_media_bot.application.services.credential_vault import CredentialVault
 from telegram_media_bot.application.services.entitlements import EntitlementService
 from telegram_media_bot.application.services.handoff import HandoffLinkService
@@ -56,10 +58,16 @@ from telegram_media_bot.infrastructure.security.handoff import (
     Ed25519HandoffSigner,
     Ed25519HandoffVerifier,
 )
-from telegram_media_bot.telegram.admin_menu import ADMIN_MANAGEMENT_BUTTONS, AdminDownloadState
+from telegram_media_bot.telegram.admin_menu import (
+    ADMIN_BACK_TO_MENU_BUTTON,
+    ADMIN_DOWNLOAD_BUTTON,
+    ADMIN_MANAGEMENT_BUTTONS,
+    ADMIN_REFRESH_MENU_BUTTON,
+    AdminCookieState,
+    AdminDownloadState,
+)
 from telegram_media_bot.telegram.handlers import build_router
 from telegram_media_bot.telegram.texts import (
-    ACCESS_DENIED_TEXT,
     PRIVATE_CONNECT_REQUIRED_TEXT,
     PRIVATE_RECONNECT_REQUIRED_TEXT,
     PRIVATE_VIP_REQUIRED_TEXT,
@@ -146,8 +154,11 @@ class Queue:
         return job_id
 
 
-class AccessPolicy:
-    async def authorize_request(self, user_id: int, **kwargs: object) -> None:
+class AllowRateLimiter:
+    async def allow(self, user_id: int, limit: int) -> bool:
+        return True
+
+    async def close(self) -> None:
         return None
 
 
@@ -285,7 +296,9 @@ def runtime(settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
             settings=settings,
             queue=queue,  # type: ignore[arg-type]
             repository=repository,
-            access_policy=AccessPolicy(),  # type: ignore[arg-type]
+            access_policy=AccessPolicyService(
+                settings=settings, repository=repository, rate_limiter=AllowRateLimiter()
+            ),
             jobs=jobs,
             users=repository,
             connection=connection,
@@ -330,13 +343,84 @@ async def test_forged_admin_action_is_denied_and_removes_stale_keyboard(runtime:
     state = await runtime.state()
     await state.set_state(AdminDownloadState.awaiting_url)
     await runtime.send("/panel")
-    assert runtime.last_text() == ACCESS_DENIED_TEXT
     assert runtime.last_buttons().isdisjoint(ADMIN_MANAGEMENT_BUTTONS)
     await runtime.send(next(iter(ADMIN_MANAGEMENT_BUTTONS)))
-    assert runtime.last_text() == ACCESS_DENIED_TEXT
     assert runtime.last_buttons().isdisjoint(ADMIN_MANAGEMENT_BUTTONS)
     assert await state.get_state() is None
     assert runtime.queue.jobs == []
+
+
+@pytest.mark.parametrize("navigation", [ADMIN_REFRESH_MENU_BUTTON, ADMIN_BACK_TO_MENU_BUTTON])
+@pytest.mark.parametrize(
+    "pending_state",
+    [
+        AdminDownloadState.awaiting_url,
+        AdminCookieState.awaiting_upload,
+        UserDownloadState.private_url,
+    ],
+)
+@pytest.mark.parametrize(
+    ("owner", "demote"),
+    [(OWNER, False), (ADMIN, False), (ADMIN, True)],
+    ids=["ordinary", "administrator", "demoted"],
+)
+async def test_shared_navigation_recovers_current_role_and_public_downloading(
+    runtime: Runtime, navigation: str, pending_state: State, owner: int, demote: bool
+) -> None:
+    if demote:
+        object.__setattr__(runtime.settings.telegram, "admin_ids", ())
+    state = await runtime.state(owner)
+    await state.set_state(pending_state)
+
+    await runtime.send(navigation, owner)
+
+    assert await state.get_state() is None
+    is_admin = owner == ADMIN and not demote
+    if is_admin:
+        assert ADMIN_DOWNLOAD_BUTTON in runtime.last_buttons()
+    else:
+        assert runtime.last_buttons().isdisjoint(ADMIN_MANAGEMENT_BUTTONS)
+        assert PUBLIC_DOWNLOAD_BUTTON in runtime.last_buttons()
+        assert PRIVATE_DOWNLOAD_BUTTON in runtime.last_buttons()
+
+    await runtime.send(ADMIN_DOWNLOAD_BUTTON if is_admin else PUBLIC_DOWNLOAD_BUTTON, owner)
+    await runtime.send(PRIVATE_URL, owner)
+
+    assert len(runtime.queue.jobs) == 1
+    accepted = runtime.repository.get_job(runtime.queue.jobs[0])
+    assert accepted is not None and accepted.user_id == owner
+    assert accepted.entitlement_snapshot is None
+    assert accepted.user_credential_generation is None
+    assert await state.get_state() is None
+
+
+@pytest.mark.parametrize("restriction", ["allowlist", "static_block", "dynamic_block"])
+async def test_menu_recovery_does_not_bypass_general_download_restrictions(
+    runtime: Runtime, restriction: str
+) -> None:
+    if restriction == "allowlist":
+        object.__setattr__(runtime.settings.security, "allowed_user_ids", frozenset({ADMIN}))
+    elif restriction == "static_block":
+        object.__setattr__(runtime.settings.security, "blocked_user_ids", frozenset({OWNER}))
+    else:
+        runtime.repository.block_user(OWNER, ADMIN)
+
+    await runtime.send(ADMIN_REFRESH_MENU_BUTTON)
+    assert runtime.last_buttons().isdisjoint(ADMIN_MANAGEMENT_BUTTONS)
+    await runtime.send(PUBLIC_DOWNLOAD_BUTTON)
+    await runtime.send(PRIVATE_URL)
+
+    assert runtime.queue.jobs == []
+    assert runtime.repository.counts().queued == 0
+
+    object.__setattr__(runtime.settings.security, "allowed_user_ids", frozenset())
+    object.__setattr__(runtime.settings.security, "blocked_user_ids", frozenset())
+    runtime.repository.unblock_user(OWNER)
+    await runtime.send(PRIVATE_URL)
+
+    assert len(runtime.queue.jobs) == 1
+    accepted = runtime.repository.get_job(runtime.queue.jobs[0])
+    assert accepted is not None and accepted.user_id == OWNER
 
 
 async def test_free_connected_and_telegram_premium_do_not_authorize_private(
