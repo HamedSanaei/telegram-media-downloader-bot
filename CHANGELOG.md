@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v1.4.0-rc.9 - 2026-10-12
+
+### Fixed
+
+- Restore role-aware navigation and user menus after administrator demotion, including stale refresh/back buttons and FSM state.
+- Preserve strict administrator authorization, public download access, and owner-bound VIP session checks.
+- Repair CI quality gate inputs and expand routing, access-policy, and private-download regressions.
+
 ### Changed
 
 - Successful downloads now produce only the downloaded media in private logger channels:
