@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import structlog
 
@@ -13,8 +14,9 @@ from telegram_media_bot.application.ports.download_engine import (
     ProgressSink,
 )
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
-from telegram_media_bot.domain.credential_resolution import ResolvedCredential
+from telegram_media_bot.domain.credential_resolution import CredentialKind, ResolvedCredential
 from telegram_media_bot.domain.errors import (
+    GalleryDlEmptyResponseError,
     GalleryDlOutputChangedError,
     GalleryDlUnsupportedUrlError,
     MediaBotError,
@@ -53,6 +55,28 @@ class RoutedMediaEngine(DownloadEngine):
         url = canonicalize_media_url(url).canonical_url
         try:
             return self._gallery.inspect(url, credential=credential, cookie_file=cookie_file)
+        except GalleryDlEmptyResponseError as exc:
+            # Only try an anonymous public Reel extractor. Never pass operator/private
+            # credentials to a public job, or silently fall back for stories/posts.
+            if not _anonymous_public_reel(url, credential=credential, cookie_file=cookie_file):
+                raise
+            logger.info(
+                "media_engine_fallback",
+                from_adapter="gallery-dl",
+                to_adapter="yt-dlp",
+                reason=type(exc).__name__,
+                credential_kind="none",
+            )
+            try:
+                info = self._ytdlp.inspect(url, credential=ResolvedCredential.none())
+            except Exception as ytdlp_exc:
+                _attach_fallback(ytdlp_exc, ("gallery-dl", "yt-dlp"), type(exc).__name__)
+                raise
+            if info.source.casefold() != "instagram" or info.kind is not MediaKind.VIDEO:
+                raise GalleryDlOutputChangedError(
+                    "Anonymous Reel fallback returned an invalid media type"
+                ) from exc
+            return info
         except GalleryDlUnsupportedUrlError as exc:
             if self._gallery.is_gallery_social_url(url):
                 raise
@@ -284,6 +308,30 @@ class RoutedMediaEngine(DownloadEngine):
             healthy,
             f"yt-dlp={ytdlp.detail}; gallery-dl={gallery.detail}",
         )
+
+
+def _anonymous_public_reel(
+    url: str,
+    *,
+    credential: ResolvedCredential | None,
+    cookie_file: str | None,
+) -> bool:
+    if (
+        cookie_file is not None
+        or credential is None
+        or credential.context.kind is not CredentialKind.NONE
+    ):
+        return False
+    parsed = urlsplit(url)
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    return (
+        parsed.scheme == "https"
+        and (parsed.hostname or "").casefold() in {"instagram.com", "www.instagram.com"}
+        and len(segments) == 2
+        and segments[0] == "reel"
+        and segments[1].isascii()
+        and all(char.isalnum() or char in "_-" for char in segments[1])
+    )
 
 
 def _cleanup_split_directory(path: Path) -> None:

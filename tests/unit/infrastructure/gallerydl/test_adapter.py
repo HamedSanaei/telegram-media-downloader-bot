@@ -11,7 +11,7 @@ from PIL import Image
 
 from telegram_media_bot.application.ports.download_engine import InstagramVideoDownloadEngine
 from telegram_media_bot.bootstrap.config import Settings
-from telegram_media_bot.domain.credential_resolution import ResolvedCredential
+from telegram_media_bot.domain.credential_resolution import CredentialKind, ResolvedCredential
 from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
     GalleryDlAuthenticationRequiredError,
@@ -776,6 +776,70 @@ def test_router_keeps_video_only_single_post_gallery_owned(settings: Settings) -
     assert info.kind is MediaKind.VIDEO
     assert tuple(asset.kind for asset in info.assets) == (MediaKind.VIDEO,)
     assert {option.mode for option in info.format_options} == {DownloadMode.VIDEO_ORIGINAL}
+    assert ytdlp.inspected == []
+
+
+class _RecordingAnonymousReelEngine(_FakeEngine):
+    def __init__(self) -> None:
+        super().__init__()
+        self.received_credentials: list[ResolvedCredential | None] = []
+
+    def inspect(
+        self,
+        url: str,
+        *,
+        credential: ResolvedCredential | None = None,
+        cookie_file: str | None = None,
+    ) -> MediaInfo:
+        assert cookie_file is None
+        self.received_credentials.append(credential)
+        self.inspected.append(url)
+        return MediaInfo("public-reel", "Reel", "instagram", MediaKind.VIDEO, url)
+
+
+def test_empty_anonymous_public_reel_falls_back_to_anonymous_ytdlp(settings: Settings) -> None:
+    gallery = GalleryDlEngine(
+        settings,
+        runner=cast(GalleryDlRunner, _FixtureRunner(b"")),
+    )
+    ytdlp = _RecordingAnonymousReelEngine()
+    router = RoutedMediaEngine(gallery, cast(InstagramVideoDownloadEngine, ytdlp))
+
+    info = router.inspect(
+        "https://www.instagram.com/reel/DeYnW9vvDAM/?utm_source=copy",
+        credential=ResolvedCredential.none(),
+    )
+
+    assert info.source == "instagram"
+    assert info.kind is MediaKind.VIDEO
+    assert len(ytdlp.inspected) == 1
+    assert len(ytdlp.received_credentials) == 1
+    assert ytdlp.received_credentials[0] is not None
+    assert ytdlp.received_credentials[0].context.kind is CredentialKind.NONE
+
+
+@pytest.mark.parametrize(
+    ("url", "credential"),
+    [
+        ("https://www.instagram.com/reel/DeYnW9vvDAM/", None),
+        ("https://www.instagram.com/reel/DeYnW9vvDAM/", ResolvedCredential.operator_public()),
+        ("https://www.instagram.com/p/DeYnW9vvDAM/", ResolvedCredential.none()),
+        ("https://www.instagram.com/stories/test/123/", ResolvedCredential.none()),
+    ],
+)
+def test_anonymous_reel_fallback_never_bypasses_private_or_nonreel_routes(
+    settings: Settings, url: str, credential: ResolvedCredential | None
+) -> None:
+    gallery = GalleryDlEngine(
+        settings,
+        runner=cast(GalleryDlRunner, _FixtureRunner(b"")),
+    )
+    ytdlp = _RecordingAnonymousReelEngine()
+    router = RoutedMediaEngine(gallery, cast(InstagramVideoDownloadEngine, ytdlp))
+
+    with pytest.raises(GalleryDlEmptyResponseError):
+        router.inspect(url, credential=credential)
+
     assert ytdlp.inspected == []
 
 

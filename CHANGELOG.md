@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v1.4.0-rc.11 - 2026-10-13
+
+### Fixed
+
+- Fall back from an empty anonymous gallery-dl Instagram Reel inspection to anonymous yt-dlp when it can independently extract publicly accessible video media.
+- Keep operator and user Instagram cookies isolated from public download jobs; do not enable the fallback for private sessions, stories, or other post types.
+- Add regression tests for anonymous Reel fallback and protection against credential-policy bypass.
+
 ## v1.4.0-rc.10 - 2026-10-13
 
 ### Fixed
