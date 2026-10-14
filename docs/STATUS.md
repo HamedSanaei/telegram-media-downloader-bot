@@ -32,6 +32,10 @@ Last updated: 2026-10-14
   storage, and neither code nor dependencies were deployed into running production containers.
 - Package metadata and the frozen lock agree on `1.4.0-rc.12`; publication uses the existing
   prerelease tag workflow after the full hosted CI gate, without advancing the stable release.
+- The final notification audit sends personal-session reconnect advice directly to the owner,
+  even when a public request originates in a different/group chat. The recipient regression and
+  complete fast-quality lane passed again with ResourceWarning treated as an error: 1,697 passed,
+  12 platform/opt-in skips, and 82.61% coverage.
 
 ## Role-aware menu recovery and scoped administrator denials (2026-10-12)
 

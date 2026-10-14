@@ -2081,6 +2081,8 @@ async def test_expired_personal_session_notifies_once_and_public_fallback_surviv
     assert runtime["vault"].get_view(20).state.value == "expired"
     assert runtime["vault"].get_view(99).state.value == "connected"
     assert any("نامعتبر" in message["text"] for message in runtime["bot"].messages)
+    assert runtime["bot"].messages[0]["chat_id"] == record.user_id
+    assert runtime["bot"].messages[0]["chat_id"] != record.chat_id
     messages = list(runtime["bot"].messages)
     # A reconnected session must not reset this job's already committed fallback.
     runtime["vault"].store_session(20, b"new-owner-session")

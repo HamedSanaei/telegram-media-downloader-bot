@@ -1908,7 +1908,7 @@ async def _await_credential_attempt[AttemptResult](
             # Credential state commits once per owner/generation; unrelated users are untouched.
             with suppress(Exception):
                 await cast(Bot, ctx["bot"]).send_message(
-                    chat_id=record.chat_id,
+                    chat_id=record.user_id,
                     text="نشست اینستاگرام شما نامعتبر شده است؛ از بخش اتصال اینستاگرام دوباره وارد شوید. "
                     "برای این دانلود عمومی از کوکی عمومی ربات استفاده می‌کنیم.",
                 )
