@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from contextlib import suppress
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
@@ -79,7 +80,9 @@ from telegram_media_bot.domain.models import (
     JobStatus,
     MediaFormatOption,
     MediaInfo,
+    MediaKind,
     OutputContainer,
+    SelectionRecord,
     SelectionToken,
     StoryDeliveryMode,
     UserProfile,
@@ -119,9 +122,11 @@ from telegram_media_bot.telegram.texts import (
     UNSAFE_URL_TEXT,
 )
 from telegram_media_bot.telegram.ui import (
+    HIGHLIGHT_DELIVERY_MODE_PROMPT,
     STORY_DELIVERY_MODE_PROMPT,
     cancellation_keyboard,
     container_keyboard,
+    highlight_delivery_mode_keyboard,
     highlight_tray_keyboard,
     instagram_image_delivery_keyboard,
     render_highlight_tray,
@@ -1019,15 +1024,15 @@ def build_router(
         except PolicyBackendError:
             await callback.answer(SERVICE_UNAVAILABLE_TEXT, show_alert=True)
 
-    @router.callback_query(F.data.startswith("s3:"))
+    @router.callback_query(F.data.startswith("s3:") | F.data.startswith("h3:"))
     async def choose_all_stories_delivery_mode(callback: CallbackQuery) -> None:
-        """Create the all-active-Stories job after the user picks a delivery mode."""
+        """Create a Stories/Highlight job only after an owner chooses delivery."""
         if callback.from_user is None or callback.data is None:
             return
         await _save_callback_user(users, callback)
         try:
             await access_policy.authorize_request(callback.from_user.id, consume_rate_limit=False)
-            _prefix, raw_token, raw_mode = callback.data.split(":", maxsplit=2)
+            prefix, raw_token, raw_mode = callback.data.split(":", maxsplit=2)
             mode = StoryDeliveryMode(raw_mode)
             selection = await asyncio.to_thread(
                 repository.get_selection,
@@ -1040,20 +1045,34 @@ def build_router(
             if not authorized:
                 return
             story_url = canonicalize_media_url(selection.media.webpage_url)
-            if story_url.instagram_kind != "story":
-                raise SelectionOwnershipError("Story action was not offered")
-            username = _story_username(selection.media.webpage_url)
-            if username is None:
-                raise SelectionOwnershipError("Story account is missing")
+            if prefix == "h3":
+                if (
+                    story_url.instagram_kind != "highlight"
+                    or DownloadMode.INSTAGRAM_HIGHLIGHT not in selection.allowed_modes
+                ):
+                    raise SelectionOwnershipError("Highlight action was not offered")
+                target_url = story_url.canonical_url
+                download_mode = DownloadMode.INSTAGRAM_HIGHLIGHT
+            else:
+                if story_url.instagram_kind != "story":
+                    raise SelectionOwnershipError("Story action was not offered")
+                username = _story_username(selection.media.webpage_url)
+                if username is None:
+                    raise SelectionOwnershipError("Story account is missing")
+                target_url = f"https://www.instagram.com/stories/{username}/"
+                download_mode = DownloadMode.INSTAGRAM_ALL_STORIES
             record, created = await asyncio.to_thread(
                 jobs.create_download,
                 chat_id=selection.chat_id,
                 user_id=selection.owner_user_id,
-                url=f"https://www.instagram.com/stories/{username}/",
-                mode=DownloadMode.INSTAGRAM_ALL_STORIES,
+                url=target_url,
+                mode=download_mode,
                 story_delivery_mode=mode,
                 **private_job_fields(private),
             )
+            if record.status is JobStatus.DELIVERY_UNCERTAIN:
+                await callback.answer(DELIVERY_UNCERTAIN_TEXT, show_alert=True)
+                return
             if isinstance(callback.message, Message):
                 await callback.message.edit_text(
                     QUEUED_TEXT.format(job_id=record.job_id),
@@ -1175,34 +1194,31 @@ def build_router(
                 raise SelectionOwnershipError("Unknown highlight action")
             if payload not in {item.highlight_id for item in tray.highlights}:
                 raise SelectionOwnershipError("Highlight was not offered")
-            record, created = await asyncio.to_thread(
-                jobs.create_download,
+            highlight = next(item for item in tray.highlights if item.highlight_id == payload)
+            selection = SelectionRecord(
+                token=SelectionToken(secrets.token_urlsafe(15)),
                 chat_id=tray.chat_id,
-                user_id=tray.owner_user_id,
-                url=f"https://www.instagram.com/stories/highlights/{payload}/",
-                mode=DownloadMode.INSTAGRAM_HIGHLIGHT,
-                **private_job_fields(private),
+                owner_user_id=tray.owner_user_id,
+                media=MediaInfo(
+                    media_id=payload,
+                    title=highlight.title,
+                    source="instagram",
+                    kind=MediaKind.PLAYLIST,
+                    webpage_url=f"https://www.instagram.com/stories/highlights/{payload}/",
+                    item_count=highlight.item_count,
+                ),
+                allowed_modes=(DownloadMode.INSTAGRAM_HIGHLIGHT,),
+                created_at=datetime.now(UTC),
+                expires_at=tray.expires_at,
+                source_job_id=tray.source_job_id,
             )
-            if record.status is JobStatus.DELIVERY_UNCERTAIN:
-                await callback.answer(DELIVERY_UNCERTAIN_TEXT, show_alert=True)
-                return
+            await asyncio.to_thread(repository.save_selection, selection)
             if isinstance(callback.message, Message):
                 await callback.message.edit_text(
-                    QUEUED_TEXT.format(job_id=record.job_id),
-                    reply_markup=cancellation_keyboard(record.job_id),
+                    HIGHLIGHT_DELIVERY_MODE_PROMPT,
+                    reply_markup=highlight_delivery_mode_keyboard(selection),
                 )
-                await asyncio.to_thread(
-                    repository.set_status_message, record.job_id, callback.message.message_id
-                )
-            if created:
-                await _enqueue_download_or_fail(
-                    queue=queue,
-                    repository=repository,
-                    users=users,
-                    record=record,
-                    callback=callback,
-                )
-            await callback.answer("ثبت شد" if created else "این دانلود از قبل فعال است")
+            await callback.answer()
         except SelectionExpiredError:
             await callback.answer(SELECTION_EXPIRED_TEXT, show_alert=True)
         except SelectionOwnershipError, ValueError:
@@ -1352,15 +1368,6 @@ def build_router(
                 user_id=message.from_user.id,
                 url=intent.canonical_url,
                 username=username,
-                **private_job_fields(authorization),
-            )
-        elif intent.instagram_kind == "highlight":
-            record, created = await asyncio.to_thread(
-                jobs.create_download,
-                chat_id=message.chat.id,
-                user_id=message.from_user.id,
-                url=intent.canonical_url,
-                mode=DownloadMode.INSTAGRAM_HIGHLIGHT,
                 **private_job_fields(authorization),
             )
         else:

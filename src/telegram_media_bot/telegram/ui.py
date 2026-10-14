@@ -30,22 +30,36 @@ HIGHLIGHTS_PER_PAGE = 5
 STORY_DELIVERY_NORMAL_TEXT = "📱 دانلود معمولی"
 STORY_DELIVERY_FILE_TEXT = "📁 دانلود به صورت فایل"
 STORY_DELIVERY_MODE_PROMPT = "حالت ارسال همهٔ استوری‌های فعال را انتخاب کنید:"
+HIGHLIGHT_DELIVERY_MODE_PROMPT = (
+    "هایلایت را چطور می‌خواهید؟ ارسال معمولی یا به صورت فایل با کیفیت اصلی؟"
+)
 
 
 def story_delivery_mode_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
     """Ask how an all-active-Stories batch should be delivered."""
+    return _collection_delivery_mode_keyboard(selection, prefix="s3")
+
+
+def highlight_delivery_mode_keyboard(selection: SelectionRecord) -> InlineKeyboardMarkup:
+    """Use only an opaque, owner-bound selection identity in Highlight choices."""
+    return _collection_delivery_mode_keyboard(selection, prefix="h3")
+
+
+def _collection_delivery_mode_keyboard(
+    selection: SelectionRecord, *, prefix: str
+) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=STORY_DELIVERY_NORMAL_TEXT,
-                    callback_data=f"s3:{selection.token}:{StoryDeliveryMode.NORMAL.value}",
+                    callback_data=f"{prefix}:{selection.token}:{StoryDeliveryMode.NORMAL.value}",
                 )
             ],
             [
                 InlineKeyboardButton(
                     text=STORY_DELIVERY_FILE_TEXT,
-                    callback_data=f"s3:{selection.token}:{StoryDeliveryMode.FILE.value}",
+                    callback_data=f"{prefix}:{selection.token}:{StoryDeliveryMode.FILE.value}",
                 )
             ],
             [InlineKeyboardButton(text="❌ لغو", callback_data=f"n2:{selection.token}:s")],

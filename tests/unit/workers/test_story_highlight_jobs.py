@@ -340,8 +340,44 @@ async def test_story_image_still_offers_single_via_photo_file_flow(
     assert callbacks[1].endswith(":all")
 
 
+@pytest.mark.parametrize("service", [StoryInspectionService(), StoryImageInspectionService()])
+async def test_direct_highlight_inspection_publishes_durable_delivery_choice(
+    settings: Settings, tmp_path: Path, service: StoryInspectionService
+) -> None:
+    context = _story_context(settings, tmp_path, service)
+    repository = context["repository"]
+    url = "https://www.instagram.com/stories/highlights/18190966201404535/"
+    job, _ = JobService(repository).create_inspection(chat_id=10, user_id=20, url=url)
+    repository.set_status_message(job.job_id, 31)
+    context["job_id"] = str(job.job_id)
+    context["queue"] = CapturingQueue()
+    await process_inspection_job(context, chat_id=10, user_id=20, url=url)
+    keyboard = cast(InlineKeyboardMarkup, context["bot"].edits[0]["reply_markup"])
+    callbacks = [
+        cast(str, button.callback_data) for row in keyboard.inline_keyboard for button in row
+    ]
+    assert callbacks[0].startswith("h3:") and callbacks[0].endswith(":normal")
+    assert callbacks[1].startswith("h3:") and callbacks[1].endswith(":file")
+    assert all(len(value.encode()) <= 64 for value in callbacks)
+    reopened = SqliteJobRepository(context["settings"].database_path())
+    selection = reopened.get_selection(SelectionToken(callbacks[0].split(":")[1]), 20)
+    assert selection.media.webpage_url == url
+    assert selection.allowed_modes == (DownloadMode.INSTAGRAM_HIGHLIGHT,)
+    assert selection.source_job_id == job.job_id
+    completed = reopened.get_job(job.job_id)
+    assert completed is not None and completed.status is JobStatus.SUCCEEDED
+    assert context["queue"].downloads == []
+
+
+@pytest.mark.parametrize(
+    "mode,delivery_mode",
+    [
+        (DownloadMode.INSTAGRAM_ALL_STORIES, StoryDeliveryMode.NORMAL),
+        (DownloadMode.INSTAGRAM_HIGHLIGHT, StoryDeliveryMode.FILE),
+    ],
+)
 async def test_batch_download_partial_failure_keeps_successes_and_summarizes(
-    settings: Settings, tmp_path: Path
+    settings: Settings, tmp_path: Path, mode: DownloadMode, delivery_mode: StoryDeliveryMode
 ) -> None:
     configured = _settings(settings, tmp_path)
     configured.create_runtime_directories()
@@ -350,9 +386,11 @@ async def test_batch_download_partial_failure_keeps_successes_and_summarizes(
     record, _ = JobService(repository).create_download(
         chat_id=10,
         user_id=20,
-        url="https://www.instagram.com/stories/exampleuser/",
-        mode=DownloadMode.INSTAGRAM_ALL_STORIES,
-        story_delivery_mode=StoryDeliveryMode.NORMAL,
+        url="https://www.instagram.com/stories/highlights/222/"
+        if mode is DownloadMode.INSTAGRAM_HIGHLIGHT
+        else "https://www.instagram.com/stories/exampleuser/",
+        mode=mode,
+        story_delivery_mode=delivery_mode,
     )
     repository.set_status_message(record.job_id, 30)
     paths = [tmp_path / "1.jpg", tmp_path / "2.jpg", tmp_path / "3.jpg"]
@@ -361,7 +399,7 @@ async def test_batch_download_partial_failure_keeps_successes_and_summarizes(
     delivery = BatchDelivery(fail_second=True)
     context: dict[str, Any] = {
         "settings": configured,
-        "repository": repository,
+        "repository": SqliteJobRepository(configured.database_path()),
         "download_service": BatchDownloadService(artifacts=tuple(paths)),
         "bot": FakeBot(),
         "delivery": delivery,
@@ -374,13 +412,13 @@ async def test_batch_download_partial_failure_keeps_successes_and_summarizes(
         chat_id=10,
         user_id=20,
         url=record.url,
-        mode=DownloadMode.INSTAGRAM_ALL_STORIES.value,
+        mode=mode.value,
     )
     persisted = repository.get_job(record.job_id)
     assert persisted is not None and persisted.status is JobStatus.SUCCEEDED
     assert delivery.batch_calls == 1
     assert delivery.source_urls == [record.url]
-    assert delivery.story_modes == [StoryDeliveryMode.NORMAL]
+    assert delivery.story_modes == [delivery_mode]
     assert "@telegram_media_bot" in delivery.captions[0]
     items = repository.delivery_items(record.job_id)
     # Only successful items are persisted; the failed item is isolated.

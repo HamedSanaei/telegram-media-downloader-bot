@@ -269,7 +269,11 @@ def _idempotency_key(
         parts.append(native_video_codec.value)
     if image_delivery_mode is not None:
         parts.append(image_delivery_mode.value)
-    if story_delivery_mode is not None:
+    # Legacy Highlight downloads already mean normal delivery. Keep their active/
+    # uncertain identity when a new explicit normal button is used after upgrade.
+    if story_delivery_mode is not None and not (
+        mode is DownloadMode.INSTAGRAM_HIGHLIGHT and story_delivery_mode is StoryDeliveryMode.NORMAL
+    ):
         parts.append(story_delivery_mode.value)
     if credential_policy in {
         CredentialPolicy.USER_ONLY,

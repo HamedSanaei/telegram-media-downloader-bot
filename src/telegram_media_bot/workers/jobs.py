@@ -165,7 +165,9 @@ from telegram_media_bot.telegram.texts import (
     UNSUPPORTED_GALLERY_URL_TEXT,
 )
 from telegram_media_bot.telegram.ui import (
+    HIGHLIGHT_DELIVERY_MODE_PROMPT,
     container_keyboard,
+    highlight_delivery_mode_keyboard,
     highlight_tray_keyboard,
     instagram_image_delivery_keyboard,
     media_bundle_keyboard,
@@ -243,6 +245,32 @@ async def process_inspection_job(
             repository.transition, job_id, JobStatus.RUNNING, source=info.source, attempt=attempt
         )
         now = datetime.now(UTC)
+        if canonicalize_media_url(record.url).instagram_kind == "highlight":
+            selection = SelectionRecord(
+                token=SelectionToken(secrets.token_urlsafe(15)),
+                owner_user_id=user_id,
+                chat_id=chat_id,
+                media=replace(info, webpage_url=record.url),
+                allowed_modes=(DownloadMode.INSTAGRAM_HIGHLIGHT,),
+                created_at=now,
+                expires_at=now + timedelta(seconds=settings.persistence.selection_ttl_seconds),
+                source_job_id=job_id,
+            )
+            await asyncio.to_thread(repository.save_selection, selection)
+            status_message_id = await _edit_or_send_inspection_message(
+                bot=bot,
+                chat_id=chat_id,
+                message_id=record.status_message_id,
+                text=HIGHLIGHT_DELIVERY_MODE_PROMPT,
+                reply_markup=highlight_delivery_mode_keyboard(selection),
+            )
+            await asyncio.to_thread(repository.set_status_message, job_id, status_message_id)
+            await asyncio.to_thread(
+                repository.transition, job_id, JobStatus.SUCCEEDED, source=info.source
+            )
+            metrics.record_job(outcome="inspection_succeeded", source=info.source)
+            await logger.ainfo("highlight_delivery_choice_published", job_id=job_id)
+            return str(job_id)
         if (
             info.source.casefold() == "instagram"
             and not info.assets
@@ -932,10 +960,7 @@ async def process_download_job(
             repository.transition, job_id, JobStatus.DELIVERING, source=result.source
         )
         await _prepare_delivery_output_audit(ctx, job_id)
-        if (
-            selected_mode is DownloadMode.INSTAGRAM_ALL_STORIES
-            and selected_story_delivery_mode is not None
-        ):
+        if selected_mode in COLLECTION_MODES and selected_story_delivery_mode is not None:
             result = replace(result, story_delivery_mode=selected_story_delivery_mode)
         if selected_mode in COLLECTION_MODES:
             summary_title = (

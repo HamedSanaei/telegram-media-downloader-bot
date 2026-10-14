@@ -191,7 +191,7 @@ class ImageDeliveryMode(StrEnum):
 
 
 class StoryDeliveryMode(StrEnum):
-    """Delivery mode for an Instagram all-active-Stories batch."""
+    """Delivery mode for an Instagram active-Stories or Highlight batch."""
 
     NORMAL = "normal"
     FILE = "file"

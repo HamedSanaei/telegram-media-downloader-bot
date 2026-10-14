@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v1.4.0-rc.13 - 2026-10-14
+
+- Ask for normal or original-file delivery before downloading an Instagram Highlight,
+  both for a direct Highlight URL and a choice from the Highlight browser.
+- Persist the owner-bound choice through queue recovery. File mode sends every image
+  and video as a document without changing its bytes, in source order.
+- Preserve legacy normal Highlight job identities, including uncertain-delivery quarantine.
+
 ## v1.4.0-rc.12 - 2026-10-14
 
 ### Fixed

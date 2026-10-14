@@ -819,6 +819,18 @@ Netscape cookie bytes; any protocol anomaly, missing cookie, or transport failur
 with a typed denial. `FakeInstagramSessionAcquirer` remains test-only and is never composed into
 runtime.
 
+## ADR-048: Highlight delivery choices preserve original bytes and durable authorization
+
+**Status:** accepted
+
+Highlights still use native original media without quality/transcode choices, but supersede
+ADR-014's automatic enqueue with an explicit normal/file delivery prompt. Direct URLs publish
+the prompt after worker inspection; the browser builds an expiring selection from an offered item.
+Both carry the existing authorization source and use the existing StoryDeliveryMode job field.
+File mode sends all ordered artifacts as exact-byte documents, not a whole-collection ZIP.
+Normal Highlight job identity remains compatible with legacy jobs so uncertain delivery stays
+quarantined across upgrade. No persistence schema, credentials, or public configuration changes.
+
 ## ADR-047: Shared public cookie and personal-session preference for every connected owner
 
 **Status:** accepted (2026-10-14)

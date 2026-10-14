@@ -119,6 +119,15 @@ No production image is resized, converted, recompressed, or otherwise rewritten.
 - does not download media;
 - remains responsive while workers are busy.
 
+Highlight delivery choices reuse owner-bound, expiring `SelectionRecord` state and the existing
+`StoryDeliveryMode` job field. A direct Highlight URL is inspected by the worker before publishing
+`h3` normal/file callbacks; a browser choice derives its canonical URL from an offered tray item
+and retains the tray's expiry and authorization source. Callbacks reauthorize the source, create
+the durable collection job, then enqueue it. The worker applies the persisted mode to both Stories
+and Highlights; file delivery uses exact-byte documents for every ordered artifact. No schema or
+configuration change is required. Explicit normal Highlight choices retain legacy idempotency keys
+so an old uncertain delivery is not replayed after upgrade.
+
 ### Worker
 
 - owns engine calls and local job directories;

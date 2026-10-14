@@ -10,7 +10,7 @@ import pytest
 from telegram_media_bot.application.services.job_service import JobService
 from telegram_media_bot.domain.credential_resolution import ContentAccessScope, CredentialPolicy
 from telegram_media_bot.domain.errors import PrivateMediaAuthorizationError
-from telegram_media_bot.domain.models import DownloadMode, JobKind
+from telegram_media_bot.domain.models import DownloadMode, JobKind, JobStatus, StoryDeliveryMode
 from telegram_media_bot.domain.subscriptions import Capability, EntitlementSnapshot, GrantId, PlanId
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 
@@ -123,3 +123,29 @@ def test_free_public_job_requires_no_subscription_or_user_session(
     assert record.entitlement_snapshot is None
     assert record.user_credential_generation is None
     assert record.credential_policy is None
+
+
+def test_highlight_normal_preserves_legacy_uncertain_identity(tmp_path: Path) -> None:
+    repository = SqliteJobRepository(tmp_path / "jobs.sqlite3")
+    repository.initialize()
+    service = JobService(repository)
+    arguments: dict[str, Any] = {
+        "chat_id": 10,
+        "user_id": 20,
+        "url": "https://www.instagram.com/stories/highlights/222/",
+        "mode": DownloadMode.INSTAGRAM_HIGHLIGHT,
+    }
+    legacy, _ = service.create_download(**arguments)
+    repository.transition(legacy.job_id, JobStatus.DELIVERY_UNCERTAIN)
+    same, created = service.create_download(
+        **arguments, story_delivery_mode=StoryDeliveryMode.NORMAL
+    )
+    assert not created and same.job_id == legacy.job_id
+    assert same.status is JobStatus.DELIVERY_UNCERTAIN
+    file_job, created = service.create_download(
+        **arguments, story_delivery_mode=StoryDeliveryMode.FILE
+    )
+    assert created and file_job.job_id != legacy.job_id
+    reopened = SqliteJobRepository(tmp_path / "jobs.sqlite3")
+    restored = reopened.get_job(file_job.job_id)
+    assert restored is not None and restored.story_delivery_mode is StoryDeliveryMode.FILE

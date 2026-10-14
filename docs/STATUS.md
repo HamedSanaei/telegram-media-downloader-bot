@@ -2,6 +2,22 @@
 
 Last updated: 2026-10-14
 
+## Highlight normal/file delivery for RC13 (2026-10-14)
+
+- Direct Highlight links publish an inspected, owner-bound normal/file choice rather than
+  immediately downloading. Browser selections prompt without refetching the tray and retain
+  its expiry and authorization source.
+- Uses the existing durable StoryDeliveryMode field for both collection types. File mode sends
+  ordered original images/videos as exact-byte documents, with receipt-first cleanup and the
+  existing cancellation, partial-failure, size-limit, and uncertain-delivery handling.
+- Legacy normal Highlight idempotency is retained; no schema/configuration/dependency change.
+- Added owner/expiry/source/option tampering, duplicate callback, inspection/restart, persisted
+  mode, legacy uncertainty, and exact-byte mixed-image/video delivery regressions.
+- Local exact fast-quality lane passed on Python 3.14.5: 1,713 tests passed, 12 platform/opt-in
+  skips, 16 contract deselections, 82.62% coverage, and ResourceWarning treated as an error.
+  Frozen lock/sync, architecture/context/text/manifest checks, Ruff, mypy, secret scan, dependency
+  consistency/audit, clean wheel installation, and Compose rendering passed.
+
 ## Shared Instagram cookie and owner-session routing for RC12 (2026-10-14)
 
 - Restores the superadministrator-managed canonical cookie for public Instagram users without

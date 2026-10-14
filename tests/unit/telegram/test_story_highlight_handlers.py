@@ -111,6 +111,9 @@ class FakeRepository:
         self.trays: dict[str, HighlightTrayRecord] = {}
         self.status_messages: list[tuple[JobId, int]] = []
 
+    def save_selection(self, selection: SelectionRecord) -> None:
+        self.selections[selection.token] = selection
+
     def get_selection(self, token: SelectionToken, owner_user_id: int) -> SelectionRecord:
         selection = self.selections.get(token)
         if selection is None:
@@ -190,6 +193,10 @@ class FakeJobs:
         self._records.append(record)
         return record, True
 
+    def create_inspection(self, **kwargs: object) -> tuple[JobRecord, bool]:
+        record, created = self._record(**kwargs)
+        return replace(record, kind=JobKind.INSPECTION, mode=None), created
+
     def create_highlight_tray(self, **kwargs: object) -> tuple[JobRecord, bool]:
         record, created = self._record(**kwargs)
         record = JobRecord(
@@ -245,7 +252,9 @@ def _fake_idem_key(kwargs: dict[str, object]) -> str:
     mode_s = mode.value if isinstance(mode, DownloadMode) else "inspect"
     parts = ["download", str(kwargs["user_id"]), str(kwargs["url"]), mode_s]
     mode_value = kwargs.get("story_delivery_mode")
-    if isinstance(mode_value, StoryDeliveryMode):
+    if isinstance(mode_value, StoryDeliveryMode) and not (
+        mode is DownloadMode.INSTAGRAM_HIGHLIGHT and mode_value is StoryDeliveryMode.NORMAL
+    ):
         parts.append(mode_value.value)
     return "|".join(parts)
 
@@ -489,7 +498,7 @@ def test_highlight_open_rejects_forged_username(settings: Settings) -> None:
     assert callback.alerts == [SELECTION_INVALID_TEXT]
 
 
-def test_highlight_pick_enqueues_selected_only(settings: Settings) -> None:
+def test_highlight_pick_asks_delivery_before_enqueuing(settings: Settings) -> None:
     router, jobs, queue, repository = _router(settings)
     token = "tok_tray"
     repository.trays[token] = _tray(token)
@@ -499,9 +508,60 @@ def test_highlight_pick_enqueues_selected_only(settings: Settings) -> None:
 
     asyncio.run(_handler(router, "highlight_tray_navigation")(callback))
 
+    assert jobs.calls == [] and queue.downloads == []
+    selection = next(iter(repository.selections.values()))
+    assert selection.media.webpage_url == "https://www.instagram.com/stories/highlights/222/"
+    assert selection.allowed_modes == (DownloadMode.INSTAGRAM_HIGHLIGHT,)
+    assert selection.expires_at == repository.trays[token].expires_at
+
+
+@pytest.mark.parametrize("mode", list(StoryDeliveryMode))
+def test_highlight_delivery_choice_enqueues_selected_only(
+    settings: Settings, mode: StoryDeliveryMode
+) -> None:
+    import asyncio
+
+    router, jobs, queue, repository = _router(settings)
+    repository.trays["tray"] = _tray("tray")
+    asyncio.run(_handler(router, "highlight_tray_navigation")(FakeCallback(20, "h2:tray:pick:222")))
+    selection = next(iter(repository.selections.values()))
+    callback = FakeCallback(20, f"h3:{selection.token}:{mode.value}")
+    asyncio.run(_handler(router, "choose_all_stories_delivery_mode")(callback))
+    asyncio.run(_handler(router, "choose_all_stories_delivery_mode")(callback))
+
+    assert len(jobs.calls) == len(queue.downloads) == 1
     assert jobs.calls[0]["url"] == "https://www.instagram.com/stories/highlights/222/"
     assert jobs.calls[0]["mode"] is DownloadMode.INSTAGRAM_HIGHLIGHT
-    assert queue.downloads[0]["mode"] is DownloadMode.INSTAGRAM_HIGHLIGHT
+    assert jobs.calls[0]["story_delivery_mode"] is mode
+    assert queue.downloads[0]["story_delivery_mode"] is mode
+
+
+@pytest.mark.parametrize("defect", ["owner", "expired", "source", "unoffered", "mode"])
+def test_highlight_delivery_choice_fails_closed(settings: Settings, defect: str) -> None:
+    import asyncio
+
+    router, jobs, queue, repository = _router(settings)
+    repository.trays["tray"] = _tray("tray")
+    asyncio.run(_handler(router, "highlight_tray_navigation")(FakeCallback(20, "h2:tray:pick:222")))
+    selection = next(iter(repository.selections.values()))
+    if defect == "owner":
+        selection = replace(selection, owner_user_id=99)
+    elif defect == "expired":
+        selection = replace(selection, expires_at=datetime.now(UTC) - timedelta(seconds=1))
+    elif defect == "source":
+        selection = replace(
+            selection,
+            media=replace(selection.media, webpage_url="https://www.instagram.com/p/IG1/"),
+        )
+    elif defect == "unoffered":
+        selection = replace(selection, allowed_modes=(DownloadMode.ALL_ORIGINAL_MEDIA,))
+    repository.selections[selection.token] = selection
+    callback = FakeCallback(20, f"h3:{selection.token}:{'forged' if defect == 'mode' else 'file'}")
+    asyncio.run(_handler(router, "choose_all_stories_delivery_mode")(callback))
+    assert jobs.calls == [] and queue.downloads == []
+    assert callback.alerts == [
+        SELECTION_EXPIRED_TEXT if defect == "expired" else SELECTION_INVALID_TEXT
+    ]
 
 
 def test_highlight_pick_rejects_unoffered_highlight(settings: Settings) -> None:
@@ -663,9 +723,8 @@ def test_submitted_highlight_urls_dispatch_only_the_requested_collection(
         assert jobs.calls[0]["username"] == "exampleuser"
         assert len(queue.trays) == 1 and queue.downloads == []
     else:
-        assert jobs.calls[0]["mode"] is expected_mode
-        assert len(queue.downloads) == 1 and queue.trays == []
-        assert queue.downloads[0]["mode"] is expected_mode
+        assert jobs.calls[0].get("mode") is None
+        assert len(queue.inspections) == 1 and queue.trays == [] and queue.downloads == []
 
 
 @pytest.mark.parametrize("entrypoint", ["url", "pick"])
@@ -688,15 +747,18 @@ def test_highlight_uncertain_delivery_is_never_reenqueued(
         message = FakeMessage(20)
         message.text = record.url
         asyncio.run(_handler(router, "enqueue_url")(message))
-        assert len(message.answers) == 1
+        assert len(queue.inspections) == 1
     else:
         repository.trays["tray_token"] = _tray("tray_token")
         callback = FakeCallback(20, "h2:tray_token:pick:222")
         asyncio.run(_handler(router, "highlight_tray_navigation")(callback))
-        assert len(callback.alerts) == 1
+        selection = next(iter(repository.selections.values()))
+        choice = FakeCallback(20, f"h3:{selection.token}:normal")
+        asyncio.run(_handler(router, "choose_all_stories_delivery_mode")(choice))
+        assert len(choice.alerts) == 1
 
     assert queue.downloads == []
-    assert jobs.calls == []
+    assert len(jobs.calls) == (1 if entrypoint == "url" else 0)
 
 
 def test_submitted_profile_keeps_browser_intent_without_crawling_posts(

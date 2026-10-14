@@ -199,6 +199,12 @@ the worker-level concurrency gate and optional `TMB_WORKER_CPUS` quota protect s
 
 ## Telegram administration
 
+Instagram Highlight links and Highlight-browser choices now show normal/file delivery buttons.
+Choose file delivery to receive each original image/video as a separate Telegram document with
+unchanged bytes. Normal mode keeps the existing photo/video presentation and safe document fallback.
+Selections expire normally and require the requesting owner; restart/recovery retains the selected
+delivery mode. Existing uncertain normal Highlight deliveries remain quarantined.
+
 Public Instagram downloads use the canonical cookie configured by the superadministrator when
 the requesting owner has no connected personal session. Every connected owner uses their own
 session first, regardless of VIP. A typed session/authentication rejection invalidates only that

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -32,6 +33,7 @@ from telegram_media_bot.domain.models import (
     DownloadResult,
     JobId,
     MediaKind,
+    StoryDeliveryMode,
 )
 from telegram_media_bot.telegram.delivery import (
     SOURCE_URL_LABEL,
@@ -199,6 +201,52 @@ async def test_batch_delivers_all_items_in_order(settings: Settings, tmp_path: P
     assert any(
         "\u06a9\u0644: 3" in text and "\u0645\u0648\u0641\u0642: 3" in text for text in bot.texts
     )
+
+
+async def test_highlight_file_batch_preserves_every_original_byte(
+    settings: Settings, tmp_path: Path
+) -> None:
+    class RecordingBot(FakeBatchBot):
+        def __init__(self) -> None:
+            super().__init__(set())
+            self.payloads: list[bytes] = []
+
+        async def _consume(self, upload: object) -> None:
+            assert isinstance(upload, InputFile)
+            payload = b""
+            async for chunk in upload.read(cast(Bot, cast(Any, self))):
+                payload += chunk
+            self.payloads.append(payload)
+
+    bot = RecordingBot()
+    result = replace(
+        _result(
+            tmp_path,
+            [("1.jpg", MediaKind.IMAGE), ("2.mp4", MediaKind.VIDEO), ("3.jpg", MediaKind.IMAGE)],
+        ),
+        story_delivery_mode=StoryDeliveryMode.FILE,
+    )
+    expected = [artifact.file_path.read_bytes() for artifact in result.artifacts]
+    persisted: list[int] = []
+
+    async def persist(item: object) -> None:
+        ordinal = cast(Any, item).ordinal
+        assert result.artifacts[ordinal - 1].file_path.exists()
+        persisted.append(ordinal)
+
+    outcome = await _gateway(settings, bot).deliver_batch(
+        chat_id=1,
+        result=result,
+        caption="Highlight",
+        item_delivered=persist,
+        source_url="https://www.instagram.com/stories/highlights/222/",
+    )
+    assert outcome.succeeded == 3
+    assert [item.method for item in outcome.receipts] == [DeliveryMethod.DOCUMENT] * 3
+    assert persisted == [1, 2, 3]
+    assert bot.payloads == expected
+    assert all(upload["disable_content_type_detection"] is True for upload in bot.uploads)
+    assert all("/stories/highlights/222/" in str(upload["caption"]) for upload in bot.uploads)
 
 
 async def test_batch_isolates_item_failures_and_sends_summary(
