@@ -90,6 +90,9 @@ class CredentialVault:
         credential = self._repository.get_credential_for_owner(owner_user_id)
         return self._to_view(credential) if credential is not None else None
 
+    def mark_session_invalid(self, owner_user_id: int, *, generation: int) -> bool:
+        return self._repository.mark_session_invalid(owner_user_id, generation=generation)
+
     def set_state_category(
         self,
         owner_user_id: int,

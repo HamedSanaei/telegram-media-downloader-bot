@@ -58,8 +58,10 @@ from telegram_media_bot.domain.errors import (
     DeliveryError,
     DownloadFailedError,
     GalleryDlCookiesExpiredError,
+    GalleryDlEmptyResponseError,
     JobCancelledError,
     LocalRuntimeError,
+    MediaBotError,
     MediaTooLargeError,
     MediaUnavailableError,
     RateLimitedError,
@@ -1595,14 +1597,19 @@ class OwnerSessionEngine:
         if credential is not None:
             self.attempts.append((stage, credential))
         assert credential is not None
-        if not self.public:
+        if credential.context.kind is CredentialKind.USER_INSTAGRAM:
             assert credential.context.kind is CredentialKind.USER_INSTAGRAM
-            assert credential.context.policy is CredentialPolicy.USER_ONLY
+            assert credential.context.policy is (
+                CredentialPolicy.USER_FIRST_PUBLIC_FALLBACK
+                if self.public
+                else CredentialPolicy.USER_ONLY
+            )
             assert credential.context.user_generation == 1
             assert credential.materialized_cookie_path is not None
             assert Path(credential.materialized_cookie_path).read_bytes() == self.session
         else:
-            assert credential.context.kind is not CredentialKind.USER_INSTAGRAM
+            assert self.public
+            assert credential.context.kind is CredentialKind.OPERATOR_PUBLIC
         if self.failure is not None:
             raise self.failure
 
@@ -1982,7 +1989,7 @@ async def test_private_corrupt_durable_record_cannot_resolve_credentials(
     assert runtime["repository"].get_job(corrupt.job_id).status is JobStatus.FAILED
 
 
-async def test_public_instagram_ignores_connected_session_and_private_capable_operator(
+async def test_public_instagram_prefers_owner_session_for_inspection_and_download(
     private_runtime: dict[str, Any],
 ) -> None:
     runtime = private_runtime
@@ -1996,7 +2003,7 @@ async def test_public_instagram_ignores_connected_session_and_private_capable_op
     assert queued is not None
     child = runtime["repository"].get_job(queued["job_id"])
     assert child.entitlement_snapshot is None
-    assert child.user_credential_generation is None
+    assert child.user_credential_generation == 1
     runtime["job_id"] = str(child.job_id)
     await process_download_job(
         runtime,
@@ -2008,9 +2015,155 @@ async def test_public_instagram_ignores_connected_session_and_private_capable_op
     )
     assert runtime["repository"].get_job(child.job_id).status is JobStatus.SUCCEEDED
     assert all(
-        credential.context.kind is CredentialKind.NONE
+        credential.context.kind is CredentialKind.USER_INSTAGRAM
         for _, credential in runtime["session_engine"].attempts
     )
+
+
+@pytest.mark.parametrize("user_id", [20, 99, 123])
+async def test_public_cookie_selection_is_owner_bound_and_free_user_compatible(
+    private_runtime: dict[str, Any], user_id: int
+) -> None:
+    from telegram_media_bot.workers.jobs import _await_credential_attempt
+
+    runtime = private_runtime
+    record, _ = JobService(runtime["repository"]).create_inspection(
+        chat_id=user_id, user_id=user_id, url="https://www.instagram.com/p/public/"
+    )
+    observed: list[ResolvedCredential] = []
+
+    def operation(credential: ResolvedCredential | None) -> str:
+        assert credential is not None
+        observed.append(credential)
+        if user_id in {20, 99}:
+            assert credential.context.kind is CredentialKind.USER_INSTAGRAM
+            assert credential.materialized_cookie_path is not None
+            expected = b"owner-20-session" if user_id == 20 else b"unrelated-owner-session"
+            assert Path(credential.materialized_cookie_path).read_bytes() == expected
+        else:
+            assert credential.context.kind is CredentialKind.OPERATOR_PUBLIC
+            assert credential.materialized_cookie_path is None
+        return "ok"
+
+    workspace = runtime["settings"].storage.downloads_path() / str(record.job_id)
+    assert await _await_credential_attempt(runtime, record, workspace, operation) == "ok"
+    assert len(observed) == 1
+    assert not list(workspace.rglob("cookies.txt"))
+    assert runtime["vault"].get_view(20).state.value == "connected"
+    assert runtime["vault"].get_view(99).state.value == "connected"
+
+
+async def test_expired_personal_session_notifies_once_and_public_fallback_survives_restart(
+    private_runtime: dict[str, Any],
+) -> None:
+    from telegram_media_bot.domain.credential_resolution import CredentialAttemptPhase
+    from telegram_media_bot.domain.errors import GalleryDlCookiesExpiredError
+    from telegram_media_bot.workers.jobs import _await_credential_attempt
+
+    runtime = private_runtime
+    record, _ = JobService(runtime["repository"]).create_inspection(
+        chat_id=10, user_id=20, url="https://www.instagram.com/p/public/"
+    )
+    kinds: list[CredentialKind] = []
+
+    def operation(credential: ResolvedCredential | None) -> str:
+        assert credential is not None
+        kinds.append(credential.context.kind)
+        if credential.context.kind is CredentialKind.USER_INSTAGRAM:
+            raise GalleryDlCookiesExpiredError("session rejected", source="instagram")
+        return "public media"
+
+    workspace = runtime["settings"].storage.downloads_path() / str(record.job_id)
+    assert await _await_credential_attempt(runtime, record, workspace, operation) == "public media"
+    persisted = runtime["repository"].get_job(record.job_id)
+    assert persisted.fallback_used
+    assert persisted.credential_attempt_phase is CredentialAttemptPhase.OPERATOR_ATTEMPT
+    assert runtime["vault"].get_view(20).state.value == "expired"
+    assert runtime["vault"].get_view(99).state.value == "connected"
+    assert any("نامعتبر" in message["text"] for message in runtime["bot"].messages)
+    messages = list(runtime["bot"].messages)
+    # A reconnected session must not reset this job's already committed fallback.
+    runtime["vault"].store_session(20, b"new-owner-session")
+    runtime["repository"] = SqliteJobRepository(runtime["settings"].database_path())
+    assert await _await_credential_attempt(runtime, record, workspace, operation) == "public media"
+    assert kinds == [
+        CredentialKind.USER_INSTAGRAM,
+        CredentialKind.OPERATOR_PUBLIC,
+        CredentialKind.OPERATOR_PUBLIC,
+    ]
+    assert runtime["bot"].messages == messages
+    assert runtime["vault"].get_view(20).state.value == "connected"
+    assert not list(workspace.rglob("cookies.txt"))
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        GalleryDlEmptyResponseError("ambiguous output"),
+        MediaTooLargeError("too large"),
+        JobCancelledError("cancelled"),
+        CredentialMaterializationError("local failure"),
+    ],
+)
+async def test_public_non_authentication_failure_never_switches_credentials(
+    private_runtime: dict[str, Any], failure: MediaBotError
+) -> None:
+    from telegram_media_bot.workers.jobs import _await_credential_attempt
+
+    runtime = private_runtime
+    record, _ = JobService(runtime["repository"]).create_inspection(
+        chat_id=10, user_id=20, url="https://www.instagram.com/p/public/"
+    )
+    kinds: list[CredentialKind] = []
+
+    def operation(credential: ResolvedCredential | None) -> None:
+        assert credential is not None
+        kinds.append(credential.context.kind)
+        raise failure
+
+    workspace = runtime["settings"].storage.downloads_path() / str(record.job_id)
+    with pytest.raises(type(failure)):
+        await _await_credential_attempt(runtime, record, workspace, operation)
+    assert kinds == [CredentialKind.USER_INSTAGRAM]
+    assert not runtime["repository"].get_job(record.job_id).fallback_used
+    assert runtime["vault"].get_view(20).state.value == "connected"
+    assert not runtime["bot"].messages
+
+
+async def test_private_session_auth_failure_never_uses_shared_cookie(
+    private_runtime: dict[str, Any],
+) -> None:
+    from telegram_media_bot.domain.errors import GalleryDlCookiesExpiredError
+    from telegram_media_bot.workers.jobs import _await_credential_attempt
+
+    runtime = private_runtime
+    record = _private_job(runtime, inspect=True)
+    kinds: list[CredentialKind] = []
+
+    def operation(credential: ResolvedCredential | None) -> None:
+        assert credential is not None
+        kinds.append(credential.context.kind)
+        raise GalleryDlCookiesExpiredError("session rejected", source="instagram")
+
+    workspace = runtime["settings"].storage.downloads_path() / str(record.job_id)
+    with pytest.raises(GalleryDlCookiesExpiredError):
+        await _await_credential_attempt(runtime, record, workspace, operation)
+    assert kinds == [CredentialKind.USER_INSTAGRAM]
+    assert not runtime["repository"].get_job(record.job_id).fallback_used
+    assert runtime["vault"].get_view(20).state.value == "expired"
+    assert runtime["vault"].get_view(99).state.value == "connected"
+
+
+def test_late_auth_failure_cannot_expire_reconnected_session(
+    private_runtime: dict[str, Any],
+) -> None:
+    resolver = private_runtime["credential_resolver"]
+    private_runtime["vault"].store_session(20, b"replacement")
+    assert not resolver.mark_session_invalid(20, generation=1)
+    assert resolver.connected_generation(20) == 2
+    assert resolver.mark_session_invalid(20, generation=2)
+    assert not resolver.mark_session_invalid(20, generation=2)
+    assert resolver.connected_generation(20) is None
 
 
 @pytest.mark.parametrize("inspect", [True, False])

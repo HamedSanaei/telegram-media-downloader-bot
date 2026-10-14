@@ -58,6 +58,16 @@ from telegram_media_bot.infrastructure.ytdlp import engine as ytdlp_engine_modul
 FIXTURES = Path("tests/fixtures/gallerydl")
 
 
+@pytest.mark.parametrize("marker", ["login_required", "checkpoint_required", "challenge_required"])
+def test_typed_session_rejections_are_authentication_errors(marker: str) -> None:
+    assert isinstance(map_process_failure(1, marker.encode()), GalleryDlAuthenticationRequiredError)
+
+
+@pytest.mark.parametrize("marker", ["session expired", "invalid session"])
+def test_session_expiry_is_not_an_empty_or_unavailable_media_error(marker: str) -> None:
+    assert isinstance(map_process_failure(1, marker.encode()), GalleryDlCookiesExpiredError)
+
+
 def _fixture(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
 

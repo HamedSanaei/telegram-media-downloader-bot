@@ -11,10 +11,10 @@ from telegram_media_bot.domain.credential_resolution import (
 )
 
 
-def test_free_users_always_use_operator_even_with_a_session() -> None:
+def test_free_connected_users_prefer_their_own_session() -> None:
     state = choose_public_policy(vip_active=False, user_session_healthy=True)
-    assert state.policy is CredentialPolicy.OPERATOR_PUBLIC
-    assert state.initial_kind(user_session_healthy=True) is CredentialKind.OPERATOR_PUBLIC
+    assert state.policy is CredentialPolicy.USER_FIRST_PUBLIC_FALLBACK
+    assert state.initial_kind(user_session_healthy=True) is CredentialKind.USER_INSTAGRAM
 
 
 def test_vip_healthy_session_starts_with_user() -> None:

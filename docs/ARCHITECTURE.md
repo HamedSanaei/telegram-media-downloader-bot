@@ -518,10 +518,10 @@ CredentialPolicy: OPERATOR_PUBLIC | USER_FIRST_PUBLIC_FALLBACK | USER_ONLY
 ContentAccessScope: PUBLIC | USER_RESTRICTED | UNKNOWN
 ```
 
-The canonical cookie file remains the operator credential for existing public non-Instagram
-providers. Public Instagram extraction explicitly uses `CredentialKind.NONE`, including Stories,
-Highlights, profile resolution, and image/video child calls. The separate zero-follow operator
-attestation service cannot establish private authorization or compensate for unknown visibility.
+The canonical cookie file is the superadministrator-managed shared credential for public providers,
+including Instagram. An Instagram owner with a connected session instead selects
+`USER_FIRST_PUBLIC_FALLBACK`, independently of VIP. The historical zero-follow attestation records
+remain readable but are not an activation requirement for this explicitly shared cookie policy.
 
 Each user credential is a distinct owner/generation AES-256-GCM envelope. The key ring lives outside
 SQLite in ignored least-privilege YAML. SQLite stores ciphertext, state, safe timestamps, sanitized
@@ -533,9 +533,12 @@ owner, generation, state, and lease before materializing a restrictive cookie fi
 job's workspace. The worker passes one explicit ephemeral context through inspection, router,
 gallery images, yt-dlp video children, and download. Adapters know no subscription/VIP rule.
 
-Free and VIP public Instagram jobs never borrow a personal or operator Instagram session. A
-login-required Instagram URL must be submitted through the explicit private VIP mode. Other
-supported public-provider behavior is unchanged.
+Public inspection, profile/Highlight resolution, images, native video children, and downloads use
+the same owner session within an attempt. The first decision and exact generation are frozen on
+the durable job. On a typed session/authentication failure, a conditional owner/generation update
+marks only that session expired; reconnect guidance is attempted once per state transition. A
+public job commits its one operator fallback before extraction, and retry/restart preserves it.
+Empty output, local/media/size/schema/delivery/cancellation failures never switch credentials.
 
 Private/restricted media is `USER_ONLY` for inspection through delivery. The connected account must
 already have visibility. Unknown scope fails closed without existence disclosure. The operator

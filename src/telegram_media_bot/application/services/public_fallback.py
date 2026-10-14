@@ -64,8 +64,8 @@ class PublicFallbackState:
 
 def choose_public_policy(*, vip_active: bool, user_session_healthy: bool) -> PublicFallbackState:
     """Return the authoritative initial state for a public request."""
-    if not vip_active:
-        return PublicFallbackState(policy=CredentialPolicy.OPERATOR_PUBLIC)
+    # Public session preference applies to every connected owner, independently of VIP.
+    del vip_active
     if user_session_healthy:
         return PublicFallbackState(policy=CredentialPolicy.USER_FIRST_PUBLIC_FALLBACK)
     return PublicFallbackState(policy=CredentialPolicy.OPERATOR_PUBLIC)

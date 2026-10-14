@@ -126,9 +126,10 @@ Premium/Telethon/MTProto uploader, staging channel, Premium queue, or copy-messa
 - Every Free or VIP user may connect their own Instagram account through a short-lived signed link
   and HTTPS page. Connection alone does not grant VIP, nor does Telegram Premium.
 - Free public downloading remains supported and does not require account connection. Public
-  Instagram extraction is anonymous for both Free and VIP users; other providers retain their
-  existing public credential behavior. Instagram URLs requiring login use the explicit private VIP
-  mode, never an implicit operator or personal session.
+  Instagram uses the superadministrator-managed canonical cookie when the owner has no connected
+  personal session. Every connected owner, Free or VIP, uses their personal session first for public
+  downloads. A typed personal-session authentication failure notifies that owner, invalidates only
+  the observed generation, and switches once to the shared cookie for the public job.
 - Private/restricted Instagram posts, Reels, Stories, Highlights, mixed media, and Close Friends
   content require an active `instagram_private_media` entitlement and a healthy connected account.
 - Authenticated extraction may see only content that the voluntarily connected Instagram account
@@ -137,21 +138,21 @@ Premium/Telethon/MTProto uploader, staging channel, Premium queue, or copy-messa
 - A protected request durably accepted while entitlement is active may finish after expiry. New
   requests and later user callbacks after expiry must reauthorize.
 
-The canonical operator Instagram session cannot authorize public-mode requests: without trustworthy
-normalized visibility, it could expose the operator's private follows. Public Instagram requests
-therefore explicitly select no credential. The zero-follow attestation service is not an alternative
-to owner-bound private authorization.
+The canonical cookie is explicitly designated by the superadministrator for shared public use.
+It does not authorize private-mode requests. Private downloads keep owner-bound VIP authorization
+and never fall back to that shared cookie. Ambiguous empty output, media/local/size/cancellation/
+delivery errors do not prove personal-session expiry and do not switch credentials.
 
 ### Authoritative credential matrix
 
 | User | VIP | Instagram connected | Content | Credential policy |
 |---|---|---|---|---|
-| User | No | No | Public | Anonymous Instagram / existing public provider access |
-| User | No | Yes | Public | Anonymous Instagram / existing public provider access |
+| User | No | No | Public | Shared canonical operator cookie |
+| User | No | Yes | Public | User first; one typed-auth fallback to shared cookie |
 | User | No | Yes | Private | Deny + offer VIP |
-| User | Yes | No | Public | Anonymous Instagram / existing public provider access |
+| User | Yes | No | Public | Shared canonical operator cookie |
 | User | Yes | No | Private | Require Instagram connection |
-| User | Yes | Yes | Public | Anonymous Instagram / existing public provider access |
+| User | Yes | Yes | Public | User first; one typed-auth fallback to shared cookie |
 | User | Yes | Yes | Private | User only, never operator fallback |
 
 Public mode never borrows a personal Instagram session or switches to the operator's Instagram

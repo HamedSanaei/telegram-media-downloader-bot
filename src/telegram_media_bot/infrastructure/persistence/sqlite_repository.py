@@ -519,6 +519,57 @@ class SqliteJobRepository(JobRepository):
             ).fetchone()
         return _job_from_row(row) if row is not None else None
 
+    def select_public_instagram_credential(
+        self, job_id: JobId, *, user_generation: int | None
+    ) -> JobRecord:
+        """Freeze the owner session decision once; retries retain the same generation/phase."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE jobs SET credential_policy = ?, user_credential_generation = ?,
+                    credential_attempt_phase = ?, updated_at = ?
+                WHERE job_id = ? AND credential_attempt_phase = 'not_started'
+                    AND COALESCE(credential_policy, '') != 'user_only'
+                    AND COALESCE(content_access_scope, '') != 'user_restricted'
+                    AND entitlement_snapshot_json IS NULL AND fallback_used = 0
+                    AND cancel_requested = 0 AND status IN ('queued', 'running', 'retrying')
+                """,
+                (
+                    CredentialPolicy.USER_FIRST_PUBLIC_FALLBACK.value
+                    if user_generation is not None
+                    else CredentialPolicy.OPERATOR_PUBLIC.value,
+                    user_generation,
+                    CredentialAttemptPhase.USER_ATTEMPT.value
+                    if user_generation is not None
+                    else CredentialAttemptPhase.OPERATOR_ATTEMPT.value,
+                    _now_text(),
+                    job_id,
+                ),
+            )
+            row = connection.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            connection.execute("COMMIT")
+        if row is None:
+            raise JobNotFoundError("Public credential job is missing")
+        return _job_from_row(row)
+
+    def switch_public_instagram_to_operator(self, job_id: JobId) -> bool:
+        """Reserve the single public fallback before any operator request can start."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE jobs SET credential_attempt_phase = 'operator_attempt',
+                    fallback_used = 1, updated_at = ?
+                WHERE job_id = ? AND credential_policy = 'user_first_public_fallback'
+                    AND credential_attempt_phase = 'user_attempt' AND fallback_used = 0
+                    AND COALESCE(content_access_scope, '') != 'user_restricted'
+                    AND entitlement_snapshot_json IS NULL AND cancel_requested = 0
+                    AND status IN ('queued', 'running', 'retrying')
+                """,
+                (_now_text(), job_id),
+            )
+        return cursor.rowcount == 1
+
     def set_status_message(self, job_id: JobId, message_id: int) -> None:
         self._update(job_id, status_message_id=message_id, updated_at=_now_text())
 

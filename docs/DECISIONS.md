@@ -522,6 +522,10 @@ or 2FA value is durable or logged.
 
 ## ADR-034: Public operator credentials never authorize private Instagram media
 
+**Public-cookie routing superseded by ADR-047 (2026-10-14).** The historical zero-follow
+activation requirement and 2026-10-11 anonymous-only behavior below no longer define public
+runtime routing. Owner-bound private authorization remains in force.
+
 **Status:** accepted
 
 The existing canonical cookie file remains the operator credential, but authenticated-user routing
@@ -814,3 +818,23 @@ authenticated session cookies (`sessionid`, `ds_user_id`, `rur`) are present and
 Netscape cookie bytes; any protocol anomaly, missing cookie, or transport failure fails closed
 with a typed denial. `FakeInstagramSessionAcquirer` remains test-only and is never composed into
 runtime.
+
+## ADR-047: Shared public cookie and personal-session preference for every connected owner
+
+**Status:** accepted (2026-10-14)
+
+The superadministrator-managed canonical Instagram cookie is intentionally shared with all
+public-download users. Every Free or VIP owner with a connected personal session uses that session
+first for public jobs; private jobs use the same owner's accepted session and keep their VIP
+authorization. Public routing does not require the historical zero-follow attestation.
+
+The durable job freezes its first policy, exact user generation, and attempt phase. Typed personal
+authentication/session failures invalidate only the observed owner/generation via a conditional
+SQLite update, preserve reconnected/revoked state, and attempt sanitized reconnect guidance once
+per transition. Public jobs conditionally commit one shared-cookie fallback before making that
+request, so retries/restarts cannot switch back. Private/restricted jobs cannot reserve fallback.
+No empty-output, schema, local, size, cancellation, processing, or delivery error triggers a
+credential switch. Personal failures do not alter global Cookie Health; shared-cookie failures
+retain operator remediation. Credentials stay leased and job-scoped through all media children
+and are removed before fallback, failure, cancellation, or completion. No existing configuration
+or database schema migration is required.

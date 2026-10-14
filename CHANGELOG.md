@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## v1.4.0-rc.12 - 2026-10-14
+
+### Fixed
+
+- Restore the superadministrator-managed canonical Instagram cookie for every public user
+  without a connected personal session.
+- Prefer each connected owner's personal Instagram session for public as well as private jobs.
+  Public session preference does not require VIP; private acceptance retains its VIP checks.
+- On a typed personal-session authentication failure, expire only that owner and generation,
+  send reconnect guidance, and commit one public fallback to the shared cookie before extraction.
+  Private jobs never fall back. Ambiguous empty output and local/media/delivery failures do not
+  invalidate a personal session or switch credentials.
+- Preserve owner isolation, generation checks, restart decisions, cancellation, and temporary
+  credential cleanup; keep personal-session failures outside global Cookie Health remediation.
+
 ## v1.4.0-rc.11 - 2026-10-13
 
 ### Fixed

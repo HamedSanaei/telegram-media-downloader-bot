@@ -663,7 +663,10 @@ class ConnectedStoryEngine(StoryInspectionService):
     def _observe(self, credential: ResolvedCredential | None) -> None:
         assert credential is not None
         if self.public:
-            assert credential.context.kind is CredentialKind.NONE
+            assert credential.context.kind is CredentialKind.USER_INSTAGRAM
+            assert credential.context.policy is CredentialPolicy.USER_FIRST_PUBLIC_FALLBACK
+            assert credential.materialized_cookie_path is not None
+            assert Path(credential.materialized_cookie_path).read_bytes() == b"story-owner-session"
         else:
             assert credential.context.kind is CredentialKind.USER_INSTAGRAM
             assert credential.context.user_generation == 1

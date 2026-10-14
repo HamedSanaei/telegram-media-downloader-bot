@@ -172,6 +172,37 @@ class SqliteInstagramCredentialRepository:
             )
             connection.execute("COMMIT")
 
+    def mark_session_invalid(self, owner_user_id: int, *, generation: int) -> bool:
+        """A failed old attempt cannot expire a reconnected or disconnected session."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            now = _dump_datetime(datetime.now(UTC))
+            cursor = connection.execute(
+                """
+                UPDATE instagram_credentials SET state = 'expired',
+                    last_failure_category = 'adapter_auth', updated_at = ?
+                WHERE owner_user_id = ? AND provider = ? AND generation = ?
+                    AND state = 'connected'
+                """,
+                (now, owner_user_id, CREDENTIAL_PROVIDER, generation),
+            )
+            changed = cursor.rowcount == 1
+            if changed:
+                import uuid
+
+                connection.execute(
+                    """
+                    INSERT INTO instagram_credential_events
+                        (event_id, credential_id, owner_user_id, kind, generation,
+                         actor_role, created_at)
+                    SELECT ?, credential_id, owner_user_id, 'expired', generation, 'user', ?
+                    FROM instagram_credentials WHERE owner_user_id = ? AND provider = ?
+                    """,
+                    (str(uuid.uuid4()), now, owner_user_id, CREDENTIAL_PROVIDER),
+                )
+            connection.execute("COMMIT")
+        return changed
+
     def list_events_for_owner(
         self, owner_user_id: int, *, limit: int
     ) -> tuple[CredentialEvent, ...]:

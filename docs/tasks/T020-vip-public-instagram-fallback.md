@@ -2,6 +2,14 @@
 
 **Status:** implemented locally
 
+**Current runtime contract (2026-10-14, ADR-047):** personal-session preference applies to every
+connected owner, including Free users. The canonical superadministrator cookie is intentionally
+shared for public downloads and has no zero-follow activation requirement. First-attempt policy,
+generation, and one fallback phase are persisted on each job. Typed personal authentication
+failure conditionally invalidates only that owner/generation, attempts reconnect guidance, and
+reserves the public fallback before extraction. Private requests cannot switch. The original
+milestone plan below records the earlier VIP/attestation proposal, superseded for public routing.
+
 ## Goal
 
 For public Instagram media, prefer a healthy connected VIP user's session and switch exactly once

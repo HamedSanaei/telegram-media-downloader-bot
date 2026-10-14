@@ -30,12 +30,30 @@ def map_process_failure(return_code: int, stderr: bytes) -> Exception:
     if http_status in {404, 410}:
         return MediaUnavailableError("gallery content is unavailable", http_status=http_status)
     if any(
-        marker in text for marker in ("expired cookie", "invalid cookie", "cookies have expired")
+        marker in text
+        for marker in (
+            "expired cookie",
+            "invalid cookie",
+            "cookies have expired",
+            "session expired",
+            "invalid session",
+        )
     ):
         return GalleryDlCookiesExpiredError(
             "configured gallery cookies were rejected", http_status=http_status
         )
-    if any(marker in text for marker in ("login required", "cookies required", "authentication")):
+    if any(
+        marker in text
+        for marker in (
+            "login required",
+            "login_required",
+            "cookies required",
+            "authentication",
+            "checkpoint_required",
+            "challenge_required",
+            "please log in",
+        )
+    ):
         return GalleryDlAuthenticationRequiredError(
             "gallery provider authentication is required", http_status=http_status
         )

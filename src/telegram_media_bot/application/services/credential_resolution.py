@@ -27,6 +27,17 @@ class CredentialResolver:
         self._vault = vault
         self._materializer = materializer
 
+    def connected_generation(self, owner_user_id: int) -> int | None:
+        from telegram_media_bot.domain.instagram_credentials import InstagramCredentialState
+
+        view = self._vault.get_view(owner_user_id)
+        if view is not None and view.state is InstagramCredentialState.CONNECTED:
+            return view.generation
+        return None
+
+    def mark_session_invalid(self, owner_user_id: int, *, generation: int) -> bool:
+        return self._vault.mark_session_invalid(owner_user_id, generation=generation)
+
     @contextmanager
     def resolve(
         self,

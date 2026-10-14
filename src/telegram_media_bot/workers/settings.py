@@ -258,8 +258,8 @@ async def startup(ctx: dict[str, Any]) -> None:
                 payment_events_enabled=settings.telegram.logger.payment_events_enabled,
             ),
             # Other public providers retain canonical operator cookies. Public Instagram
-            # attempts explicitly select no credential in jobs.py; private Instagram jobs
-            # resolve only the requesting owner's accepted USER_ONLY session.
+            # attempts select the owner's session first, then the canonical shared cookie.
+            # Private USER_ONLY requests never switch to the shared cookie.
             credential_context=ResolvedCredential.operator_public(),
         )
         cutoff = datetime.now(UTC)

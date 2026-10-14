@@ -199,6 +199,14 @@ the worker-level concurrency gate and optional `TMB_WORKER_CPUS` quota protect s
 
 ## Telegram administration
 
+Public Instagram downloads use the canonical cookie configured by the superadministrator when
+the requesting owner has no connected personal session. Every connected owner uses their own
+session first, regardless of VIP. A typed session/authentication rejection invalidates only that
+owner's exact generation, gives reconnect guidance, and switches that public job once to the
+shared cookie. Ambiguous empty output is not proof of an expired cookie. Private VIP downloads
+always require the owner's session and never use the shared cookie. No scheduled session probes
+or automatic production dependency updates are introduced. See ADR-047.
+
 Menu access and administrator authorization are separate. `/menu`, `🔄 تازه‌سازی منو`, and
 `🏠 منوی مدیریت` clear pending input and restore the sender's current role menu, even when Telegram
 has cached an administrator keyboard. Ordinary users receive public download, subscription/purchase,

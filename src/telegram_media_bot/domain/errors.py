@@ -26,6 +26,8 @@ class MediaBotError(Exception):
         self.adapter = adapter
         #: Extractor/subcategory attribution when the adapter can observe one.
         self.extractor = extractor
+        #: Safe attribution for owner-session versus shared-cookie remediation.
+        self.credential_kind: str | None = None
         #: Adapter fallback chain when the router fell back to another engine.
         self.fallback_chain: tuple[str, ...] | None = None
         self.fallback_reason: str | None = None

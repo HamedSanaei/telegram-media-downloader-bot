@@ -2,9 +2,8 @@
 
 Typed, framework-free vocabulary for choosing a media credential safely. Adapters receive an
 explicit ``CredentialContext`` and never branch on VIP/subscription policy. The operator credential
-is the existing canonical cookie file; it supplies public access only once a current ``OPERATOR_PUBLIC``
-attestation (a dedicated zero-follow Instagram account bound to a keyed verifier of the file's
-Instagram records) is valid.
+is the canonical cookie file managed by the superadministrator and shared for public requests.
+Private requests remain owner-session-only. Historical attestation models remain readable.
 """
 
 from __future__ import annotations

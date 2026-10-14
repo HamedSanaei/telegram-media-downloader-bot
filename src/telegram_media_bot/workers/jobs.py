@@ -65,6 +65,7 @@ from telegram_media_bot.domain.cookie_health import CookieHealthState
 from telegram_media_bot.domain.cookies import CookieService
 from telegram_media_bot.domain.credential_resolution import (
     ContentAccessScope,
+    CredentialAttemptPhase,
     CredentialContext,
     CredentialKind,
     CredentialPolicy,
@@ -74,7 +75,13 @@ from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
     BatchDeliveryFailedError,
     CollectionTooLargeError,
+    CredentialChallengeRequiredError,
+    CredentialDisconnectedError,
     CredentialError,
+    CredentialExpiredError,
+    CredentialGenerationMismatchError,
+    CredentialNotFoundError,
+    CredentialRevokedError,
     DeliveryError,
     GalleryDlCookiesExpiredError,
     GalleryDlEmptyResponseError,
@@ -220,24 +227,16 @@ async def process_inspection_job(
         _require_job_owner(record, chat_id=chat_id, user_id=user_id)
         _require_job_request(record, kind=JobKind.INSPECTION, url=url)
         workspace = settings.storage.downloads_path() / str(job_id)
-        user_context = _private_job_user_context(record)
 
-        def _run_inspection() -> Any:
-            if user_context is not None:
-                return _run_private_attempt(
-                    ctx,
-                    record,
-                    user_context,
-                    workspace,
-                    lambda credential: service.inspect(url, credential=credential),
-                    cleanup_workspace=True,
-                )
-            operator_credential = _public_job_credential(ctx, record)
-            if operator_credential is None:
+        def _inspect(credential: ResolvedCredential | None) -> Any:
+            if credential is None:
                 return service.inspect(url)
-            return service.inspect(url, credential=operator_credential)
+            return service.inspect(url, credential=credential)
 
-        info = await _await_blocking_attempt(_run_inspection)
+        info = await _await_credential_attempt(
+            ctx, record, workspace, _inspect, cleanup_workspace=True
+        )
+        record = repository.get_job(job_id) or record
         if await asyncio.to_thread(repository.is_cancel_requested, job_id):
             raise JobCancelledError("Inspection was cancelled")
         await asyncio.to_thread(
@@ -263,6 +262,8 @@ async def process_inspection_job(
                 credential_policy=record.credential_policy,
                 content_access_scope=record.content_access_scope,
                 user_credential_generation=record.user_credential_generation,
+                credential_attempt_phase=record.credential_attempt_phase,
+                fallback_used=record.fallback_used,
             )
             status_message_id = await _edit_or_send_inspection_message(
                 bot=bot,
@@ -638,34 +639,27 @@ async def process_highlight_tray_job(
         _require_job_request(record, kind=JobKind.HIGHLIGHT_TRAY, url=url)
         if record.selected_format_ids != (username,):
             raise PrivateMediaAuthorizationError("Queue highlight target does not match the job")
-        user_context = _private_job_user_context(record)
         fetch = getattr(engine, "fetch_highlight_tray", None)
         if not callable(fetch):
             raise RuntimeError("Gallery highlight tray fetch is unavailable")
 
-        def _run_tray() -> Any:
-            def _fetch(credential: ResolvedCredential) -> Any:
+        def _fetch(credential: ResolvedCredential | None) -> Any:
+            if credential is not None:
                 return fetch(
                     username,
                     max_highlights=settings.media.instagram.max_highlight_items,
                     credential=credential,
                 )
 
-            if user_context is not None:
-                return _run_private_attempt(
-                    ctx,
-                    record,
-                    user_context,
-                    settings.storage.downloads_path() / str(job_id),
-                    _fetch,
-                    cleanup_workspace=True,
-                )
-            operator_credential = _public_job_credential(ctx, record)
-            if operator_credential is not None:
-                return _fetch(operator_credential)
             return fetch(username, max_highlights=settings.media.instagram.max_highlight_items)
 
-        highlights = await _await_blocking_attempt(_run_tray)
+        highlights = await _await_credential_attempt(
+            ctx,
+            record,
+            settings.storage.downloads_path() / str(job_id),
+            _fetch,
+            cleanup_workspace=True,
+        )
         if await asyncio.to_thread(repository.is_cancel_requested, job_id):
             raise JobCancelledError("Highlight tray fetch was cancelled")
         if not highlights:
@@ -907,25 +901,15 @@ async def process_download_job(
                 container_policy=selected_policy,
                 native_video_codec=selected_native_video_codec,
             )
-        if user_context is None:
-            operator_credential = _public_job_credential(ctx, record)
-            if operator_credential is not None:
-                common_download_arguments["credential"] = operator_credential
 
-        def _run_download() -> DownloadResult:
-            if user_context is None:
+        def _run_download(credential: ResolvedCredential | None) -> DownloadResult:
+            if credential is None:
                 return service.download(**common_download_arguments)
-            return _run_private_attempt(
-                ctx,
-                record,
-                user_context,
-                output_directory,
-                lambda credential: service.download(
-                    **common_download_arguments, credential=credential
-                ),
-            )
+            return service.download(**common_download_arguments, credential=credential)
 
-        download_task = asyncio.create_task(asyncio.to_thread(_run_download))
+        download_task = asyncio.create_task(
+            _await_credential_attempt(ctx, record, output_directory, _run_download)
+        )
         try:
             result = await asyncio.shield(download_task)
         except asyncio.CancelledError:
@@ -1522,12 +1506,9 @@ async def _handle_controlled_failure(
         started=None,
     )
     _emit_terminal_failure_event(ctx, context=context, status=JobStatus.FAILED)
-    if not _job_marked_private(record) and (
-        record is None
-        or (
-            _public_job_credential(ctx, record) or ResolvedCredential.operator_public()
-        ).context.kind
-        is CredentialKind.OPERATOR_PUBLIC
+    if (
+        not _job_marked_private(record)
+        and getattr(exc, "credential_kind", None) != "user_instagram"
     ):
         await _record_runtime_auth_failure(ctx, exc)
     await logger.awarning(
@@ -1892,14 +1873,128 @@ def _require_job_request(record: JobRecord, *, kind: JobKind, url: str) -> None:
 
 
 def _public_job_credential(ctx: dict[str, Any], record: JobRecord) -> ResolvedCredential | None:
-    # An unclassified Instagram result must never inherit the operator's private visibility.
+    # The canonical superadmin cookie is the shared public Instagram credential.
     hostname = (urlsplit(record.url).hostname or "").casefold().rstrip(".")
     if hostname == "instagram.com" or hostname.endswith(".instagram.com"):
-        return ResolvedCredential.none()
+        return ResolvedCredential.operator_public()
     credential = cast(ResolvedCredential | None, ctx.get("credential_context"))
     if credential is not None and credential.context.kind is CredentialKind.USER_INSTAGRAM:
         return ResolvedCredential.none()
     return credential
+
+
+async def _await_credential_attempt[AttemptResult](
+    ctx: dict[str, Any],
+    record: JobRecord,
+    workspace: Path,
+    operation: Callable[[ResolvedCredential | None], AttemptResult],
+    *,
+    cleanup_workspace: bool = False,
+) -> AttemptResult:
+    notices: list[bool] = []
+    try:
+        return await _await_blocking_attempt(
+            lambda: _run_credential_attempt(
+                ctx,
+                record,
+                workspace,
+                operation,
+                notify_invalid=lambda: notices.append(True),
+                cleanup_workspace=cleanup_workspace,
+            )
+        )
+    finally:
+        if notices:
+            # Credential state commits once per owner/generation; unrelated users are untouched.
+            with suppress(Exception):
+                await cast(Bot, ctx["bot"]).send_message(
+                    chat_id=record.chat_id,
+                    text="نشست اینستاگرام شما نامعتبر شده است؛ از بخش اتصال اینستاگرام دوباره وارد شوید. "
+                    "برای این دانلود عمومی از کوکی عمومی ربات استفاده می‌کنیم.",
+                )
+
+
+def _run_credential_attempt[AttemptResult](
+    ctx: dict[str, Any],
+    record: JobRecord,
+    workspace: Path,
+    operation: Callable[[ResolvedCredential | None], AttemptResult],
+    *,
+    notify_invalid: Callable[[], None],
+    cleanup_workspace: bool,
+) -> AttemptResult:
+    private_context = _private_job_user_context(record)
+    resolver = ctx.get("credential_resolver")
+    if private_context is not None:
+        context = private_context
+    else:
+        hostname = (urlsplit(record.url).hostname or "").casefold().rstrip(".")
+        if hostname != "instagram.com" and not hostname.endswith(".instagram.com"):
+            return operation(_public_job_credential(ctx, record))
+        repository = cast(JobRepository, ctx["repository"])
+        generation = resolver.connected_generation(record.user_id) if resolver is not None else None
+        record = repository.select_public_instagram_credential(
+            record.job_id, user_generation=generation
+        )
+        if record.cancel_requested or record.status is JobStatus.CANCELLED:
+            raise JobCancelledError("Credential attempt was cancelled")
+        if record.credential_attempt_phase is CredentialAttemptPhase.OPERATOR_ATTEMPT:
+            return _run_operator_attempt(operation)
+        context = CredentialContext(
+            kind=CredentialKind.USER_INSTAGRAM,
+            policy=CredentialPolicy.USER_FIRST_PUBLIC_FALLBACK,
+            user_generation=record.user_credential_generation,
+        )
+    try:
+        return _run_private_attempt(
+            ctx, record, context, workspace, operation, cleanup_workspace=cleanup_workspace
+        )
+    except MediaBotError as exc:
+        exc.credential_kind = CredentialKind.USER_INSTAGRAM.value
+        eligible = isinstance(
+            exc,
+            (
+                AuthenticationRequiredError,
+                CredentialExpiredError,
+                CredentialChallengeRequiredError,
+                CredentialDisconnectedError,
+                CredentialRevokedError,
+                CredentialNotFoundError,
+                CredentialGenerationMismatchError,
+            ),
+        )
+        if not eligible:
+            raise
+        if resolver is not None and context.user_generation is not None:
+            changed = resolver.mark_session_invalid(
+                record.user_id, generation=context.user_generation
+            )
+            if changed and private_context is None:
+                notify_invalid()
+        if private_context is not None:
+            raise
+        repository = cast(JobRepository, ctx["repository"])
+        if not repository.switch_public_instagram_to_operator(record.job_id):
+            if repository.is_cancel_requested(record.job_id):
+                raise JobCancelledError("Public fallback was cancelled") from exc
+            raise
+        cleanup_job_workspace(
+            cast(Settings, ctx["settings"]),
+            record.job_id,
+            terminal_status="attempt_finished",
+            cleanup_reason="public_session_fallback",
+        )
+        return _run_operator_attempt(operation)
+
+
+def _run_operator_attempt[AttemptResult](
+    operation: Callable[[ResolvedCredential | None], AttemptResult],
+) -> AttemptResult:
+    try:
+        return operation(ResolvedCredential.operator_public())
+    except MediaBotError as exc:
+        exc.credential_kind = CredentialKind.OPERATOR_PUBLIC.value
+        raise
 
 
 def _private_job_user_context(record: JobRecord | None) -> CredentialContext | None:

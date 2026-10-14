@@ -47,6 +47,70 @@ def repository(tmp_path: Path) -> SqliteJobRepository:
     return result
 
 
+def test_public_credential_decision_and_fallback_are_restart_safe_and_atomic(
+    repository: SqliteJobRepository,
+) -> None:
+    from telegram_media_bot.domain.credential_resolution import CredentialAttemptPhase
+
+    job, _ = JobService(repository).create_inspection(
+        chat_id=1, user_id=1, url="https://www.instagram.com/p/public/"
+    )
+    selected = repository.select_public_instagram_credential(job.job_id, user_generation=7)
+    assert selected.user_credential_generation == 7
+    assert (
+        repository.select_public_instagram_credential(
+            job.job_id, user_generation=8
+        ).user_credential_generation
+        == 7
+    )
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = tuple(
+            pool.map(lambda _: repository.switch_public_instagram_to_operator(job.job_id), range(4))
+        )
+    assert sum(results) == 1
+    repository.initialize()
+    persisted = repository.select_public_instagram_credential(job.job_id, user_generation=9)
+    assert persisted.user_credential_generation == 7
+    assert persisted.fallback_used
+    assert persisted.credential_attempt_phase is CredentialAttemptPhase.OPERATOR_ATTEMPT
+
+
+@pytest.mark.parametrize("restricted,cancelled", [(True, False), (False, True)])
+def test_public_fallback_reservation_cannot_mutate_restricted_or_cancelled_jobs(
+    repository: SqliteJobRepository, restricted: bool, cancelled: bool
+) -> None:
+    from telegram_media_bot.domain.credential_resolution import (
+        ContentAccessScope,
+        CredentialAttemptPhase,
+        CredentialPolicy,
+    )
+
+    now = datetime.now(UTC)
+    job = JobRecord(
+        job_id=JobId("protected"),
+        kind=JobKind.INSPECTION,
+        status=JobStatus.RUNNING,
+        chat_id=1,
+        user_id=1,
+        url="https://www.instagram.com/p/protected/",
+        mode=None,
+        idempotency_key="protected",
+        created_at=now,
+        updated_at=now,
+        credential_policy=CredentialPolicy.USER_FIRST_PUBLIC_FALLBACK,
+        user_credential_generation=1,
+        credential_attempt_phase=CredentialAttemptPhase.USER_ATTEMPT,
+        content_access_scope=ContentAccessScope.USER_RESTRICTED
+        if restricted
+        else ContentAccessScope.UNKNOWN,
+        cancel_requested=cancelled,
+    )
+    repository.create_job(job)
+    assert not repository.switch_public_instagram_to_operator(job.job_id)
+    persisted = repository.get_job(job.job_id)
+    assert persisted is not None and not persisted.fallback_used
+
+
 def test_selection_enforces_owner_and_expiration(repository: SqliteJobRepository) -> None:
     now = datetime.now(UTC)
     selection = SelectionRecord(

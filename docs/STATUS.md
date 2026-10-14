@@ -1,6 +1,37 @@
 # Project status
 
-Last updated: 2026-10-12
+Last updated: 2026-10-14
+
+## Shared Instagram cookie and owner-session routing for RC12 (2026-10-14)
+
+- Restores the superadministrator-managed canonical cookie for public Instagram users without
+  a connected personal session. Every connected owner, Free or VIP, prefers their personal session
+  for public inspection, images/native video children, Story/Highlight resolution, and downloads.
+- Existing durable job fields freeze the first credential decision and exact generation. Typed
+  authentication/session failure invalidates only that owner/generation, attempts reconnect
+  guidance once per transition, and commits one public fallback before shared-cookie extraction.
+  Restart/retry retains the operator phase. Private requests keep owner-bound VIP authorization
+  and never switch; empty output and local/media/cancellation/delivery failures never switch.
+- Conditional session invalidation and its sanitized event share one transaction; a late failed
+  attempt cannot expire a newer login. Personal failures do not alter shared Cookie Health.
+  Existing configuration, canonical cookie path, encrypted vault, and SQLite schema remain valid.
+- Live diagnosis on the Netherlands server reproduced the reported post's empty anonymous output
+  with RC11; an isolated copy of the existing shared cookie returned one media event. Isolated
+  gallery-dl 1.32.16 and anonymous yt-dlp probes also failed to extract that post, so no unverified
+  dependency update is included. Production services/configuration/cookies were not changed.
+- Validation passed on Python 3.14.5: 227 focused tests; the full non-contract suite and exact
+  fast-quality lane each passed 1,697 tests with 12 platform/opt-in skips and 82.59% coverage.
+  The full suite also treated ResourceWarning as an error. Frozen lock/sync, architecture/context/
+  text/manifest, Ruff lint/format, mypy, detect-secrets, pip check, vulnerability audit, Compose
+  rendering, clean wheel installation, and Linux/Windows updater recovery passed.
+- The actual RC12 Docker image passed CLI/version, gallery/native selection/UI, doctor,
+  read-only workspace, chart resources, executable Local Bot API, and read-only logger preflight
+  smokes. A separate container using the installed RC12 package extracted and downloaded the
+  reported post as one 466,914-byte image with the shared cookie. No Telegram delivery was
+  requested. Production configuration/cookies were mounted read-only, copied only into temporary
+  storage, and neither code nor dependencies were deployed into running production containers.
+- Package metadata and the frozen lock agree on `1.4.0-rc.12`; publication uses the existing
+  prerelease tag workflow after the full hosted CI gate, without advancing the stable release.
 
 ## Role-aware menu recovery and scoped administrator denials (2026-10-12)
 
