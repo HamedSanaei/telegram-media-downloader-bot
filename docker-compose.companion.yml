@@ -1,0 +1,35 @@
+# Deliberately a separate Compose project: the core updater owns its original four services.
+# Recreate this service explicitly after an upgrade; never mount the full bot configuration.
+name: telegram-media-downloader-companion
+
+services:
+  companion:
+    image: "${TMB_IMAGE:-telegram-media-downloader-bot:local}"
+    restart: unless-stopped
+    user: "${APP_UID:-10001}:${APP_GID:-10001}"
+    read_only: true
+    cap_drop: [ALL]
+    ulimits:
+      core: {soft: 0, hard: 0}
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    command: ["telegram-media-bot", "companion", "--config", "/app/companion.yaml"]
+    ports: ["127.0.0.1:8090:8090"]
+    volumes:
+      - type: bind
+        source: ./companion.local.yaml
+        target: /app/companion.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data/state
+        target: /data/state
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

@@ -150,6 +150,21 @@ async def test_security_headers_present(tmp_path: Path) -> None:
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
 
 
+async def test_login_page_is_transparent_and_assets_obey_strict_csp(tmp_path: Path) -> None:
+    app, _svc, _link = _build(tmp_path)
+    async with TestClient(TestServer(app)) as client:
+        page = await client.get("/instagram/connect")
+        html = await page.text()
+        assert "این صفحه متعلق به ربات دانلودر است" in html
+        assert 'type="checkbox" required' in html
+        assert "<style>" not in html and "style=" not in html
+        assert page.headers["Cache-Control"] == "no-store"
+        for asset in ("/static/connect.js", "/static/connect.css"):
+            response = await client.get(asset)
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+
+
 async def test_payment_callback_no_registered_provider(tmp_path: Path) -> None:
     """Providers without a registered adapter get a generic 404 (no existence leak)."""
     app, _svc, _link = _build(tmp_path)

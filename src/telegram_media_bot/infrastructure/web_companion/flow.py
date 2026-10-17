@@ -10,18 +10,29 @@ generic prompts. No credential is ever logged, persisted, or echoed.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
+from time import monotonic
 
 from telegram_media_bot.application.services.instagram_connection import (
     InstagramConnectionService,
 )
 from telegram_media_bot.domain.web_companion import (
-    BoundedMemoryFlowState,
     InstagramConnectResult,
     InstagramConnectStage,
 )
 
 _PHASE_CREDS = "creds"
 _PHASE_2FA = "2fa"
+
+
+@dataclass(slots=True, repr=False)
+class _Attempt:
+    owner: int
+    connection: InstagramConnectionService
+    expires_at: float
+    username: str | None = None
+    phase: str = _PHASE_CREDS
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 def _parse_input(input_value: object) -> tuple[str | None, str | None, str | None]:
@@ -49,9 +60,11 @@ class CompanionInstagramConnectionFlow:
         max_sessions: int,
     ) -> None:
         self._connection = connection
-        self._transient = BoundedMemoryFlowState(
-            max_age_seconds=max_age_seconds, max_entries=max_sessions
-        )
+        if max_age_seconds < 1 or max_sessions < 1:
+            raise ValueError("flow bounds must be positive")
+        self._max_age_seconds = max_age_seconds
+        self._max_sessions = max_sessions
+        self._attempts: dict[str, _Attempt] = {}
 
     async def step(
         self,
@@ -60,45 +73,61 @@ class CompanionInstagramConnectionFlow:
         session_id: str,
         input_value: object | None,
     ) -> InstagramConnectResult:
-        phase = self._transient.get(f"{session_id}:phase")
-        if phase is None:
-            return await self._first_step(owner_user_id, session_id, input_value)
-        if phase == _PHASE_2FA:
-            self._transient.drop(f"{session_id}:phase")
-            _, _, code = _parse_input(input_value)
-            if not code:
-                self._transient.set(f"{session_id}:phase", _PHASE_2FA)
-                return InstagramConnectResult(InstagramConnectStage.NEED_2FA)
-            result = await asyncio.to_thread(
-                self._connection.submit_login,
-                owner_user_id,
-                twofa_code=code,
-            )
-            if result.connected:
-                return InstagramConnectResult(InstagramConnectStage.CONNECTED)
+        now = monotonic()
+        expired = session_id in self._attempts and self._attempts[session_id].expires_at <= now
+        self._attempts = {
+            key: value for key, value in self._attempts.items() if value.expires_at > now
+        }
+        if expired:
             return InstagramConnectResult(InstagramConnectStage.DENIED)
-        return InstagramConnectResult(InstagramConnectStage.DENIED)
-
-    async def _first_step(
-        self, owner_user_id: int, session_id: str, input_value: object | None
-    ) -> InstagramConnectResult:
-        username, password, _code = _parse_input(input_value)
-        if not username or not password:
-            self._transient.set(f"{session_id}:phase", _PHASE_CREDS)
-            return InstagramConnectResult(InstagramConnectStage.NEED_CREDENTIALS)
-        self._transient.set(f"{session_id}:phase", _PHASE_CREDS)
-        result = await asyncio.to_thread(
-            self._connection.submit_login,
-            owner_user_id,
-            username=username,
-            password=password,
-        )
-        if result.stage is InstagramConnectStage.NEED_2FA:
-            self._transient.set(f"{session_id}:phase", _PHASE_2FA)
-            return InstagramConnectResult(InstagramConnectStage.NEED_2FA)
-        if result.connected:
-            return InstagramConnectResult(InstagramConnectStage.CONNECTED, message="")
-        return InstagramConnectResult(InstagramConnectStage.DENIED)
+        attempt = self._attempts.get(session_id)
+        if attempt is None:
+            if len(self._attempts) >= self._max_sessions:
+                return InstagramConnectResult(InstagramConnectStage.NOT_AVAILABLE)
+            attempt = _Attempt(
+                owner_user_id, self._connection.new_login_attempt(), now + self._max_age_seconds
+            )
+            self._attempts[session_id] = attempt
+        if attempt.owner != owner_user_id or attempt.lock.locked():
+            return InstagramConnectResult(InstagramConnectStage.DENIED)
+        async with attempt.lock:
+            username, password, code = _parse_input(input_value)
+            if attempt.phase == _PHASE_2FA:
+                if not code:
+                    return InstagramConnectResult(InstagramConnectStage.NEED_2FA)
+                username, password = attempt.username, None
+            else:
+                if not username or not password:
+                    return InstagramConnectResult(InstagramConnectStage.NEED_CREDENTIALS)
+                attempt.username = username
+                code = None
+            try:
+                result = await asyncio.to_thread(
+                    attempt.connection.acquire_login,
+                    username=username,
+                    password=password,
+                    twofa_code=code,
+                )
+                # A timed-out/cancelled provider thread can finish, but never writes the vault.
+                if (
+                    monotonic() >= attempt.expires_at
+                    or self._attempts.get(session_id) is not attempt
+                ):
+                    self._attempts.pop(session_id, None)
+                    return InstagramConnectResult(InstagramConnectStage.DENIED)
+                if result.stage is InstagramConnectStage.NEED_2FA:
+                    attempt.phase = _PHASE_2FA
+                    return InstagramConnectResult(InstagramConnectStage.NEED_2FA)
+                if result.connected and result.session_bytes:
+                    await asyncio.to_thread(attempt.connection.store_login, owner_user_id, result)
+                    self._attempts.pop(session_id, None)
+                    return InstagramConnectResult(InstagramConnectStage.CONNECTED)
+                # A rejected login may be retried with corrected credentials, not a stuck phase.
+                self._attempts.pop(session_id, None)
+                return InstagramConnectResult(InstagramConnectStage.DENIED)
+            except BaseException:
+                self._attempts.pop(session_id, None)
+                raise
 
 
 __all__ = ["CompanionInstagramConnectionFlow"]

@@ -8,6 +8,8 @@ memory and are never durable.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from telegram_media_bot.application.ports.instagram_login import InstagramSessionAcquirer
 from telegram_media_bot.application.services.credential_vault import CredentialVault
 from telegram_media_bot.application.services.handoff import HandoffLinkService
@@ -24,6 +26,7 @@ class InstagramConnectionService:
         acquirer: InstagramSessionAcquirer,
         link_service: HandoffLinkService | None = None,
         connect_base_url: str = "",
+        acquirer_factory: Callable[[], InstagramSessionAcquirer] | None = None,
     ) -> None:
         # The companion process composes this service WITHOUT the bot-side signer (least
         # privilege, T016): link minting is then unavailable, which is exactly right.
@@ -31,6 +34,27 @@ class InstagramConnectionService:
         self._base_url = connect_base_url.rstrip("/")
         self._vault = vault
         self._acquirer = acquirer
+        self._acquirer_factory = acquirer_factory
+
+    def new_login_attempt(self) -> InstagramConnectionService:
+        """Give each browser its own provider cookie jar and pending challenge."""
+        if self._acquirer_factory is None:
+            return self
+        return InstagramConnectionService(vault=self._vault, acquirer=self._acquirer_factory())
+
+    def acquire_login(
+        self,
+        *,
+        username: str | None = None,
+        password: str | None = None,
+        twofa_code: str | None = None,
+    ) -> InstagramLoginResult:
+        """Blocking provider operation only; cancellation must not publish a session."""
+        return self._acquirer.step(username=username, password=password, twofa_code=twofa_code)
+
+    def store_login(self, owner_user_id: int, result: InstagramLoginResult) -> None:
+        if result.connected and result.session_bytes is not None:
+            self._vault.store_session(owner_user_id, result.session_bytes)
 
     def create_connect_link(self, owner_user_id: int) -> str:
         """Mint a signed, single-use link with the handoff token in the URL fragment."""
@@ -55,9 +79,8 @@ class InstagramConnectionService:
         credential material (username/password/2FA plus the one-shot session bytes) is held by
         the caller and immediately released after this call returns.
         """
-        result = self._acquirer.step(username=username, password=password, twofa_code=twofa_code)
-        if result.connected and result.session_bytes is not None:
-            self._vault.store_session(owner_user_id, result.session_bytes)
+        result = self.acquire_login(username=username, password=password, twofa_code=twofa_code)
+        self.store_login(owner_user_id, result)
         return result
 
     def status(self, owner_user_id: int) -> SafeCredentialView | None:

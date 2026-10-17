@@ -1,6 +1,57 @@
 # Project status
 
-Last updated: 2026-10-14
+Last updated: 2026-10-17
+
+## RC14 publication and production activation (2026-10-17)
+
+- Prepares `1.4.0-rc.14` for the explicitly authorized push/publication/deployment of personal
+  Instagram connection recovery and restricted companion activation. Main package and frozen lock
+  metadata must agree before publication; stable `latest` remains unchanged for this prerelease.
+- Production rollout uses the verified transactional updater before explicit private provisioning
+  and companion start. The existing CDN origin listener stays separate from application readiness;
+  real upstream account login is not claimed by readiness or simulated-provider tests.
+
+## Operator-authorized Instagram CDN origin listener (2026-10-17)
+
+- Prepared a dedicated reverse-proxy listener on a verified-free random port outside the host's
+  ephemeral range, using existing Nginx without replacing unrelated 80/443 services. The backend
+  remains loopback-only. The operator explicitly selected CDN HTTPS termination with an HTTP
+  origin; that network leg is unencrypted and is not represented as end-to-end TLS.
+- Listener access is restricted to loopback and the CDN's current official egress ranges, with
+  expected Host and forwarded-HTTPS checks, no-store responses, no request-body proxy buffering
+  or access logging, and a separate ingress-health probe. Nginx syntax/reload, local health=200,
+  external unauthorized access=403 and backend-not-ready=503 were verified. Existing production
+  bot/worker/Redis/Local API services were not restarted. Companion activation and publication
+  remain separate; the origin listener alone does not make personal login available.
+
+## Personal Instagram connection activation and login recovery (2026-10-17)
+
+- Diagnosed an installation with web connection disabled and no public origin, handoff keys or
+  vault key. Administrator configuration alone cannot activate this separate HTTPS service.
+- Adds explicit `instagram-setup` provisioning/configuration checking, private backups, existing
+  key preservation and lost-vault-key refusal. The reduced ignored runtime profile excludes bot,
+  signer and payment credentials; the separate loopback-only Compose service mounts only this
+  profile and shared state. Core management refuses writes until that installed writer is stopped.
+- Fixes empty-prompt/password retry continuation and username retention for 2FA; provider jars and
+  challenges are isolated per browser/owner. The real HTTPS transport preserves repeated cookies
+  and quoted values and rejects cross-origin redirects. Late cancelled provider results cannot
+  store a session. No fake success or credentials in logs/URLs/storage is introduced.
+- The self-hosted Persian page clearly identifies its operator-owned role, requires consent,
+  uses CSP-compatible external assets, exchanges the handoff once, prevents overlapping submits,
+  clears passwords/codes, and handles 2FA/expiry/rejection without claiming a connection.
+- Configuration readiness is not live authentication. Deployment still requires a tested image,
+  correct DNS/TLS ingress, explicit process start and bot/worker restart; see
+  [the activation runbook](INSTAGRAM_CONNECTION.md). No schema or dependency update is required.
+- Validation: exact fast-quality lane passed on Python 3.14.5 (1,753 passed, 12 platform/opt-in
+  skips, 16 contract deselections, 82.81% coverage). The Linux non-contract suite passed 1,760
+  tests with five platform/opt-in skips and 82.89% coverage. ResourceWarning was an error in both.
+  Clean wheel install, both Compose renderings, vulnerability audit, ShellCheck, Linux/Windows
+  updater recovery and all 155 Linux control-plane assertions passed. The signal fixture required
+  a PTY/job-control launch under WSL; a no-PTY run reproduced the same three SIGINT failures on
+  untouched HEAD. Actual browser JavaScript ran through the Node simulator on Windows.
+- No account credentials were used for a live upstream login, and no production configuration,
+  DNS/TLS ingress or running service was changed. Publication/deployment is a separate explicit
+  rollout; the selected hostname must first reach the companion without an HTTPS redirect loop.
 
 ## Highlight normal/file delivery for RC13 (2026-10-14)
 

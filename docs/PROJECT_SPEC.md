@@ -180,6 +180,12 @@ must not reveal whether content exists.
 
 ### Credential and connection behavior
 
+- Connection remains disabled until the operator explicitly provisions an HTTPS origin, matching
+  handoff keys, encrypted vault, and a running companion behind trusted TLS ingress. Configuration
+  readiness is not a claim of DNS, HTTPS, process health, or successful upstream authentication.
+- The connection page identifies itself as bot-owned, not Instagram or OAuth, requires consent,
+  and never asks users to send credentials through Telegram. Each browser has its own provider
+  cookie jar and challenge state; one owner's attempt cannot complete another owner's challenge.
 - Users never send Instagram passwords or 2FA codes in Telegram. The companion HTTPS flow keeps
   them only in bounded memory, discards them, and persists only an encrypted session.
 - Sessions use owner-bound AES-256-GCM envelopes with random nonces, version/key IDs, associated

@@ -72,7 +72,24 @@ require_confirmation() {
 TMB_LOCK_OWNED=0
 TMB_LOCK_MODE=""
 
+assert_companion_stopped() {
+  local running
+  [[ -f "$ROOT_DIR/companion.local.yaml" ]] || return 0
+  running="$(docker ps --filter 'label=com.docker.compose.service=companion' \
+    --filter "label=com.docker.compose.project.working_dir=$ROOT_DIR" \
+    --filter status=running --format '{{.ID}}')" || {
+    echo "Cannot verify the Instagram companion writer state; management operation refused." >&2
+    return 1
+  }
+  if [[ -n "$running" ]]; then
+    echo "Stop the Instagram companion before backup, update, restore, or other management writes:" >&2
+    echo "docker compose -f docker-compose.companion.yml stop companion" >&2
+    return 1
+  fi
+}
+
 acquire_management_lock() {
+  assert_companion_stopped || return 1
   if [[ "${TMB_NO_LOCK:-0}" == "1" ]]; then
     return 0
   fi

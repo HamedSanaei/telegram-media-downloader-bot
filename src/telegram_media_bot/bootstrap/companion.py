@@ -289,6 +289,9 @@ def _build_feature_services(
         connection = InstagramConnectionService(
             vault=vault,
             acquirer=RealInstagramSessionAcquirer(),
+            acquirer_factory=lambda: RealInstagramSessionAcquirer(
+                timeout_seconds=settings.read_timeout_seconds / 3
+            ),
         )
         flow = CompanionInstagramConnectionFlow(
             connection=connection,

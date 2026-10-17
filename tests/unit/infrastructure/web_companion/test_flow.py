@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
+import threading
+from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
+
+import pytest
 
 from telegram_media_bot.application.services.credential_vault import CredentialVault
 from telegram_media_bot.application.services.handoff import HandoffLinkService
 from telegram_media_bot.application.services.instagram_connection import InstagramConnectionService
+from telegram_media_bot.domain.instagram_connection import InstagramLoginResult
 from telegram_media_bot.domain.instagram_credentials import InstagramCredentialState
 from telegram_media_bot.domain.web_companion import InstagramConnectStage
 from telegram_media_bot.infrastructure.credentials.key_ring import CredentialCryptor, VaultKeyRing
@@ -87,3 +93,74 @@ async def test_wrong_owner_cannot_store(tmp_path: Path) -> None:
     assert result.stage is InstagramConnectStage.CONNECTED
     # A different owner id cannot see the stored session.
     assert vault.get_view(999) is None
+
+
+async def test_empty_prompt_then_credentials_can_continue(tmp_path: Path) -> None:
+    _repo, vault, flow = _flow(tmp_path)
+    assert (
+        await flow.step(owner_user_id=7, session_id="s", input_value=None)
+    ).stage is InstagramConnectStage.NEED_CREDENTIALS
+    connected = await flow.step(
+        owner_user_id=7, session_id="s", input_value={"username": "user", "password": "pw"}
+    )
+    assert connected.stage is InstagramConnectStage.CONNECTED
+    assert vault.get_view(7) is not None
+
+
+async def test_pending_attempt_is_owner_bound(tmp_path: Path) -> None:
+    _repo, vault, flow = _flow(tmp_path)
+    await flow.step(owner_user_id=7, session_id="s", input_value=None)
+    denied = await flow.step(
+        owner_user_id=999, session_id="s", input_value={"username": "user", "password": "pw"}
+    )
+    assert denied.stage is InstagramConnectStage.DENIED
+    assert vault.get_view(999) is None
+
+
+async def test_connected_without_session_bytes_is_not_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repo, vault, flow = _flow(tmp_path)
+    monkeypatch.setattr(
+        flow._connection,
+        "acquire_login",
+        lambda **kwargs: InstagramLoginResult(stage=InstagramConnectStage.CONNECTED),
+    )
+    result = await flow.step(
+        owner_user_id=7, session_id="s", input_value={"username": "user", "password": "pw"}
+    )
+    assert result.stage is InstagramConnectStage.DENIED
+    assert vault.get_view(7) is None
+
+
+async def test_cancelled_provider_thread_cannot_store_a_late_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repo, vault, flow = _flow(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    acquire = flow._connection.acquire_login
+
+    def blocked(**kwargs: str | None) -> InstagramLoginResult:
+        entered.set()
+        assert release.wait(5)
+        result = acquire(**kwargs)
+        finished.set()
+        return result
+
+    monkeypatch.setattr(flow._connection, "acquire_login", blocked)
+    task = asyncio.create_task(
+        flow.step(
+            owner_user_id=7, session_id="s", input_value={"username": "user", "password": "pw"}
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+    finally:
+        release.set()
+    assert await asyncio.to_thread(finished.wait, 5)
+    assert vault.get_view(7) is None

@@ -172,6 +172,11 @@ T017-T025 and do not exist yet.
 | `infrastructure/security/handoff.py` | Ed25519 signer/verifier over `cryptography` (implemented) |
 | `infrastructure/web_companion/app.py` | Separate `aiohttp.web` Instagram-browser and payment-callback routes with CSRF/cookies/headers/limits/trusted-proxy isolation (implemented) |
 | `bootstrap/companion.py` | Reduced least-privilege `CompanionSettings` (no bot token/signer) and deterministic `build_companion_app` (implemented) |
+| `bootstrap/instagram_setup.py`, `cli.py` `instagram-setup` | Explicit private provisioning, key preservation/lost-key refusal, reduced runtime profile and configuration-only readiness check |
+| `infrastructure/instagram_login/transport.py` | Per-browser bounded HTTPS cookie jar, repeated Set-Cookie preservation and same-origin redirect policy |
+| `infrastructure/web_companion/flow.py`, `pages.py` | Owner-bound serialized login/2FA attempts, cancellation-safe provider acquisition, transparent consent page, external CSP-compatible assets and single handoff exchange |
+| `docker-compose.companion.yml`, management companion guards | Separate least-privilege loopback web runtime; refuse core backup/update/restore writes until this installed SQLite writer is stopped |
+| `docs/INSTAGRAM_CONNECTION.md` ingress operations | Operator-owned external reverse proxy, explicit CDN HTTP-origin risk/edge allowlist, separate ingress-health versus actual companion readiness |
 | `application/ports/instagram_credentials.py` | Owner-bound encrypted-credential repository, key store/cryptor, lease, and ephemeral materialization contracts (implemented) |
 | `application/services/billing.py` | Order lifecycle, verified-result confirmation, idempotent atomic refund/reversal, and reconciliation queries without provider-name branching (implemented) |
 | `application/services/instagram_connection.py` | Mints handoff links, runs the transient login, stores success in the vault, and exposes sanitized status/disconnect (implemented) |

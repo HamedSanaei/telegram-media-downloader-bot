@@ -8,7 +8,10 @@ from pydantic import SecretStr
 
 from telegram_media_bot.bootstrap.config import Settings, VaultKeyRingSection
 from telegram_media_bot.bootstrap.instagram import build_instagram_connection_service
-from telegram_media_bot.infrastructure.security.handoff import Ed25519HandoffSigner
+from telegram_media_bot.infrastructure.security.handoff import (
+    Ed25519HandoffSigner,
+    Ed25519HandoffVerifier,
+)
 
 
 def test_factory_returns_none_without_vault_keys(settings: Settings) -> None:
@@ -30,7 +33,11 @@ def test_factory_builds_service_with_vault_and_signing_material(settings: Settin
     _signer, private = Ed25519HandoffSigner.generate()
     companion = settings.web_companion.model_copy(
         update={
+            "enabled": True,
             "handoff_signing_key": SecretStr(private),
+            "handoff_verification_key": SecretStr(
+                Ed25519HandoffVerifier.from_private_encoded(private).public_key_pem().decode()
+            ),
             "public_base_url": "https://connect.example.test",
         }
     )
@@ -46,3 +53,26 @@ def test_factory_builds_service_with_vault_and_signing_material(settings: Settin
     assert service is not None
     link = service.create_connect_link(7)
     assert link.startswith("https://connect.example.test/instagram/connect#handoff=")
+
+
+def test_factory_refuses_to_mint_when_web_is_disabled(settings: Settings) -> None:
+    _, private = Ed25519HandoffSigner.generate()
+    configured = settings.model_copy(
+        update={
+            "vault": VaultKeyRingSection(
+                active_key_id="k", active_key=SecretStr(secrets.token_hex(32))
+            ),
+            "web_companion": settings.web_companion.model_copy(
+                update={
+                    "handoff_signing_key": SecretStr(private),
+                    "public_base_url": "https://connect.example.test",
+                    "handoff_verification_key": SecretStr(
+                        Ed25519HandoffVerifier.from_private_encoded(private)
+                        .public_key_pem()
+                        .decode()
+                    ),
+                }
+            ),
+        }
+    )
+    assert build_instagram_connection_service(configured) is None

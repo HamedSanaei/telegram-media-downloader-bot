@@ -284,7 +284,11 @@ the manual-only dedicated artifact workflow from pinned `tdlib/telegram-bot-api`
 Telegram upgrade is an explicit `workflow_dispatch` run that publishes a new digest, which is then
 pinned in the application Dockerfile.
 
-For private Instagram Stories/Highlights, export a Netscape cookies file from an authorized account,
+For personal Instagram login, use the separate opt-in
+[HTTPS connection setup](INSTAGRAM_CONNECTION.md). This is distinct from shared operator cookie
+management and requires explicit service activation and trusted HTTPS ingress.
+
+For the shared operator cookie, export a Netscape cookies file from an authorized account,
 place it below `data/cookies`, configure its container path, and restrict it to the runtime owner
 with mode `0600`. The canonical file and its parent directory must be owner-writable when Telegram
 cookie management is used. No phone number, SMS, 2FA, Userbot, or Telegram user session is used.

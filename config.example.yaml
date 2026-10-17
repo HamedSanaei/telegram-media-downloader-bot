@@ -231,18 +231,15 @@ operations:
   update:
     prune_old_project_images_after_success: true
 
-# Optional least-privilege companion web boundary (T016). Disabled by default; no production
-# Instagram login or payment gateway is enabled until later tasks. When enabled, the companion
-# process reads ONLY these keys (never telegram.bot_token and never handoff_signing_key).
-#
-# Generate an Ed25519 keypair (e.g. with the bundled runtime) and place:
-#   - the PUBLIC key PEM here for the companion to verify signed connection links;
-#   - the encoded PRIVATE key here for the BOT to sign those links.
+# Optional least-privilege companion web boundary. Disabled until explicitly provisioned.
+# Use `telegram-media-bot instagram-setup --config config.yaml --public-base-url https://connect.example.com`
+# to preserve/generate keys and export ignored companion.local.yaml (no bot token or signer).
+# Run the companion with ONLY that reduced file; see docs/INSTAGRAM_CONNECTION.md for TLS/lifecycle.
 web_companion:
   enabled: false
   host: 127.0.0.1
   port: 8090
-  # Public HTTPS base URL embedded in generated Instagram connection links (https only).
+  # Operator-owned HTTPS origin: no userinfo, path, query, or fragment (root slash allowed).
   public_base_url: null
   session_max_seconds: 300
   interactive_flow_max_seconds: 600

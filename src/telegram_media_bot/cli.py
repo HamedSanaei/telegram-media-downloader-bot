@@ -55,6 +55,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     companion.add_argument("--config", type=Path, default=None)
 
+    instagram_setup = subparsers.add_parser(
+        "instagram-setup", help="Explicitly provision personal Instagram connection keys/profile"
+    )
+    instagram_setup.add_argument("--config", type=Path, default=None)
+    instagram_setup.add_argument("--public-base-url", help="Operator-owned HTTPS origin, no path")
+    instagram_setup.add_argument(
+        "--check", action="store_true", help="Configuration-only check; never logs in"
+    )
+
     config_check = subparsers.add_parser("config-check", help="Validate configuration")
     config_check.add_argument("--config", type=Path, default=None)
     config_check.add_argument(
@@ -235,6 +244,42 @@ def main() -> None:
             from telegram_media_bot.workers.settings import WorkerSettings
 
             run_worker(WorkerSettings)
+        elif args.command == "instagram-setup":
+            from telegram_media_bot.bootstrap.instagram import instagram_connection_issues
+            from telegram_media_bot.bootstrap.instagram_setup import (
+                companion_profile_path,
+                configure_instagram_connection,
+                instagram_profile_issues,
+            )
+
+            path = args.config or default_config_path()
+            profile = companion_profile_path(path)
+            if args.check:
+                try:
+                    configuration = load_settings(path)
+                except ConfigurationError:
+                    raise ConfigurationError(
+                        "Cannot validate Instagram configuration; inspect the local YAML privately"
+                    ) from None
+                issues = list(instagram_connection_issues(configuration))
+                issues.extend(instagram_profile_issues(configuration, profile))
+                print("configuration_ready: " + str(not issues).lower())
+                for issue in issues:
+                    print("missing: " + issue)
+                if issues:
+                    raise SystemExit(2)
+            else:
+                if not args.public_base_url:
+                    raise ConfigurationError(
+                        "instagram-setup requires --public-base-url or --check"
+                    )
+                backup = configure_instagram_connection(path, public_base_url=args.public_base_url)
+                print("Personal Instagram configuration prepared; existing keys preserved.")
+                if backup is not None:
+                    print("Private rollback backup created under backups/.")
+                print(
+                    "Next: provision HTTPS ingress, start the separate companion, restart bot/worker, and verify login."
+                )
         elif args.command == "companion":
             from aiohttp import web
 

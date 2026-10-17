@@ -850,3 +850,24 @@ credential switch. Personal failures do not alter global Cookie Health; shared-c
 retain operator remediation. Credentials stay leased and job-scoped through all media children
 and are removed before fallback, failure, cancellation, or completion. No existing configuration
 or database schema migration is required.
+
+## ADR-049: Explicit personal connection activation and per-browser provider isolation
+
+**Status:** accepted (2026-10-17)
+
+Personal connection is disabled until the operator supplies an HTTPS origin, matching handoff
+keys and a vault. The explicit `instagram-setup` command preserves existing keys and private
+backups; it never silently rotates lost keys over encrypted rows. Main `config.yaml` is the sole
+operator authority; ignored `companion.local.yaml` is its least-privilege derived runtime
+projection, not a second independently edited authority. It excludes the Telegram token, signing
+key and payment credentials. A separate Compose project mounts only this projection and SQLite
+state. Core management refuses writes while the installed companion writer is active/unknown;
+operators stop it first and explicitly recreate it after an upgrade. The core four-service
+transaction contract remains unchanged.
+
+Each browser owns a provider acquirer, HTTPS cookie jar and bounded challenge context. Repeated
+Set-Cookie fields and quoted values survive GET/password/2FA. Provider acquisition cannot itself
+write the vault; an unexpired flow must receive real authenticated session bytes before storage.
+The page clearly identifies the bot operator (not an official Instagram/OAuth page), requires
+consent, uses no third-party assets, clears transient credentials, and exchanges the fragment
+handoff only once. Configuration checks never claim live TLS or Instagram login success.

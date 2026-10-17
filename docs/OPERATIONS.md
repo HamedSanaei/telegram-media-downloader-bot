@@ -199,6 +199,10 @@ the worker-level concurrency gate and optional `TMB_WORKER_CPUS` quota protect s
 
 ## Telegram administration
 
+Personal Instagram connection requires its own explicitly provisioned HTTPS companion; admin IDs
+do not activate it. See [personal connection activation](INSTAGRAM_CONNECTION.md) for safe setup,
+restricted runtime configuration, readiness limits and stop-before-backup/update/restore ordering.
+
 Instagram Highlight links and Highlight-browser choices now show normal/file delivery buttons.
 Choose file delivery to receive each original image/video as a separate Telegram document with
 unchanged bytes. Normal mode keeps the existing photo/video presentation and safe document fallback.

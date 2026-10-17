@@ -43,6 +43,16 @@ function Invoke-Docker {
     return $Output
 }
 
+function Assert-CompanionStopped {
+    if (-not (Test-Path -LiteralPath (Join-Path $RootDirectory "companion.local.yaml"))) { return }
+    $Running = @(Invoke-Docker @("ps", "--filter", "label=com.docker.compose.service=companion",
+            "--filter", "label=com.docker.compose.project.working_dir=$RootDirectory",
+            "--filter", "status=running", "--format", "{{.ID}}") | Where-Object { $_ })
+    if ($Running.Count -gt 0) {
+        throw "Stop the Instagram companion before backup/update: docker compose -f docker-compose.companion.yml stop companion"
+    }
+}
+
 function New-TmbBackup {
     $BackupDirectory = Join-Path $RootDirectory "backups"
     New-Item -ItemType Directory -Force $BackupDirectory | Out-Null
@@ -57,6 +67,7 @@ function New-TmbBackup {
 }
 
 function New-ConsistentTmbBackup {
+    Assert-CompanionStopped
     $PreviousServices = @(Get-RunningApplicationServices)
     try {
         if ($PreviousServices.Count -gt 0) {
@@ -306,6 +317,7 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { throw "Configuration failed." }
     }
     "update" {
+        Assert-CompanionStopped
         Assert-ReleaseAllowed $env:TMB_RELEASE_TAG
         $Release = Get-VerifiedRelease
         $PreviousImage = $null

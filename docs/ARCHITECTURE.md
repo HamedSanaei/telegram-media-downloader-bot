@@ -483,6 +483,22 @@ fragment-delivered, POST-exchanged, and nonce-consumed once. Browser flow state,
 codes remain in memory for at most ten minutes. Payment callbacks require provider signature and
 replay verification; browser redirects are presentation only.
 
+Personal connection activation is explicit (`instagram-setup`); the main ignored `config.yaml`
+remains authoritative. Provisioning preserves existing keys, refuses a new vault key when encrypted
+rows already exist, and writes a private reduced `companion.local.yaml` without bot token, signer,
+or payment secrets. The separate `docker-compose.companion.yml` mounts only that projection and
+the shared SQLite state directory, publishes loopback port 8090, and does not join the core
+updater's four-service lifecycle. Management writes fail closed while this installed companion is
+running or its state cannot be checked; operators stop it before backup/update/restore and recreate
+it explicitly after upgrading. See [the activation runbook](INSTAGRAM_CONNECTION.md).
+
+The transient flow allocates a real provider acquirer/cookie jar per browser. Username is retained
+only for its bounded 2FA continuation; passwords/codes are forwarded once. A provider thread only
+acquires a result; the still-authorized, unexpired asynchronous flow commits the encrypted session
+after completion, so a provider thread finishing after request cancellation cannot publish it.
+The transport restricts redirects to Instagram HTTPS, processes every Set-Cookie header through a
+cookie jar, and preserves quoted cookie values when producing Netscape session bytes.
+
 ### Implemented entitlement foundation (T014)
 
 SQLite stores a plan catalog (`subscription_plans` + capabilities), a per-user subscription

@@ -8,7 +8,7 @@ only durable outcome is an encrypted vault store (T017) or a sanitized lifecycle
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from telegram_media_bot.domain.web_companion import InstagramConnectStage
@@ -30,7 +30,7 @@ class InstagramLoginResult:
 
     stage: InstagramConnectStage
     failure: LoginFailureCategory = LoginFailureCategory.NONE
-    session_bytes: bytes | None = None
+    session_bytes: bytes | None = field(default=None, repr=False)
 
     @property
     def connected(self) -> bool:

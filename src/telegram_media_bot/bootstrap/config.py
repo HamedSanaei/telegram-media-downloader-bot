@@ -731,8 +731,21 @@ class WebCompanionSection(StrictModel):
         if value is None:
             return None
         parsed = urlsplit(value)
-        if parsed.scheme != "https" or not parsed.hostname:
-            raise ValueError("web_companion.public_base_url must be an absolute HTTPS URL")
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.port == 0
+            or any(character.isspace() or ord(character) < 32 for character in value)
+            or "\\" in value
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError(
+                "web_companion.public_base_url must be an HTTPS origin without credentials, path, query or fragment"
+            )
         return value.rstrip("/")
 
     @field_validator("trusted_proxies")

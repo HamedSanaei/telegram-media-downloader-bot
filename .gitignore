@@ -2,6 +2,8 @@
 config.yaml
 config.yaml.tmp
 *.local.yaml
+.instagram-setup-*
+.instagram-setup.lock
 .env
 
 # Python
