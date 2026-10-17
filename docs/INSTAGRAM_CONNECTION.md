@@ -51,6 +51,13 @@ not automatically available to `docker run`. Do not print or source arbitrary se
 These one-shot provisioning containers intentionally access the authoritative configuration; the
 long-running web service must not.
 
+Keep the provisioning command's `/data` bind writable as shown. A SQLite `mode=ro` connection can
+still require writable WAL/SHM coordination files when checking existing encrypted-session rows;
+a read-only data bind may correctly fail closed with "Cannot verify existing credential storage".
+This differs from the updater's explicitly read-only static preflight. Keep runtime ownership of
+SQLite sidecars consistent with `APP_UID`/`APP_GID`. The long-running companion still receives only
+the reduced read-only profile and writable state directory, never the full bot configuration.
+
 Setup enables the existing settings, preserves valid encryption/signing keys, creates missing keys
 only for a fresh installation, and writes private backups under `backups/instagram-setup-*`.
 Files are atomic individually; the restricted profile is written first, enabling main config last,

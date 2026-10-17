@@ -127,3 +127,45 @@ graphify query "Trace personal Instagram companion release version upgrade backu
 Key discoveries: `backup`, `rollback_update`, `CompanionWebApp`, `InstagramConnectionService`,
 `bootstrap/companion.py`, and the updater/release entrypoints. Actual version assertions, archive
 builder, CI/publication workflows, updater recovery fixtures, T011 and ADR-015/018/023 were read.
+
+## Completed RC14 rollout (2026-10-17)
+
+- Release commit/tag: `261248581511553685e5df9e1b9028a382d86ae5`, `v1.4.0-rc.14`.
+- [Full application CI](https://github.com/HamedSanaei/telegram-media-downloader-bot/actions/runs/38993739924):
+  all ten jobs succeeded, including `quality`, Docker runtime, both installers, privileged updater
+  matrix and `final-ci-gate`. Hosted quality: 1,764 passed, one opt-in skip, 16 contract deselections,
+  82.90% coverage. The release-version local suite passed 1,753 tests with 82.81% coverage.
+- [Publication](https://github.com/HamedSanaei/telegram-media-downloader-bot/actions/runs/38994901268)
+  and [prerelease](https://github.com/HamedSanaei/telegram-media-downloader-bot/releases/tag/v1.4.0-rc.14)
+  completed successfully. Source archives reproduced locally and in publication. The stable latest
+  release remains `v1.3.8`.
+- Published image: `ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.4.0-rc.14`, digest
+  `sha256:7b1c5a12321559b7229b7ae96f4eab087e02a59f36261e1f547ca3e61f248f1d`.
+  Its revision label matches the release commit. All four application containers use this image;
+  Redis remains its separate unchanged service.
+- Read-only image/configuration/doctor preflight passed on the actual server without changing
+  running services. An isolated actual-image companion also booted non-root/read-only with no
+  network/public port and a restricted profile; its readiness returned 200 and its temporary
+  resources were removed afterward.
+- The normal transactional updater preserved Redis, stopped only the filesystem writers and made
+  the private mode-0600 `backups/tmb-20261017T024427Z.tar.gz` before application replacement.
+  A separate `tmb-rollback:rc13-before-rc14-20261017024214` image reference protects the prior image.
+- First activation failed closed because the operator helper mounted `/data` read-only for a
+  SQLite WAL reader. Configuration was restored and the RC14 core remained healthy. The exact
+  error was reproduced against a private configuration copy; the documented writable data bind
+  made that same isolated setup succeed. No database rows were reset or deleted. Corrected
+  activation preserved runtime sidecar ownership and passed configuration, service and public
+  protocol verification. This was an operator-command correction, not a relaxed application gate.
+- Successful private recovery directory: `backups/instagram-activation.XD4vzw`. Active main/profile
+  recovery copies there are root-owned mode 0600 under a root-owned mode-0700 directory; live main
+  and reduced profile remain mode 0600 for runtime UID 10001. No secret values appear in this report.
+- Actual companion mounts are only `/app/companion.yaml` read-only and `/data/state` writable.
+  Its active-writer management guard correctly refuses backup/update/restore writes until stopped.
+- Public `/ready` and `/instagram/connect` return 200, including from the external developer host.
+  A newly minted real signed handoff, sent through the public CDN route without logging its token,
+  produced a Secure/HttpOnly/SameSite=Lax browser cookie, reached `need_credentials`, and rejected
+  replay with 401. Telegram getMe/required-channel checks passed. Worker, Local API, Redis and
+  companion are healthy; bot is running/reachable.
+- No Instagram account password/code or upstream authentication request was used by deployment
+  probes. The HTTP edge-to-origin leg remains an explicit operator choice and is not end-to-end
+  TLS. Actual account authentication still needs the user's own secure-link interaction.

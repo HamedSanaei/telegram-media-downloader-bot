@@ -10,6 +10,19 @@ Last updated: 2026-10-17
 - Production rollout uses the verified transactional updater before explicit private provisioning
   and companion start. The existing CDN origin listener stays separate from application readiness;
   real upstream account login is not claimed by readiness or simulated-provider tests.
+- Published `v1.4.0-rc.14` from `261248581511553685e5df9e1b9028a382d86ae5`; all ten hosted CI jobs,
+  including `final-ci-gate`, passed in run `38993739924`. Publication/archive/image verification
+  passed in run `38994901268`. Hosted quality passed 1,764 tests with one opt-in skip and 82.90%
+  coverage; local Windows quality passed 1,753 with 82.81% coverage.
+- The production core and restricted companion now use the verified RC14 image. A private consistent
+  pre-upgrade backup and RC13 rollback image were retained, along with private active-key recovery
+  copies. Initial provisioning correctly refused a read-only SQLite WAL mount and restored the
+  previous connection configuration; the documented writable provisioning mount resolved it.
+- Public readiness/page return 200, a real signed handoff reaches the credential prompt, its cookie
+  is Secure/HttpOnly/SameSite=Lax, and replay returns 401. Telegram reachability, required channels,
+  worker/Local API/Redis/companion health, restricted mounts and active-writer guard were verified.
+  No Instagram password/code or upstream account login was used. The operator-selected CDN HTTP
+  origin remains unencrypted; stable release stays `v1.3.8`.
 
 ## Operator-authorized Instagram CDN origin listener (2026-10-17)
 
