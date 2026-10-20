@@ -14,6 +14,7 @@ from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.credential_resolution import CredentialKind, ResolvedCredential
 from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
+    GalleryDlAccessDeniedError,
     GalleryDlAuthenticationRequiredError,
     GalleryDlCookiesExpiredError,
     GalleryDlEmptyResponseError,
@@ -91,6 +92,13 @@ def _jsonl_payload(events: list[list[Any]]) -> bytes:
         ("instagram-carousel.json", "instagram", (MediaKind.IMAGE, MediaKind.IMAGE)),
         ("instagram-mixed.json", "instagram", (MediaKind.IMAGE, MediaKind.VIDEO)),
         ("instagram-story.json", "instagram", (MediaKind.IMAGE,)),
+        ("instagram-story-video.json", "instagram", (MediaKind.VIDEO,)),
+        ("instagram-avatar.json", "instagram", (MediaKind.IMAGE,)),
+        (
+            "instagram-highlights.json",
+            "instagram",
+            (MediaKind.IMAGE, MediaKind.VIDEO, MediaKind.IMAGE),
+        ),
         ("tiktok-photo.json", "tiktok", (MediaKind.IMAGE, MediaKind.IMAGE)),
         ("twitter-single.json", "twitter", (MediaKind.IMAGE,)),
         ("twitter-multiple.json", "twitter", (MediaKind.IMAGE, MediaKind.IMAGE)),
@@ -98,7 +106,7 @@ def _jsonl_payload(events: list[list[Any]]) -> bytes:
         ("pinterest-single.json", "pinterest", (MediaKind.IMAGE,)),
     ],
 )
-def test_pinned_1328_fixtures_normalize_in_source_order(
+def test_pinned_gallery_fixtures_normalize_in_source_order(
     name: str, provider: str, kinds: tuple[MediaKind, ...]
 ) -> None:
     inspection = parse_inspection(_fixture(name), expected_provider=provider, max_assets=30)
@@ -221,8 +229,10 @@ def test_command_is_argv_only_and_every_provider_uses_the_canonical_cookie(
         assert "--no-colors" in args
         assert "--dump-json" in args
         assert "--no-download" in args
-        option_index = args.index("-o")
-        assert args[option_index : option_index + 2] == ["-o", "output.jsonl=true"]
+        assert "output.jsonl=true" in args
+        assert "extractor.cookies-update=false" in args
+        assert "extractor.retries=0" in args
+        assert "downloader.retries=0" in args
         assert args[args.index("--cookies") + 1] == str(canonical.resolve())
 
 
@@ -294,11 +304,7 @@ def test_instagram_image_download_explicitly_disables_gallery_video_downloads(
         images_only=True,
     )
 
-    option_index = args.index("-o")
-    assert args[option_index : option_index + 2] == [
-        "-o",
-        "extractor.instagram.videos=false",
-    ]
+    assert "extractor.instagram.videos=false" in args
 
 
 def test_safe_nonzero_mapping_does_not_expose_stderr() -> None:
@@ -318,7 +324,7 @@ def test_safe_nonzero_mapping_does_not_expose_stderr() -> None:
     assert "private" not in str(secret)
     assert isinstance(
         map_process_failure(1, b"HTTP 403 Forbidden"),
-        GalleryDlAuthenticationRequiredError,
+        GalleryDlAccessDeniedError,
     )
     assert isinstance(map_process_failure(1, b"HTTP 404 Not Found"), MediaUnavailableError)
 
@@ -598,7 +604,7 @@ class _FixtureRunner:
         del timeout_seconds, is_cancelled
         self.commands.append(args)
         if "--version" in args:
-            return GalleryProcessResult(0, b"1.32.8\n", b"", 0.01)
+            return GalleryProcessResult(0, b"1.32.17\n", b"", 0.01)
         if "--dump-json" in args:
             self.inspections += 1
             return GalleryProcessResult(0, self.payload, self.stderr, 0.01)

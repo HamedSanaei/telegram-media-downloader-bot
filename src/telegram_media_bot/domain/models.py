@@ -10,6 +10,7 @@ from telegram_media_bot.domain.credential_resolution import (
     ContentAccessScope,
     CredentialAttemptPhase,
     CredentialPolicy,
+    ResolvedCredential,
 )
 from telegram_media_bot.domain.subscriptions import EntitlementSnapshot
 
@@ -285,6 +286,19 @@ class NativeOptionView:
 
 
 @dataclass(frozen=True, slots=True)
+class MediaInspection:
+    """Transient metadata bound to the credential handle of one download operation.
+
+    Never persist this object or attach a selection/UI snapshot: queued jobs must resolve
+    current authorization and inspect again inside their own credential attempt.
+    """
+
+    media: MediaInfo
+    credential: ResolvedCredential | None
+    cookie_file: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class DownloadRequest:
     job_id: JobId
     url: str
@@ -299,6 +313,8 @@ class DownloadRequest:
     image_delivery_mode: ImageDeliveryMode | None = None
     #: Per-job batch safeguard (collection modes only); caps the number of assets.
     max_assets: int | None = None
+    #: Validated inspection from this operation only; never a durable/UI metadata cache.
+    inspection: MediaInspection | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -306,6 +322,32 @@ class DownloadRequest:
             "container_policy",
             normalize_container_policy(self.mode, self.container_policy),
         )
+
+    def reusable_inspection(
+        self,
+        *,
+        credential: ResolvedCredential | None,
+        cookie_file: str | None,
+    ) -> MediaInfo | None:
+        inspection = self.inspection
+        if (
+            inspection is None
+            or inspection.media.webpage_url != self.url
+            or inspection.credential != credential
+            or inspection.cookie_file != cookie_file
+            or (
+                self.max_assets is not None
+                and (
+                    len(inspection.media.assets) > self.max_assets
+                    or (
+                        inspection.media.item_count is not None
+                        and inspection.media.item_count > self.max_assets
+                    )
+                )
+            )
+        ):
+            return None
+        return inspection.media
 
 
 @dataclass(frozen=True, slots=True)

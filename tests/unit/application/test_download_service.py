@@ -160,7 +160,8 @@ def test_real_playlist_still_enforces_item_limit() -> None:
 
 
 def test_download_uses_project_contract(tmp_path: Path) -> None:
-    service = DownloadService(FakeEngine(), frozenset({"example"}))
+    engine = FakeEngine()
+    service = DownloadService(engine, frozenset({"example"}))
     result = service.download(
         job_id=JobId("job-1"),
         url="https://example.com/media",
@@ -168,6 +169,12 @@ def test_download_uses_project_contract(tmp_path: Path) -> None:
         output_directory=tmp_path / "job-1",
     )
     assert result.file_path.read_bytes() == b"xxxx"
+    assert engine.inspection_urls == ["https://example.com/media"]
+    inspection = engine.download_requests[0].inspection
+    assert inspection is not None
+    assert inspection.media.webpage_url == "https://example.com/media"
+    assert inspection.credential is None
+    assert inspection.cookie_file is None
 
 
 def test_youtube_mix_uses_canonical_url_for_inspection_and_download(tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import PackageNotFoundError, version
+from math import isfinite, ldexp
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic
@@ -193,6 +194,30 @@ APP_VERSION = _project_version()
 
 #: In-memory per-job retry history (best effort; the durable record keeps the attempt count).
 _FAILURE_HISTORY: dict[str, list[str]] = {}
+_GALLERY_RETRY_CAP_SECONDS = 900.0
+
+
+def _retry_delay_seconds(
+    exc: MediaBotError, *, attempt: int, base_delay_seconds: float
+) -> float | None:
+    """Keep gallery retries in one bounded worker layer, never before a provider deadline."""
+    if not exc.retryable:
+        return None
+    if exc.adapter != "gallery-dl" and not isinstance(exc, GalleryDlExtractionError):
+        return base_delay_seconds
+    retry_after = exc.retry_after_seconds
+    if retry_after is not None and (
+        not isfinite(retry_after) or retry_after < 0 or retry_after > _GALLERY_RETRY_CAP_SECONDS
+    ):
+        # A longer provider cooldown cannot fit our retry window. Fail with the original
+        # provider cause instead of shortening it and issuing an early request.
+        return None
+    ceiling = min(
+        _GALLERY_RETRY_CAP_SECONDS,
+        ldexp(base_delay_seconds, min(max(attempt - 1, 0), 16)),
+    )
+    delay = ceiling * (0.5 + secrets.randbelow(1_000_001) / 2_000_000)
+    return max(delay, retry_after or 0.0)
 
 
 async def process_inspection_job(
@@ -803,7 +828,10 @@ async def process_download_job(
     metrics = cast(MetricsRegistry, ctx["metrics"])
     job_id = JobId(str(ctx.get("job_id") or "unknown"))
     structlog.contextvars.bind_contextvars(request_id=str(job_id), job_id=str(job_id))
-    output_directory = settings.storage.downloads_path() / str(job_id)
+    job_directory = settings.storage.downloads_path() / str(job_id)
+    # Adapter resets may delete every output entry. Keep leased credentials in the job
+    # root, outside that media subtree, while retaining root-scoped terminal cleanup.
+    output_directory = job_directory / "media"
     temp_directory = settings.storage.temp_path() / str(job_id)
     attempt = int(ctx.get("job_try") or 1)
     started = monotonic()
@@ -931,12 +959,16 @@ async def process_download_job(
             )
 
         def _run_download(credential: ResolvedCredential | None) -> DownloadResult:
+            # SelectionRecord is UI state, not an operation-bound inspection: downloads have
+            # no source-selection link and the snapshot lacks the actual credential handle/
+            # operator generation. Even a fresh, owner-matched selection cannot prove reuse
+            # safe. Inspect once inside this newly authorized credential attempt instead.
             if credential is None:
                 return service.download(**common_download_arguments)
             return service.download(**common_download_arguments, credential=credential)
 
         download_task = asyncio.create_task(
-            _await_credential_attempt(ctx, record, output_directory, _run_download)
+            _await_credential_attempt(ctx, record, job_directory, _run_download)
         )
         try:
             result = await asyncio.shield(download_task)
@@ -1491,7 +1523,10 @@ async def _handle_controlled_failure(
             final_status=JobStatus.CANCELLED.value,
         )
         return
-    if exc.retryable and attempt < settings.queue.max_tries:
+    delay = _retry_delay_seconds(
+        exc, attempt=attempt, base_delay_seconds=settings.queue.retry_delay_seconds
+    )
+    if delay is not None and attempt < settings.queue.max_tries:
         await asyncio.to_thread(
             repository.transition,
             job_id,
@@ -1501,7 +1536,17 @@ async def _handle_controlled_failure(
             error_summary=type(exc).__name__,
             attempt=attempt,
         )
-        raise Retry(defer=settings.queue.retry_delay_seconds) from exc
+        await logger.ainfo(
+            "job_retry_scheduled",
+            job_id=job_id,
+            attempt=attempt,
+            error_type=type(exc).__name__,
+            adapter=exc.adapter,
+            http_status=exc.http_status,
+            retry_after_seconds=exc.retry_after_seconds,
+            retry_delay_seconds=round(delay, 3),
+        )
+        raise Retry(defer=delay) from exc
     await asyncio.to_thread(
         repository.transition,
         job_id,

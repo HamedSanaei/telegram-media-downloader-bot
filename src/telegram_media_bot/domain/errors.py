@@ -15,6 +15,9 @@ class MediaBotError(Exception):
         http_status: int | None = None,
         adapter: str | None = None,
         extractor: str | None = None,
+        retry_after_seconds: float | None = None,
+        diagnostic_category: str | None = None,
+        exit_code: int | None = None,
     ) -> None:
         super().__init__(message)
         #: Provider attribution attached once an adapter has processed the request, so a
@@ -26,6 +29,10 @@ class MediaBotError(Exception):
         self.adapter = adapter
         #: Extractor/subcategory attribution when the adapter can observe one.
         self.extractor = extractor
+        #: Numeric/fixed-category adapter diagnostics, never raw provider output.
+        self.retry_after_seconds = retry_after_seconds
+        self.diagnostic_category = diagnostic_category
+        self.exit_code = exit_code
         #: Safe attribution for owner-session versus shared-cookie remediation.
         self.credential_kind: str | None = None
         #: Adapter fallback chain when the router fell back to another engine.
@@ -212,7 +219,19 @@ class GalleryDlRateLimitedError(RateLimitedError):
 
 
 class GalleryDlExtractionError(DownloadFailedError):
-    pass
+    """Extraction failed without evidence that another request will succeed."""
+
+    retryable = False
+
+
+class GalleryDlTransientError(GalleryDlExtractionError):
+    """An observed network or upstream server failure permits bounded worker retry."""
+
+    retryable = True
+
+
+class GalleryDlAccessDeniedError(GalleryDlExtractionError):
+    """Provider denied access without evidence that a credential is invalid."""
 
 
 class GalleryDlEmptyResponseError(GalleryDlExtractionError):

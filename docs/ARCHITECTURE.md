@@ -71,12 +71,17 @@ choices. Telegram callbacks contain only a short opaque option digest.
 It deliberately has no download URL. Gallery inspection is an unstable vendor event protocol
 requested explicitly as JSON Lines and strictly parsed as gallery-dl message tuples entirely in
 `infrastructure/gallerydl/`; SQLite/Redis retain only the canonical post URL,
-semantic mode, stable asset IDs, and normalized metadata. The worker re-inspects the post before
-download so signed/expiring asset URLs are never durable.
+semantic mode, stable asset IDs, and normalized metadata. Each queued download resolves current
+authorization and credentials, then inspects once. `DownloadRequest.inspection` binds that validated
+`MediaInfo` to the exact URL and resolved credential handle for reuse inside the same operation;
+router and gallery download do not inspect again. Durable UI selections lack extraction-credential
+provenance and are never accepted as download inspections. Signed/expiring asset URLs remain
+adapter-local; the actual download still resolves them from the canonical provider URL.
 
-A non-empty malformed event stream is an upstream output-contract failure. A successful process
-that emits no events is instead unavailable/inaccessible content; HTTP/auth/rate details from
-stderr retain their typed failure semantics. Instagram `img_index` is carousel presentation state,
+A non-empty malformed event stream is an upstream output-contract failure. Empty output without
+definitive provider evidence is ambiguous, terminal extraction failure, not proof of deletion or
+session expiry. Explicit HTTP/auth/rate/network/GraphQL evidence retains typed failure semantics.
+Instagram `img_index` is carousel presentation state,
 so the engine inspects the canonical full post and stores only the removed parameter name, never
 its value or tracking payload.
 
@@ -192,6 +197,20 @@ cookie path for yt-dlp (including SoundCloud) and every gallery-dl provider. Leg
 `gallery_dl.cookies` entries are compatibility aliases and must resolve to that same path; divergent
 stores fail configuration validation. Consumers reopen the canonical path for subsequent jobs, so
 atomic replacement needs no container restart.
+
+Media engines are read-only consumers of these authentication files. Every gallery-dl operation
+sets `extractor.cookies-update=false`; nested yt-dlp receives only an in-memory cookie jar with
+cookie-file persistence disabled. The direct yt-dlp runtime disables `save_cookies`, so concurrent
+inspection/video jobs cannot save provider-mutated jars over the canonical or leased user source.
+The administrator cookie manager remains the intentional shared-file writer. User vault leases,
+owner/generation checks, restrictive materialization and cleanup remain unchanged. Media output
+uses `job-root/media`; leased credential directories are siblings under `job-root` and cannot be
+deleted by an adapter resetting its output. Terminal cleanup still removes the complete job root.
+
+Gallery request retries belong to the worker, not nested extractor/downloader loops. Only observed
+network/timeouts/server failures and rate limits are retryable. The existing attempt limit bounds
+equal-jitter exponential delays with a 900-second ceiling; an observable Retry-After is a floor.
+A cooldown beyond that window terminates with the original cause instead of making an early request.
 
 The adapter strictly parses the Netscape seven-field format and maps normalized domain suffixes to
 project-owned service identities. It serializes updates under a process lock, creates an atomic

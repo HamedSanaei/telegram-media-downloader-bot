@@ -19,6 +19,7 @@ class DownloadEngine(Protocol):
         self,
         url: str,
         *,
+        max_assets: int | None = None,
         credential: ResolvedCredential | None = None,
         cookie_file: str | None = None,
     ) -> MediaInfo:
@@ -39,7 +40,11 @@ class DownloadEngine(Protocol):
         credential: ResolvedCredential | None = None,
         cookie_file: str | None = None,
     ) -> DownloadResult:
-        """Download and return one normalized final file."""
+        """Download using request.inspection when bound to this exact operation's credentials.
+
+        The optional normalized inspection is transient, never restored from UI/queue state.
+        Adapters still extract the canonical URL for transfer and validate the resulting plan.
+        """
         ...
 
     def health(self) -> ComponentHealth:

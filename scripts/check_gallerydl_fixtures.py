@@ -19,6 +19,7 @@ EXPECTED: dict[str, tuple[str, tuple[MediaKind, ...]]] = {
     ),
     "instagram-mixed.json": ("instagram", (MediaKind.IMAGE, MediaKind.VIDEO)),
     "instagram-story.json": ("instagram", (MediaKind.IMAGE,)),
+    "instagram-story-video.json": ("instagram", (MediaKind.VIDEO,)),
     "instagram-reel-ytdl.json": ("instagram", (MediaKind.VIDEO,)),
     "tiktok-photo.json": ("tiktok", (MediaKind.IMAGE, MediaKind.IMAGE)),
     "tiktok-video.json": ("tiktok", (MediaKind.VIDEO,)),
@@ -33,7 +34,7 @@ EXPECTED: dict[str, tuple[str, tuple[MediaKind, ...]]] = {
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Check sanitized gallery-dl 1.32.8 fixture normalization"
+        description="Check sanitized gallery-dl fixtures against the pinned runtime"
     )
     parser.add_argument("--check-installed-version", action="store_true")
     args = parser.parse_args()
@@ -45,9 +46,9 @@ def main() -> int:
             text=True,
             timeout=15,
         )
-        if completed.stdout.strip() != "1.32.8":
+        if completed.stdout.strip() != "1.32.17":
             raise SystemExit(
-                f"Expected gallery-dl 1.32.8, found {completed.stdout.strip() or 'unknown'}"
+                f"Expected gallery-dl 1.32.17, found {completed.stdout.strip() or 'unknown'}"
             )
     fixtures = Path("tests/fixtures/gallerydl")
     for name, (provider, expected_kinds) in EXPECTED.items():
@@ -56,7 +57,7 @@ def main() -> int:
         actual = tuple(asset.kind for asset in inspection.assets)
         if actual != expected_kinds:
             raise SystemExit(f"{name}: expected {expected_kinds}, found {actual}")
-    print(f"Validated {len(EXPECTED)} sanitized gallery-dl 1.32.8 fixtures")
+    print(f"Validated {len(EXPECTED)} sanitized gallery-dl fixtures with runtime 1.32.17")
     return 0
 
 

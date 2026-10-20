@@ -112,7 +112,10 @@ class GalleryDlCommandBuilder:
         return provider, args
 
     def version(self) -> list[str]:
-        return [sys.executable, "-m", "gallery_dl", "--config-ignore", "--version"]
+        return [
+            *self._base("instagram", credential=ResolvedCredential.none()),
+            "--version",
+        ]
 
     def _base(
         self,
@@ -128,6 +131,15 @@ class GalleryDlCommandBuilder:
             "--config-ignore",
             "--no-input",
             "--no-colors",
+            "-o",
+            "extractor.cookies-update=false",
+            "-o",
+            "extractor.retries=0",
+            "-o",
+            "downloader.retries=0",
+            "-o",
+            'downloader.ytdl.raw-options={"cookiefile":null,"retries":0,'
+            '"fragment_retries":0,"extractor_retries":0,"file_access_retries":0}',
             "--sleep-request",
             str(self._settings.sleep_request_seconds),
         ]

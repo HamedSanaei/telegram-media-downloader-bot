@@ -146,6 +146,13 @@ It does not authorize private-mode requests. Private downloads keep owner-bound 
 and never fall back to that shared cookie. Ambiguous empty output, media/local/size/cancellation/
 delivery errors do not prove personal-session expiry and do not switch credentials.
 
+Media engines treat shared and per-user cookie files as read-only. A queued download resolves
+current authorization and credentials, validates one fresh inspection, and reuses it only within
+that same operation. UI selections without extraction-credential provenance are not reusable
+download inspections. Bare HTTP 403, ambiguous empty output, GraphQL/schema errors and generic
+extraction failures do not prove personal-session expiry. Only observed transient gallery failures
+and provider rate limits are retried, with bounded jittered backoff and observable cooldown floors.
+
 ### Authoritative credential matrix
 
 | User | VIP | Instagram connected | Content | Credential policy |
@@ -158,8 +165,9 @@ delivery errors do not prove personal-session expiry and do not switch credentia
 | User | Yes | Yes | Public | User first; one typed-auth fallback to shared cookie |
 | User | Yes | Yes | Private | User only, never operator fallback |
 
-Public mode never borrows a personal Instagram session or switches to the operator's Instagram
-session. A private failure never retries through public credentials.
+Public mode may use only that request owner's connected session, then the designated shared cookie
+on its existing typed-auth fallback. It never borrows another owner's session. A private failure
+never retries through public credentials.
 
 **Private-content invariant:** once content is known or accepted as user-restricted, every
 inspection, gallery/yt-dlp child resolution, download, retry, and recovery attempt is `USER_ONLY`.

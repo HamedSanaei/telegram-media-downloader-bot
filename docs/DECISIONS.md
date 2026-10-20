@@ -871,3 +871,34 @@ write the vault; an unexpired flow must receive real authenticated session bytes
 The page clearly identifies the bot operator (not an official Instagram/OAuth page), requires
 consent, uses no third-party assets, clears transient credentials, and exchanges the fragment
 handoff only once. Configuration checks never claim live TLS or Instagram login success.
+
+## ADR-050: Operation-bound media inspection and read-only extraction credentials
+
+**Status:** accepted (2026-10-20)
+
+Supersedes ADR-027's pinned gallery-dl version and repeated pre-download inspection behavior, not
+its subprocess isolation or expiring-URL-free durable contract. gallery-dl is pinned to 1.32.17.
+
+The application validates one fresh inspection inside each queued download's current credential
+attempt and passes normalized metadata through a transient `MediaInspection` on `DownloadRequest`.
+Reuse requires the same URL, resolved credential/generation/lease path, explicit cookie override and
+collection bound. UI selection records are not credential provenance; without a durable extraction
+binding they cannot replace that fresh authorized inspection. No signed URL or new cache is durable.
+
+Every media engine treats shared and leased cookie files as read-only sources. gallery-dl disables
+cookie updates, and direct/nested yt-dlp cannot persist a mutated jar. The existing atomic cookie
+manager remains the intentional shared-file writer. Worker media output is a child of the job root;
+credential directories are siblings, preventing output-reset cleanup from deleting an active lease.
+Final cleanup still removes the exact whole job root on every terminal outcome.
+
+Gallery request retries belong to one worker layer. Empty or generic extraction failures, access
+denial, schema changes and unqualified GraphQL errors are terminal unless explicit transient
+evidence exists. Bare HTTP 403 does not prove session expiry. Network/timeouts/server failures and
+rate limits use the existing maximum attempts with capped equal-jitter exponential delays and
+observable Retry-After floors; excessive cooldowns terminate rather than retrying early. Typed
+authentication-only public fallback, private owner authorization and delivery receipts are unchanged.
+
+Failure metadata may expose only bounded numeric process/HTTP/cooldown values and fixed diagnostic
+categories normalized by the adapter; this supersedes ADR-027's blanket diagnostic prohibition for
+those fields. Raw vendor output, dictionaries, headers, signed URLs and cookie material stay inside
+the adapter. Application policy never branches on raw vendor stderr or exit codes.

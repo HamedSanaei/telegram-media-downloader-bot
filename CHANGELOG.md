@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Upgrade gallery-dl from 1.32.8 to 1.32.17, including Instagram Story/Highlight and GraphQL fixes.
+- Keep shared and personal cookie sources read-only in gallery-dl and yt-dlp, including
+  nested Story video downloads.
+- Reuse the validated inspection within one authorized download attempt instead of extracting
+  metadata again in the router. Queued UI snapshots without credential provenance are not reused.
+- Distinguish ambiguous empty output, access denial, session rejection, GraphQL/schema failures,
+  transient network/server failures and rate limits without logging provider payloads or secrets.
+- Retry observed transient gallery failures only, with capped exponential backoff, jitter and
+  observable provider cooldowns; preserve terminal causes and existing private-access checks.
+
+
 ## v1.4.0-rc.13 - 2026-10-14
 
 - Ask for normal or original-file delivery before downloading an Instagram Highlight,

@@ -1,6 +1,27 @@
 # Project status
 
-Last updated: 2026-10-17
+Last updated: 2026-10-20
+
+## Instagram extraction reliability: unreleased local fix (2026-10-20)
+
+- Read-only production evidence for job `2AMIcSr54b9YMwMI_SNLLJ7M` confirms two successful
+  Story-video inspections before download extraction failed; the retry emitted no media events.
+  This does not establish invalid credentials, deleted media or historical cookie corruption.
+- Upgrades gallery-dl 1.32.8 to 1.32.17, makes gallery/direct/nested yt-dlp cookie sources read-only,
+  removes redundant operation-level inspections, and isolates leased credentials from output resets.
+  Queued UI metadata without extraction-credential provenance is deliberately not reused.
+- Adds evidence-based HTTP/session/GraphQL/network/empty/schema diagnostics and transient-only,
+  single-layer retries with equal-jitter exponential backoff and observable provider cooldown floors.
+  Owner/VIP/generation/lease checks, typed public auth fallback, private no-fallback and receipts stay.
+- Actual built-image smoke passed through DownloadService/router/real gallery-dl/ffprobe with one
+  metadata inspection, a 2,507-byte H.264/AAC Story fixture, exact-byte output and unchanged cookies.
+  Twelve concurrent real gallery subprocesses also preserve operator/user cookie integrity/isolation.
+- Validation: full non-contract suite 1,863 passed, 12 skips, 83.18% coverage; enabled public
+  contracts 3 passed, 13 missing-fixture/config skips. Lint/format/mypy, lock/frozen sync/dependency,
+  architecture/context/text/secret checks, package/clean-install and Docker build/runtime gates pass.
+- Root causes, uncertainties, verification, file inventory and authorized rollout/rollback procedures:
+  [Instagram download reliability report](INSTAGRAM_DOWNLOAD_RELIABILITY.md). No production restart,
+  cookie modification, commit, push, publication or deployment was performed.
 
 ## RC14 publication and production activation (2026-10-17)
 

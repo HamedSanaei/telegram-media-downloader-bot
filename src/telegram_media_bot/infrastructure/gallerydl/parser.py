@@ -68,6 +68,8 @@ def parse_inspection(
     )
     assets_list: list[MediaAsset] = []
     for index, event in enumerate(url_events, start=1):
+        if _provider(event.metadata) != provider:
+            raise GalleryDlOutputChangedError("gallery-dl asset provider changed within the post")
         asset = _asset(event.metadata, provider=provider, post_id=post_id, index=index)
         if event.url.startswith("ytdl:") and asset.kind is not MediaKind.VIDEO:
             raise GalleryDlOutputChangedError("gallery-dl ytdl event is not video media")
@@ -94,7 +96,7 @@ def parse_highlight_tray(
     expected_provider: str,
     max_highlights: int,
 ) -> tuple[HighlightItem, ...]:
-    """Map gallery-dl 1.32.8 highlight reel metadata in provider source order."""
+    """Map pinned gallery-dl highlight reel metadata in provider source order."""
     events = _parse_jsonl_events(payload)
     entries: dict[str, HighlightItem] = {}
     counts: dict[str, int] = {}
@@ -150,6 +152,8 @@ def _parse_jsonl_events(payload: bytes) -> tuple[_GalleryEvent, ...]:
         if not isinstance(raw, list) or not raw:
             raise GalleryDlOutputChangedError("gallery-dl emitted a malformed message tuple")
         message_type = raw[0]
+        if type(message_type) is not int:
+            raise GalleryDlOutputChangedError("gallery-dl message type is not an integer")
         if message_type == _DIRECTORY_MESSAGE:
             if len(raw) != 2:
                 raise GalleryDlOutputChangedError("gallery-dl directory message shape changed")

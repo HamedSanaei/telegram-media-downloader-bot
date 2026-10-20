@@ -28,6 +28,7 @@ from telegram_media_bot.domain.models import (
     ImageDeliveryMode,
     JobId,
     MediaInfo,
+    MediaInspection,
     MediaKind,
     NativeVideoCodec,
     OutputContainer,
@@ -67,6 +68,7 @@ class DownloadService:
         self,
         url: str,
         *,
+        max_assets: int | None = None,
         credential: ResolvedCredential | None = None,
         cookie_file: str | None = None,
     ) -> MediaInfo:
@@ -76,17 +78,25 @@ class DownloadService:
             normalized_url = self._url_validator.validate(normalized_url)
         if credential is not None and cookie_file is not None:
             raise ValueError("credential and cookie_file cannot both be supplied")
+        inspection_arguments: dict[str, Any] = {}
+        if max_assets is not None:
+            inspection_arguments["max_assets"] = max_assets
         if credential is not None:
-            info = cast(MediaInfo, self._engine.inspect(normalized_url, credential=credential))
+            inspection_arguments["credential"] = credential
         elif cookie_file is not None:
-            info = cast(MediaInfo, self._engine.inspect(normalized_url, cookie_file=cookie_file))
-        else:
-            # Preserve compatibility with simple test/fake engines during the staged migration.
-            info = cast(MediaInfo, self._engine.inspect(normalized_url))
+            inspection_arguments["cookie_file"] = cookie_file
+        info = cast(MediaInfo, self._engine.inspect(normalized_url, **inspection_arguments))
         self._validate_source(info.source)
         if self._url_validator is not None:
             self._url_validator.validate(info.webpage_url)
         self._validate_limits(info)
+        if max_assets is not None and (
+            len(info.assets) > max_assets
+            or (info.item_count is not None and info.item_count > max_assets)
+        ):
+            raise CollectionTooLargeError(
+                "Collection exceeds the configured item limit", source=info.source
+            )
         return info
 
     def download(
@@ -107,8 +117,19 @@ class DownloadService:
         credential: ResolvedCredential | None = None,
         cookie_file: str | None = None,
     ) -> DownloadResult:
-        info = self.inspect(url, credential=credential, cookie_file=cookie_file)
         collection = mode in COLLECTION_MODES
+        max_assets = (
+            _collection_max_assets(
+                mode,
+                max_stories=self._instagram_max_stories,
+                max_highlight_items=self._instagram_max_highlight_items,
+            )
+            if collection
+            else None
+        )
+        info = self.inspect(
+            url, max_assets=max_assets, credential=credential, cookie_file=cookie_file
+        )
         request = DownloadRequest(
             job_id=job_id,
             url=info.webpage_url,
@@ -121,13 +142,8 @@ class DownloadService:
             selected_format_ids=selected_format_ids,
             allow_collection=info.source.casefold() == "instagram",
             image_delivery_mode=image_delivery_mode,
-            max_assets=_collection_max_assets(
-                mode,
-                max_stories=self._instagram_max_stories,
-                max_highlight_items=self._instagram_max_highlight_items,
-            )
-            if collection
-            else None,
+            max_assets=max_assets,
+            inspection=MediaInspection(info, credential, cookie_file),
         )
         try:
             if credential is not None:

@@ -50,11 +50,14 @@ class RoutedMediaEngine(DownloadEngine):
         url: str,
         *,
         credential: ResolvedCredential | None = None,
+        max_assets: int | None = None,
         cookie_file: str | None = None,
     ) -> MediaInfo:
         url = canonicalize_media_url(url).canonical_url
         try:
-            return self._gallery.inspect(url, credential=credential, cookie_file=cookie_file)
+            return self._gallery.inspect(
+                url, max_assets=max_assets, credential=credential, cookie_file=cookie_file
+            )
         except GalleryDlEmptyResponseError as exc:
             # Only try an anonymous public Reel extractor. Never pass operator/private
             # credentials to a public job, or silently fall back for stories/posts.
@@ -109,12 +112,26 @@ class RoutedMediaEngine(DownloadEngine):
                 credential=credential,
                 cookie_file=cookie_file,
             )
-        info = self._gallery.inspect(
-            request.url,
-            max_assets=request.max_assets,
-            credential=credential,
-            cookie_file=cookie_file,
-        )
+        info = request.reusable_inspection(credential=credential, cookie_file=cookie_file)
+        if info is None:
+            info = self.inspect(
+                request.url,
+                max_assets=request.max_assets,
+                credential=credential,
+                cookie_file=cookie_file,
+            )
+        if (
+            request.mode not in COLLECTION_MODES
+            and not info.assets
+            and info.kind is MediaKind.VIDEO
+        ):
+            return self._ytdlp.download(
+                request,
+                progress=progress,
+                is_cancelled=is_cancelled,
+                credential=credential,
+                cookie_file=cookie_file,
+            )
         if request.mode in COLLECTION_MODES:
             # Bulk Stories/Highlights stay gallery-dl-owned end to end: gallery-dl is the
             # primary engine and its native ordering is preserved.

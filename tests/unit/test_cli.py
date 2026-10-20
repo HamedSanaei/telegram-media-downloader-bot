@@ -268,7 +268,7 @@ def test_doctor_and_config_check_probe_the_same_canonical_runtime_cookie(
     monkeypatch.setattr(
         GalleryDlEngine,
         "health",
-        lambda _self: ComponentHealth("gallery-dl", True, "1.32.8"),
+        lambda _self: ComponentHealth("gallery-dl", True, "fixture"),
     )
     monkeypatch.setattr(
         YtDlpEngine,
@@ -449,7 +449,7 @@ def test_offline_doctor_fails_closed_on_expected_package_version(
     monkeypatch.setattr(
         GalleryDlEngine,
         "health",
-        lambda _self: ComponentHealth("gallery_dl", True, "1.32.8"),
+        lambda _self: ComponentHealth("gallery_dl", True, "fixture"),
     )
     monkeypatch.setattr(
         YtDlpEngine,

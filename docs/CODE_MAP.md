@@ -2,13 +2,13 @@
 
 | Path | Responsibility |
 |---|---|
-| `src/telegram_media_bot/domain/` | Stable models, enums, identifiers, exceptions, and `best_original` native-only normalization |
+| `src/telegram_media_bot/domain/` | Stable models, enums, identifiers, exceptions, `best_original` native-only normalization, and transient operation-bound `MediaInspection` reuse with URL/credential/collection-bound checks |
 | `src/telegram_media_bot/domain/failures.py` | Typed structured `FailureContext` (adapter/extractor/source/fallback/HTTP status/retry history/stage/etc.) that survives to the terminal admin notification; bounded `FailureStage`; size-bounded Persian rendering that omits absent fields |
 | `src/telegram_media_bot/domain/cookie_health.py` | Cookie Health Center states, network-free static snapshots, backward-compatible persisted passive runtime-auth evidence, and definitive blocking states |
 | `src/telegram_media_bot/domain/cookies.py` | The single cookie-provider registry (YouTube/Instagram/TikTok/X/Pinterest/SoundCloud domains and labels), upload size contract, and merge summary |
 | `src/telegram_media_bot/application/ports/` | Interfaces required by use cases |
 | `src/telegram_media_bot/application/ports/cookie_management.py` | Framework-free canonical cookie merge/export contract |
-| `src/telegram_media_bot/application/services/` | Orchestrates inspection, policy limits, and selected downloads |
+| `src/telegram_media_bot/application/services/` | Orchestrates one fresh authorized inspection per queued download attempt, source/URL/media limits, and selected downloads; never trusts UI snapshots as extraction credentials |
 | `src/telegram_media_bot/application/services/diagnostic_sanitizer.py` | Central secret sanitizer: URL reduction to scheme+hostname+safe path, safe-parameter allowlist, redaction of cookies/tokens/headers/proxy passwords/CDN query secrets, bounded exception-message cleanup |
 | `src/telegram_media_bot/application/services/cookie_health_service.py` | Passive Cookie Health orchestration: provider-scoped or complete local static refresh, persisted transition/reminder deduplication, and same-request runtime auth-failure updates; it has no provider client |
 | `src/telegram_media_bot/application/services/native_options.py` | Builds the public native-only option catalog, enforces codec/transcode invariants, chooses truthful representatives, deduplicates actual plans, and creates opaque option IDs |
@@ -31,9 +31,9 @@
 | `src/telegram_media_bot/application/ports/subscriptions.py` | Provider-neutral plan-catalog and subscription/grant persistence contracts |
 | `src/telegram_media_bot/infrastructure/persistence/sqlite_subscriptions.py` | WAL-backed plan/subscription/grant tables, exactly-once (user, source) unique grant index, additive idempotent schema |
 | `src/telegram_media_bot/application/ports/user_repository.py` | Durable profile and usage-accounting contract |
-| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, including strict raw-entry Instagram mixed-carousel video resolution, zero-transcode AV1/H.264 MP4 and VP9 WebM selection, narrow Twitter HLS audio-metadata inference, native/inline compatibility probing, bounded explicit transcoding, private per-inspection scratch workspaces under the configured storage temp root (read-only-app-filesystem safe), and a network-free read-only-container inspection smoke |
-| `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.8 argv/subprocess, explicit JSON Lines event contract, bounded output/cancellation, strict non-empty vendor tuple parsing/error mapping, successful-empty unavailable classification, stable asset normalization, and safe original-image download with Instagram videos disabled when required. The typed result model carries IMAGE/VIDEO/mixed collections (Stories, Highlights, Reels, video posts, avatar); Highlight trays use validated `post_id`/`highlight_title` metadata in source order and the explicit request credential context |
-| `src/telegram_media_bot/infrastructure/media_engine_router.py` | Inspection-result routing and fail-closed mixed Instagram merge: validate/download canonical yt-dlp video children before gallery-dl images, then merge exact source ordinals |
+| `src/telegram_media_bot/infrastructure/ytdlp/` | The only direct yt-dlp integration, with read-only credential-source runtime, strict raw-entry Instagram mixed-carousel video resolution, zero-transcode native codec selection, bounded explicit transcoding, and private inspection scratch workspaces |
+| `src/telegram_media_bot/infrastructure/gallerydl/` | Isolated gallery-dl 1.32.17 argv/subprocess, read-only cookies, single-layer worker retries, explicit JSON Lines contract, bounded output/cancellation, strict ordered IMAGE/VIDEO/mixed normalization, typed evidence-based HTTP/session/GraphQL/network/empty/schema diagnostics, and confined original-media downloads. Stories, Highlights, Reels, posts, carousels, avatars and Highlight trays preserve explicit credentials and native ordering |
+| `src/telegram_media_bot/infrastructure/media_engine_router.py` | Reuses the validated operation-bound inspection, routes semantic modes, and fails closed on mixed Instagram video-child/ordinal mismatches before merging artifacts |
 | `src/telegram_media_bot/infrastructure/image_validation.py` | Pillow signature/format/dimension/decompression-bomb validation without altering originals |
 | `src/telegram_media_bot/infrastructure/ytdlp/native_selection_smoke.py` | Packaged, network-free runtime-image assertion for AV1/H.264 MP4 and VP9 WebM selection, stream-copy arguments, and Best Original policy |
 | `src/telegram_media_bot/infrastructure/queue/` | ARQ enqueue plus official abort and transient-key finalization |
@@ -60,7 +60,7 @@
 | `src/telegram_media_bot/telegram/texts.py` | Central Persian responses, including distinct management-only and whole-bot access-policy denials |
 | `src/telegram_media_bot/telegram/vip_ux.py` | Subscription status independent of purchasing, configured plan/provider checkout, owner-bound expiring offers/orders, and URL-FSM clearing |
 | `src/telegram_media_bot/telegram/bot_factory.py` | Shared Bot/Worker Telegram endpoint and client construction plus the bounded, cancellable Local Bot API startup readiness wait (`local_api_startup_wait`/`ready`/`timeout`) |
-| `src/telegram_media_bot/workers/` | ARQ composition/jobs, private authorization/child inheritance, exact-owner credential materialization/cleanup, shared/personal public Instagram routing, Highlight delivery-choice publication and durable collection file mode, receipts/progress/recovery/terminal cleanup, and passive Cookie Health without attributing personal Instagram failures to the operator |
+| `src/telegram_media_bot/workers/` | ARQ jobs, current private authorization and owner credential leases, shared/personal public routing, transient-only gallery retries with equal-jitter exponential backoff and Retry-After floors, receipts/progress/recovery/terminal cleanup, and passive Cookie Health |
 | `src/telegram_media_bot/bootstrap/` | Config, logging, composition roots, and fail-fast effective-cookie path identity |
 | `src/telegram_media_bot/bootstrap/payments.py` | Configured gateway registration with billing/reconciliation so the real bot, companion and worker share executable checkout behavior |
 | `src/telegram_media_bot/cli.py` | Management CLI plus full, fail-closed offline-static, and explicitly service-selected online doctor modes |

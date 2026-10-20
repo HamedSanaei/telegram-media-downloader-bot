@@ -24,16 +24,14 @@ from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
     DownloadFailedError,
     GalleryDlEmptyResponseError,
-    GalleryDlExtractionError,
     GalleryDlOutputChangedError,
     GalleryDlUnavailableError,
     GalleryDlUnsupportedUrlError,
     ImageValidationError,
     JobCancelledError,
     MediaBotError,
-    MediaUnavailableError,
-    RateLimitedError,
 )
+from telegram_media_bot.domain.failures import FailureStage
 from telegram_media_bot.domain.models import (
     COLLECTION_MODES,
     ComponentHealth,
@@ -68,7 +66,7 @@ from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValid
 from telegram_media_bot.infrastructure.ytdlp.transcoder import is_inline_video_streamable
 
 logger = structlog.get_logger(__name__)
-GALLERY_DL_VERSION = "1.32.8"
+GALLERY_DL_VERSION = "1.32.17"
 _GALLERY_MODES = {
     DownloadMode.IMAGE_ORIGINAL,
     DownloadMode.IMAGES_ORIGINAL,
@@ -119,26 +117,29 @@ class GalleryDlEngine:
         if not self._settings.gallery_dl.enabled:
             raise GalleryDlUnavailableError("gallery-dl is disabled")
         started = monotonic()
-        with self._process_slot():
-            result = self._runner.run(
-                args, timeout_seconds=self._settings.gallery_dl.timeout_seconds
-            )
-        if result.return_code != 0:
-            self._raise_process_failure(result, provider=provider)
-        if _empty_gallery_events(result.stdout):
-            self._raise_empty_inspection(result, provider=provider, canonical=canonical)
-        for transient_url in transient_asset_urls(result.stdout):
-            self._validator.validate(transient_url)
         try:
+            with self._process_slot():
+                result = self._runner.run(
+                    args, timeout_seconds=self._settings.gallery_dl.timeout_seconds
+                )
+        except MediaBotError as exc:
+            self._raise_diagnostic(exc, provider=provider, stage=FailureStage.INSPECTION)
+        if result.return_code != 0:
+            self._raise_process_failure(result, provider=provider, stage=FailureStage.INSPECTION)
+        if _empty_gallery_events(result.stdout):
+            self._raise_empty_inspection(result, provider=provider)
+        try:
+            for transient_url in transient_asset_urls(result.stdout):
+                self._validator.validate(transient_url)
             inspection = parse_inspection(
                 result.stdout,
                 expected_provider=provider,
                 max_assets=max_assets or self._settings.gallery_dl.max_assets_per_job,
             )
         except GalleryDlOutputChangedError as exc:
-            if _is_instagram_story_url(canonical) and _empty_gallery_events(result.stdout):
-                raise MediaUnavailableError("Instagram story is expired or unavailable") from exc
-            raise
+            self._raise_diagnostic(
+                exc, provider=provider, stage=FailureStage.INSPECTION, result=result
+            )
         self._check_known_size(inspection, collection=url_is_collection(canonical))
         info = map_gallery_info(inspection, canonical)
         if len(info.assets) >= self._settings.gallery_dl.zip_threshold:
@@ -173,12 +174,14 @@ class GalleryDlEngine:
         credential: ResolvedCredential | None = None,
         cookie_file: str | None = None,
     ) -> DownloadResult:
-        info = self.inspect(
-            request.url,
-            max_assets=request.max_assets,
-            credential=credential,
-            cookie_file=cookie_file,
-        )
+        info = request.reusable_inspection(credential=credential, cookie_file=cookie_file)
+        if info is None:
+            info = self.inspect(
+                request.url,
+                max_assets=request.max_assets,
+                credential=credential,
+                cookie_file=cookie_file,
+            )
         return self.download_inspected(
             request,
             info,
@@ -250,12 +253,19 @@ class GalleryDlEngine:
                         else self._max_transfer_bytes
                     ),
                 )
+        except MediaBotError as exc:
+            _cleanup_gallery_workspace(workspace)
+            self._raise_diagnostic(
+                exc, provider=provider, stage=FailureStage.DOWNLOAD, job_id=str(request.job_id)
+            )
         except BaseException:
             _cleanup_gallery_workspace(workspace)
             raise
         if result.return_code != 0:
             _cleanup_gallery_workspace(workspace)
-            self._raise_process_failure(result, provider=provider, job_id=str(request.job_id))
+            self._raise_process_failure(
+                result, provider=provider, job_id=str(request.job_id), stage=FailureStage.DOWNLOAD
+            )
         try:
             files = _validated_output_files(workspace)
             downloaded_assets = (
@@ -283,6 +293,15 @@ class GalleryDlEngine:
             )
             if total > transfer_limit:
                 raise CollectionTooLargeError("Gallery output exceeds the configured total size")
+        except MediaBotError as exc:
+            _cleanup_gallery_workspace(workspace)
+            self._raise_diagnostic(
+                exc,
+                provider=provider,
+                stage=FailureStage.DOWNLOAD,
+                result=result,
+                job_id=str(request.job_id),
+            )
         except BaseException:
             _cleanup_gallery_workspace(workspace)
             raise
@@ -377,19 +396,27 @@ class GalleryDlEngine:
         args = self._commands.inspect_url(
             "instagram", url, credential=credential, cookie_file=cookie_file
         )
-        with self._process_slot():
-            result = self._runner.run(
-                args, timeout_seconds=self._settings.gallery_dl.timeout_seconds
-            )
+        try:
+            with self._process_slot():
+                result = self._runner.run(
+                    args, timeout_seconds=self._settings.gallery_dl.timeout_seconds
+                )
+        except MediaBotError as exc:
+            self._raise_diagnostic(exc, provider="instagram", stage=FailureStage.INSPECTION)
         if result.return_code != 0:
-            self._raise_process_failure(result, provider="instagram")
+            self._raise_process_failure(result, provider="instagram", stage=FailureStage.INSPECTION)
         if _empty_gallery_events(result.stdout):
-            self._raise_empty_inspection(result, provider="instagram", canonical=url)
-        return parse_highlight_tray(
-            result.stdout,
-            expected_provider="instagram",
-            max_highlights=max_highlights,
-        )
+            self._raise_empty_inspection(result, provider="instagram")
+        try:
+            return parse_highlight_tray(
+                result.stdout,
+                expected_provider="instagram",
+                max_highlights=max_highlights,
+            )
+        except GalleryDlOutputChangedError as exc:
+            self._raise_diagnostic(
+                exc, provider="instagram", stage=FailureStage.INSPECTION, result=result
+            )
 
     def health(self) -> ComponentHealth:
         if not self._settings.gallery_dl.enabled:
@@ -437,54 +464,76 @@ class GalleryDlEngine:
             * 1024
         )
 
-    @staticmethod
+    @classmethod
     def _raise_process_failure(
+        cls,
         result: GalleryProcessResult,
         *,
         provider: str,
+        stage: FailureStage,
         job_id: str | None = None,
-    ) -> None:
+    ) -> Never:
+        cls._raise_diagnostic(
+            map_process_failure(result.return_code, result.stderr),
+            provider=provider,
+            stage=stage,
+            result=result,
+            job_id=job_id,
+        )
+
+    @classmethod
+    def _raise_empty_inspection(
+        cls,
+        result: GalleryProcessResult,
+        *,
+        provider: str,
+    ) -> Never:
         error = map_process_failure(result.return_code, result.stderr)
-        if isinstance(error, MediaBotError) and error.extractor is None:
-            error.extractor = provider
+        if error.diagnostic_category == "extraction_unknown":
+            error = GalleryDlEmptyResponseError(
+                "gallery-dl returned no media events without a definitive provider error",
+                diagnostic_category="empty_ambiguous",
+            )
+        cls._raise_diagnostic(
+            error, provider=provider, stage=FailureStage.INSPECTION, result=result
+        )
+
+    @staticmethod
+    def _raise_diagnostic(
+        error: MediaBotError,
+        *,
+        provider: str,
+        stage: FailureStage,
+        result: GalleryProcessResult | None = None,
+        job_id: str | None = None,
+    ) -> Never:
+        error.source = provider
+        error.adapter = "gallery-dl"
+        error.extractor = provider
+        error.failure_stage = stage
+        if error.diagnostic_category is None:
+            error.diagnostic_category = (
+                "extractor_incompatible"
+                if isinstance(error, GalleryDlOutputChangedError)
+                else "adapter_failure"
+            )
+        if result is not None:
+            error.exit_code = result.return_code
         logger.warning(
-            "gallery_dl_process_failed",
+            "gallery_dl_operation_failed",
             adapter="gallery-dl",
             gallery_dl_version=GALLERY_DL_VERSION,
             source=provider,
-            job_id=job_id,
-            exit_classification=type(error).__name__,
-            retryable=isinstance(error, (RateLimitedError, DownloadFailedError)),
-            elapsed_seconds=round(result.elapsed_seconds, 3),
-        )
-        raise error
-
-    @staticmethod
-    def _raise_empty_inspection(
-        result: GalleryProcessResult,
-        *,
-        provider: str,
-        canonical: str,
-    ) -> Never:
-        error: Exception | None = None
-        if result.stderr.strip():
-            mapped = map_process_failure(result.return_code, result.stderr)
-            if type(mapped) is not GalleryDlExtractionError:
-                error = mapped
-        if error is None:
-            error = GalleryDlEmptyResponseError(
-                "gallery-dl returned no media events without a definitive provider error"
-            )
-        if isinstance(error, MediaBotError) and error.extractor is None:
-            error.extractor = provider
-        logger.warning(
-            "gallery_dl_zero_output",
-            adapter="gallery-dl",
             extractor=provider,
-            exit_code=result.return_code,
-            stdout_event_count=0,
-            stderr_category=type(error).__name__,
-            stage="extraction",
+            job_id=job_id,
+            diagnostic_category=error.diagnostic_category,
+            exception_type=type(error).__name__,
+            http_status=error.http_status,
+            exit_code=error.exit_code,
+            stage=stage.value,
+            retryable=error.retryable,
+            retry_after_seconds=error.retry_after_seconds,
+            elapsed_seconds=round(result.elapsed_seconds, 3) if result is not None else None,
         )
         raise error
 
@@ -497,13 +546,6 @@ class GalleryDlEngine:
             yield
         finally:
             self._gate.release()
-
-
-def _is_instagram_story_url(url: str) -> bool:
-    parsed = urlsplit(url)
-    return (parsed.hostname or "").casefold() in {"instagram.com", "www.instagram.com"} and (
-        parsed.path.casefold().startswith("/stories/")
-    )
 
 
 def url_is_collection(url: str) -> bool:

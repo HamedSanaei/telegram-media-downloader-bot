@@ -713,7 +713,13 @@ class ConnectedStoryEngine(StoryInspectionService):
             assert Path(credential.materialized_cookie_path).read_bytes() == b"story-owner-session"
         self.credentials.append(credential)
 
-    def inspect(self, url: str, *, credential: object | None = None) -> MediaInfo:
+    def inspect(
+        self,
+        url: str,
+        *,
+        max_assets: int | None = None,
+        credential: object | None = None,
+    ) -> MediaInfo:
         self._observe(cast(ResolvedCredential | None, credential))
         return super().inspect(url, credential=credential)
 

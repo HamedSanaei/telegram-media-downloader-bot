@@ -12,8 +12,9 @@ from time import monotonic
 
 from telegram_media_bot.domain.errors import (
     CollectionTooLargeError,
-    GalleryDlExtractionError,
     GalleryDlOutputChangedError,
+    GalleryDlTransientError,
+    GalleryDlUnavailableError,
     JobCancelledError,
 )
 from telegram_media_bot.infrastructure.gallerydl.models import GalleryProcessResult
@@ -59,7 +60,11 @@ class GalleryDlRunner:
         max_output_bytes: int | None = None,
     ) -> GalleryProcessResult:
         if not args:
-            raise GalleryDlExtractionError("gallery-dl command is empty")
+            raise GalleryDlUnavailableError(
+                "gallery-dl command is empty",
+                adapter="gallery-dl",
+                diagnostic_category="adapter_unavailable",
+            )
         started = monotonic()
         creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
         try:
@@ -72,7 +77,11 @@ class GalleryDlRunner:
                 creationflags=creationflags,
             )
         except OSError as exc:
-            raise GalleryDlExtractionError("Unable to start gallery-dl") from exc
+            raise GalleryDlUnavailableError(
+                "Unable to start gallery-dl",
+                adapter="gallery-dl",
+                diagnostic_category="adapter_unavailable",
+            ) from exc
         assert process.stdout is not None
         assert process.stderr is not None
         stdout_task = asyncio.create_task(_read_bounded(process.stdout, self._stdout_limit))
@@ -100,7 +109,9 @@ class GalleryDlRunner:
                 stderr = await stderr_task
         except TimeoutError as exc:
             await _terminate(process)
-            raise GalleryDlExtractionError("gallery-dl timed out") from exc
+            raise GalleryDlTransientError(
+                "gallery-dl timed out", adapter="gallery-dl", diagnostic_category="timeout"
+            ) from exc
         except _OutputLimitExceeded as exc:
             await _terminate(process)
             raise GalleryDlOutputChangedError(

@@ -10,7 +10,7 @@ from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import structlog
-from yt_dlp import YoutubeDL
+from yt_dlp import YoutubeDL as _UpstreamYoutubeDL
 from yt_dlp.version import __version__ as ytdlp_version
 
 from telegram_media_bot.application.ports.download_engine import CancellationCheck, ProgressSink
@@ -76,6 +76,15 @@ logger = structlog.get_logger(__name__)
 _INSTAGRAM_MEDIA_ID = re.compile(r"^[A-Za-z0-9_-]{5,64}$")
 
 
+class YoutubeDL(_UpstreamYoutubeDL):  # type: ignore[misc]
+    """Adapter-local runtime that never persists extractor-mutated authentication material."""
+
+    def save_cookies(self) -> None:
+        # Upstream calls this during close and may otherwise rewrite the shared source file.
+        # Keep request cookie updates in the instance's private in-memory jar instead.
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class _InstagramVideoChild:
     media_id: str
@@ -110,6 +119,7 @@ class YtDlpEngine:
         self,
         url: str,
         *,
+        max_assets: int | None = None,
         credential: ResolvedCredential | None = None,
         cookie_file: str | None = None,
     ) -> MediaInfo:
@@ -135,6 +145,13 @@ class YtDlpEngine:
         except Exception as exc:
             raise self._map_failure(exc, FailureStage.INSPECTION, intent) from exc
         mapped = map_media_info(info, original_url=intent.canonical_url)
+        if max_assets is not None and (
+            len(mapped.assets) > max_assets
+            or (mapped.item_count is not None and mapped.item_count > max_assets)
+        ):
+            raise MediaTooLargeError(
+                "Collection exceeds the configured item limit", source=mapped.source
+            )
         artwork_options = list(format_options)
         if mapped.thumbnail_url is not None and mapped.source == "youtube":
             artwork_options.append(

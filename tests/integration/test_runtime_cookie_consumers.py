@@ -71,7 +71,7 @@ class _CookieReadingGalleryRunner:
     ) -> GalleryProcessResult:
         del timeout_seconds
         if "--version" in args:
-            return GalleryProcessResult(0, b"1.32.8\n", b"", 0.01)
+            return GalleryProcessResult(0, b"1.32.17\n", b"", 0.01)
         cookie = Path(args[args.index("--cookies") + 1])
         self.observations.append((cookie, cookie.read_bytes()))
         return GalleryProcessResult(0, self._payload, b"", 0.01)

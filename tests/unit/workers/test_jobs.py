@@ -59,6 +59,7 @@ from telegram_media_bot.domain.errors import (
     DownloadFailedError,
     GalleryDlCookiesExpiredError,
     GalleryDlEmptyResponseError,
+    GalleryDlExtractionError,
     JobCancelledError,
     LocalRuntimeError,
     MediaBotError,
@@ -999,6 +1000,73 @@ async def test_retryable_failure_is_deferred_without_delivery(
     assert delivery.deliveries == 0
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected_defer"),
+    [
+        (
+            GalleryDlExtractionError(
+                "ambiguous extraction failure", source="instagram", adapter="gallery-dl"
+            ),
+            None,
+        ),
+        (
+            GalleryDlEmptyResponseError(
+                "no definitive provider error", source="instagram", adapter="gallery-dl"
+            ),
+            None,
+        ),
+        (
+            RateLimitedError(
+                "provider cooldown",
+                source="instagram",
+                adapter="gallery-dl",
+                retry_after_seconds=60,
+            ),
+            60,
+        ),
+        (
+            RateLimitedError(
+                "provider cooldown exceeds window",
+                source="instagram",
+                adapter="gallery-dl",
+                retry_after_seconds=901,
+            ),
+            None,
+        ),
+    ],
+)
+async def test_gallery_worker_respects_transience_and_provider_deadline(
+    worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
+    failure: MediaBotError,
+    expected_defer: int | None,
+) -> None:
+    context, repository, service, delivery = worker_context
+    service.failure = failure
+
+    async def run() -> str:
+        return await process_download_job(
+            context,
+            chat_id=10,
+            user_id=20,
+            url="https://example.com/media",
+            mode=DownloadMode.BEST.value,
+        )
+
+    if expected_defer is not None:
+        with pytest.raises(Retry) as raised:
+            await run()
+        assert raised.value.defer_score == expected_defer * 1000
+        expected_status = JobStatus.RETRYING
+    else:
+        await run()
+        expected_status = JobStatus.FAILED
+    record = repository.get_job(JobId(str(context["job_id"])))
+    assert record is not None and record.status is expected_status
+    assert record.error_summary == type(failure).__name__
+    assert record.source == "instagram"
+    assert delivery.deliveries == 0
+
+
 async def test_retryable_failure_alerts_only_after_retries_are_exhausted(
     worker_context: tuple[dict[str, Any], SqliteJobRepository, FakeDownloadService, FakeDelivery],
 ) -> None:
@@ -1825,6 +1893,8 @@ async def test_private_mixed_selection_and_native_children_use_same_owner_lease(
         runtime, chat_id=10, user_id=20, url=child.url, mode=child.mode.value
     )
     attempts = runtime["session_engine"].attempts
+    # The UI inspection is not credential-bound reusable evidence for the queued operation.
+    assert [stage for stage, _ in attempts].count("inspect") == 2
     assert [stage for stage, _ in attempts][-2:] == ["native_video_child", "gallery_assets"]
     assert attempts[-1][1] is attempts[-2][1]
     assert runtime["repository"].get_job(child.job_id).status is JobStatus.SUCCEEDED
@@ -2232,3 +2302,133 @@ async def test_private_cancelled_extraction_releases_credential_workspace(
         and not Path(credential.materialized_cookie_path).parent.exists()
         for _, credential in runtime["session_engine"].attempts
     )
+
+
+@pytest.mark.parametrize("mismatch", ["fresh", "stale", "url", "owner", "generation"])
+async def test_queued_ui_snapshot_without_operation_provenance_is_inspected_once(
+    private_runtime: dict[str, Any], mismatch: str
+) -> None:
+    runtime = private_runtime
+    runtime["session_engine"].mixed = True
+    parent = _private_job(runtime, inspect=True)
+    await process_inspection_job(runtime, chat_id=10, user_id=20, url=parent.url)
+    callback = runtime["bot"].edits[0]["reply_markup"].inline_keyboard[0][0].callback_data
+    selection = runtime["repository"].get_selection(SelectionToken(callback.split(":")[1]), 20)
+    snapshot = replace(selection, media=replace(selection.media, media_id="old-parent"))
+    if mismatch == "stale":
+        snapshot = replace(snapshot, expires_at=datetime.now(UTC) - timedelta(seconds=1))
+    elif mismatch == "url":
+        snapshot = replace(
+            snapshot,
+            media=replace(snapshot.media, webpage_url="https://www.instagram.com/p/other/"),
+        )
+    elif mismatch == "owner":
+        snapshot = replace(snapshot, owner_user_id=99)
+    elif mismatch == "generation":
+        old_source = replace(
+            parent,
+            job_id=JobId("different-source-generation"),
+            idempotency_key="different-source-generation",
+            user_credential_generation=2,
+        )
+        runtime["repository"].create_job(old_source)
+        snapshot = replace(snapshot, source_job_id=old_source.job_id)
+    runtime["repository"].save_selection(snapshot)
+    child = _private_job(runtime)
+    runtime["session_engine"].attempts.clear()
+
+    await process_download_job(
+        runtime,
+        chat_id=10,
+        user_id=20,
+        url=child.url,
+        mode=cast(DownloadMode, child.mode).value,
+    )
+
+    assert runtime["repository"].get_job(child.job_id).status is JobStatus.SUCCEEDED
+    stages = [stage for stage, _ in runtime["session_engine"].attempts]
+    assert stages == ["inspect", "native_video_child", "gallery_assets"]
+
+
+@pytest.mark.parametrize("action", ["revoke", "media_changed"])
+async def test_queued_selection_never_bypasses_current_authorization_or_media_changes(
+    private_runtime: dict[str, Any], action: str
+) -> None:
+    runtime = private_runtime
+    runtime["session_engine"].mixed = True
+    parent = _private_job(runtime, inspect=True)
+    await process_inspection_job(runtime, chat_id=10, user_id=20, url=parent.url)
+    child = _private_job(runtime)
+    runtime["session_engine"].attempts.clear()
+    if action == "revoke":
+        runtime["vault"].revoke(20, actor_role="super_admin")
+    else:
+        runtime["session_engine"].mixed = False
+
+    await process_download_job(
+        runtime,
+        chat_id=10,
+        user_id=20,
+        url=child.url,
+        mode=cast(DownloadMode, child.mode).value,
+    )
+
+    stages = [stage for stage, _ in runtime["session_engine"].attempts]
+    persisted = runtime["repository"].get_job(child.job_id)
+    if action == "revoke":
+        assert persisted.status is JobStatus.FAILED
+        assert stages == []
+        assert runtime["delivery"].deliveries == 0
+    else:
+        assert persisted.status is JobStatus.SUCCEEDED
+        assert stages == ["inspect", "video"]
+
+
+@pytest.mark.parametrize("adapter", ["gallery", "ytdlp"])
+async def test_download_workspace_reset_cannot_delete_the_owner_credential_lease(
+    private_runtime: dict[str, Any], monkeypatch: pytest.MonkeyPatch, adapter: str
+) -> None:
+    from telegram_media_bot.infrastructure.gallerydl.adapter import _cleanup_gallery_workspace
+    from telegram_media_bot.infrastructure.ytdlp.engine import YtDlpEngine
+
+    runtime = private_runtime
+    engine = runtime["session_engine"]
+    engine.mixed = adapter == "gallery"
+    mode = DownloadMode.IMAGE_ORIGINAL if adapter == "gallery" else DownloadMode.BEST_ORIGINAL
+    record, _ = JobService(runtime["repository"]).create_download(
+        chat_id=10,
+        user_id=20,
+        url="https://www.instagram.com/p/accepted/",
+        mode=mode,
+        entitlement_snapshot=runtime["snapshot"],
+        credential_policy=CredentialPolicy.USER_ONLY,
+        content_access_scope=ContentAccessScope.USER_RESTRICTED,
+        user_credential_generation=1,
+    )
+    runtime["job_id"] = str(record.job_id)
+    method = "download_inspected" if adapter == "gallery" else "download"
+    original = getattr(engine, method)
+    credential_paths: list[Path] = []
+
+    def reset_then_download(
+        request: DownloadRequest, *arguments: Any, **kwargs: Any
+    ) -> DownloadResult:
+        credential = cast(ResolvedCredential, kwargs["credential"])
+        assert credential.materialized_cookie_path is not None
+        cookie_path = Path(credential.materialized_cookie_path)
+        credential_paths.append(cookie_path)
+        if adapter == "gallery":
+            _cleanup_gallery_workspace(request.output_directory)
+        else:
+            YtDlpEngine._reset_job_directory(request.output_directory)
+        assert cookie_path.read_bytes() == engine.session
+        assert not cookie_path.is_relative_to(request.output_directory)
+        return cast(DownloadResult, original(request, *arguments, **kwargs))
+
+    monkeypatch.setattr(engine, method, reset_then_download)
+
+    await process_download_job(runtime, chat_id=10, user_id=20, url=record.url, mode=mode.value)
+
+    assert runtime["repository"].get_job(record.job_id).status is JobStatus.SUCCEEDED
+    assert credential_paths
+    assert all(not path.parent.exists() for path in credential_paths)

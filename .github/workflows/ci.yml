@@ -244,7 +244,7 @@ jobs:
           chmod 0644 usage-chart-artifacts/cookies.txt
           docker run --rm telegram-media-downloader-bot:ci telegram-media-bot --help
           docker run --rm telegram-media-downloader-bot:ci sh -c \
-            'test "$(python -m gallery_dl --config-ignore --version)" = "1.32.8"'
+            'test "$(python -m gallery_dl --config-ignore --version)" = "1.32.17"'
           docker run --rm telegram-media-downloader-bot:ci \
             python -m telegram_media_bot.infrastructure.gallerydl.smoke
           docker run --rm telegram-media-downloader-bot:ci \
@@ -263,7 +263,7 @@ jobs:
             command -v ffprobe
             test "$(id -u)" = 10001
             test -w /data/downloads
-            python -c "from importlib.resources import files; root=files(\"telegram_media_bot.assets.licenses\"); notice=root.joinpath(\"THIRD_PARTY_NOTICES.md\").read_text(); assert all(x in notice for x in (\"gallery-dl\", \"1.32.8\", \"GPL-2.0\")); assert \"GNU GENERAL PUBLIC LICENSE\" in root.joinpath(\"gallery-dl-GPL-2.0.txt\").read_text()"
+            python -c "from importlib.resources import files; root=files(\"telegram_media_bot.assets.licenses\"); notice=root.joinpath(\"THIRD_PARTY_NOTICES.md\").read_text(); assert all(x in notice for x in (\"gallery-dl\", \"1.32.17\", \"GPL-2.0\")); assert \"GNU GENERAL PUBLIC LICENSE\" in root.joinpath(\"gallery-dl-GPL-2.0.txt\").read_text()"
             seven_zip="$(command -v 7zz || command -v 7z)"
             dd if=/dev/zero of=/tmp/source.bin bs=1M count=3
             "$seven_zip" a -tzip -mx=0 -v1m /tmp/smoke.zip /tmp/source.bin
