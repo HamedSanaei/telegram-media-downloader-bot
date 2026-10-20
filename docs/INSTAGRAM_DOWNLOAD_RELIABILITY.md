@@ -1,5 +1,122 @@
 # Instagram download reliability investigation
 
+## RC16 production result (2026-10-20)
+
+Published and deployed `v1.4.0-rc.16` from
+`750673c8dbe3fb139260cff01324832188d86a35`. The earlier RC15 release was not rewritten.
+All ten [release-commit CI jobs](https://github.com/HamedSanaei/telegram-media-downloader-bot/actions/runs/39466360921)
+passed, including dependency audit, Docker, privileged updater and both installer lanes.
+[Image/release publication](https://github.com/HamedSanaei/telegram-media-downloader-bot/actions/runs/39468717094)
+passed. The [published RC16 release](https://github.com/HamedSanaei/telegram-media-downloader-bot/releases/tag/v1.4.0-rc.16)
+reports `immutable=true`, with six verified assets uploaded before publication.
+
+The production image is
+`ghcr.io/hamedsanaei/telegram-media-downloader-bot:1.4.0-rc.16`,
+digest `sha256:7d012ea68ff887c5e11691c1f7f74732e1008c50d9115af610db7c7667f36c69`.
+Bot, Worker, Local Bot API and companion all run that exact digest/revision. Runtime versions
+are application 1.4.0-rc.16, gallery-dl 1.32.17 and aiohttp 3.14.5.
+
+### Actual downloads and Telegram delivery
+
+Canaries used the original administrator's private chat, normal access-policy authorization,
+durable JobService records, ARQ and the running Worker. Current public NASA Stories replaced
+the original ephemeral URL; no private access restriction was bypassed.
+
+| Case | Job ID | Telegram-confirmed output | Message IDs |
+|---|---|---|---|
+| Single Story video | `zLWaYQEReplExzKO-iWNcdlQ` | One MP4 document | 2872 |
+| Single Story image | `7wDjJigWSxLV5_73Qzjlqp_L` | One JPEG photo | 2873 |
+| All Stories | `meo2vaFwkkMq5MZSAlX_2euH` | JPEG then MP4, two original documents | 2874–2875 |
+| Reel | `EezlMkBl2iaaTR7iiSDZb_Xh` | One MP4 document | 2877 |
+| Post/Carousel | `f5YVliqklI1wH3fv-q7O_u_G` | Fourteen distinct JPEG documents in order | 2878–2891 |
+
+Every download succeeded on attempt 1. Structured logs show exactly one metadata inspection,
+one gallery download completion and zero gallery failures per job. All job workspaces were removed.
+Telegram `getFile` verified stored formats, sizes and all 19 media receipts; document byte counts
+equal the downloaded originals. The single-image Story used normal photo delivery, so Telegram's
+photo optimization is expected rather than an original-file byte-preservation claim.
+
+Read-only inspection of already cached Telegram files confirmed MP4, VP9 video, AAC audio and
+1080×1920 geometry for both Story-video deliveries. Their complete cached file bytes are identical;
+no additional media download or transcoding was required for that check. The Post and Carousel
+paths share the same 14-image `/p/` fixture; no distinct single-image Post was found in authorized
+history. Single-image Post and Highlight behavior remain covered by offline fixtures/tests.
+
+After all live canaries: Worker, Redis, Local Bot API and companion were healthy; Bot was running,
+Telegram `getMe` and Worker readiness passed, and SQLite `quick_check` was `ok`. All new containers
+had zero crash restarts. Configuration, cookie files, companion projection, Compose override and
+non-image environment settings remained byte-identical to the pre-deployment backup. Redis retained
+its original container and volume. A bounded in-memory log check found neither the configured bot
+token/five sensitive cookie values nor CDN URLs; raw logs and secret values were not printed.
+
+### Validation and operational recovery
+
+Local RC16 gates passed: 1,879 non-contract tests, 12 platform/opt-in skips, 83.24% coverage;
+lint/format, strict typing of 328 files, lock/frozen sync, clean dependency audit without ignores,
+architecture/context/text/secret checks, 14 gallery fixtures, wheel/sdist/clean installation,
+Docker/runtime smokes, Linux recovery plus 155 control-plane checks and Windows recovery.
+Exact committed release archives were independently reproduced and checksummed twice.
+
+The candidate was pulled and its digest/revision verified before downtime. Read-only configuration
+and offline doctor checks passed as runtime user 10001:10001. The existing transactional
+`TMB_RELEASE_TAG=v1.4.0-rc.16 tmb update` completed successfully with the companion stopped;
+the companion was explicitly recreated and health-checked afterward. Bot, Worker, Local Bot API
+and companion were updated; no unrelated service was restarted.
+
+Verified pre-RC16 recovery assets remain private:
+
+- Application/configuration/cookie/SQLite/WAL archive:
+  `/opt/telegram-media-downloader-bot/backups/tmb-20261020T180443Z.tar.gz` (mode 0600).
+- Redis snapshot/checksum, companion projection, override and protected update logs:
+  `/opt/telegram-media-downloader-bot/backups/rc16-predeploy-5j_qxek8/`.
+- The earlier pre-RC15 archive `backups/tmb-20261020T161225Z.tar.gz` remains retained.
+- Managed archive verification, extracted SQLite `quick_check` and `redis-check-rdb` passed.
+  The exact RC15 rollback image/digest remains available. No rollback or database restore was needed.
+
+The saved production GHCR login was rejected before deployment. Public images were pulled using a
+temporary anonymous Docker configuration, leaving stored registry credentials untouched. Future
+updates should use an isolated configuration or an operator-refreshed registry login.
+
+If a code/image rollback becomes necessary, use the supported updater with `v1.4.0-rc.15`,
+coordinate the companion and verify runtime health again. Preserve the current SQLite/Redis
+state and delivery receipts; do not restore an older database merely to roll back code.
+Use the full verified backup only when actual data recovery is required.
+
+### Files changed in this release operation
+
+- Runtime: `plugins/telegram_media_bot_gallerydl/__init__.py`,
+  `plugins/telegram_media_bot_gallerydl/instagram_profile.py`,
+  `src/telegram_media_bot/infrastructure/gallerydl/command_builder.py`,
+  `src/telegram_media_bot/infrastructure/gallerydl/errors.py`.
+- Versions/dependencies: `pyproject.toml`, `uv.lock`, `src/telegram_media_bot/__init__.py`.
+- Release/validation: `.github/workflows/publish-container.yml`,
+  `scripts/check_package_assets.py`, `scripts/ci_fast_quality.sh`,
+  `scripts/tests/test_tmb.sh`, `FILE_MANIFEST.txt`.
+- Regression coverage: `tests/integration/test_gallerydl_cookie_integrity.py`,
+  `tests/unit/infrastructure/gallerydl/test_regressions.py`.
+- Documentation: `CHANGELOG.md`, `docs/ARCHITECTURE.md`, `docs/CODE_MAP.md`,
+  `docs/DECISIONS.md`, `docs/STATUS.md`, `docs/THIRD_PARTY_NOTICES.md`, and this report.
+
+The original `55c1a9c` inspection reuse, credential isolation, read-only cookie runtime and worker
+retry implementation were preserved, not reimplemented. RC15's dependency/security preparation is
+commit `f90404a5972459667564aeae9f696b2e10e2f445`; RC16 contains the additional observed
+profile-query and JSON-Lines diagnostic corrections. Future provider query changes remain an
+upstream compatibility risk; review this narrow external plugin with the next pinned upgrade.
+The historical provider response and actual historical cookie corruption remain unproven.
+
+### Graphify usage
+
+- Version: 0.9.26. Initial `graphify check-update .` exited 0 without a stale indication.
+  No update was required/reported; no fallback navigation was used.
+- Bounded discovery queries:
+  `graphify query "Trace release version metadata dependency upgrade installer updater rollback archives tests CI publish workflow" --budget 1200 --graph graphify-out/graph.json`
+  and
+  `graphify query "GalleryDlCommandBuilder external gallery-dl extractor plugins packaging Instagram GraphQL regression fixtures" --budget 1200 --graph graphify-out/graph.json`.
+- Discovery located GalleryDlCommandBuilder, GalleryDlEngine, the normalized fixture checker and
+  release/updater ownership. Exact behavior was verified in source, tests and the running image;
+  graph output was not treated as behavioral authority.
+
+
 ## Authorized release and live follow-up (2026-10-20)
 
 The sections below retain the original pre-publication investigation. Their no-deployment

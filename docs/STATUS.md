@@ -2,8 +2,20 @@
 
 Last updated: 2026-10-20
 
-## RC16 live Instagram profile-contract correction (2026-10-20)
+## RC16 production activation and live Instagram validation (2026-10-20)
 
+- Published immutable `v1.4.0-rc.16` from `750673c8dbe3fb139260cff01324832188d86a35`.
+  All ten CI jobs passed in run `39466360921`; publication passed in run `39468717094`.
+  The transactional updater activated the exact published digest on Bot, Worker, Local API and
+  companion; Redis retained its original container/volume and all five services remain healthy/running.
+- Final live jobs downloaded and delivered a current Story video, Story image, two-item All Stories,
+  one Reel and a 14-image Post/Carousel on attempt 1. Each logged one metadata inspection and one
+  download completion; Telegram confirmed all 19 media receipts and ordered collection contents.
+  Cached Story-video bytes matched between single/collection delivery; ffprobe confirmed MP4/VP9/AAC.
+- Post-canary configuration/cookie bytes and companion settings remain unchanged; workspaces were
+  removed. Verified SQLite/WAL/config/cookie and Redis backups plus the RC15 rollback image remain.
+  Original failed jobs were not falsely marked successful or automatically replayed. See
+  [the production evidence and recovery report](INSTAGRAM_DOWNLOAD_RELIABILITY.md).
 - RC15 was published from `f90404a` after all ten hosted CI jobs passed and transactionally
   deployed with verified application/Redis backups. Runtime version, digest, service health,
   SQLite, Telegram connectivity and unchanged credentials were verified.
@@ -24,10 +36,10 @@ Last updated: 2026-10-20
   an explicit immutable-state verification in the tag workflow.
 - Local validation passes: 1,879 non-contract tests, 12 platform/opt-in skips and 83.24% coverage;
   secure dependency audit, lint/format, strict typing of 328 files, integrity/secret checks,
-  package/clean-install and Docker/runtime smokes. The real installed Story path retains one
-  metadata inspection, exact 2,507-byte H.264/AAC output and unchanged cookies.
+  package/clean-install and Docker/runtime smokes. The isolated installed-image Story fixture
+  retains one metadata inspection, exact 2,507-byte H.264/AAC output and unchanged cookies.
 - Linux updater recovery plus 155 control-plane checks and Windows updater recovery pass.
-  RC16 publication, transactional deployment and live delivery require their own observed evidence.
+  Separate RC16 publication, deployment and live-delivery evidence is now recorded above.
 
 ## RC15 secure dependency and Instagram release preparation (2026-10-20)
 
