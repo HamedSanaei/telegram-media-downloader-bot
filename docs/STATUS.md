@@ -2,6 +2,22 @@
 
 Last updated: 2026-10-20
 
+## RC15 secure dependency and Instagram release preparation (2026-10-20)
+
+- Prepares `1.4.0-rc.15` from the existing `55c1a9c` Instagram reliability implementation rather
+  than reimplementing it. Production was still on RC14/gallery-dl 1.32.8 at task start; the
+  `story_account` classification remains the intentional All Stories collection target.
+- Raises the aiohttp minimum to 3.14.4 and freezes 3.14.5 with required yarl 1.25.1, compatible with
+  the locked aiogram range. The unchanged audit reports no known vulnerabilities without ignored
+  advisories. gallery-dl stays at the previously verified stable 1.32.17.
+- Publication and production activation use the existing full CI, tag-only release pipeline,
+  companion coordination, verified private backup and transactional updater. Live availability
+  and Telegram delivery require separate observed canary evidence, not successful inspection alone.
+- Local validation passed: 1,863 non-contract tests (83.17% coverage), secure dependency audit,
+  lint/format/mypy, package build/clean install, Docker/runtime smokes, Windows updater recovery,
+  Linux updater recovery and 155 control-plane checks. The restore-interruption fixture now resets
+  inherited SIGINT before exec so background Bash cannot silently ignore the injected interrupt.
+
 ## Instagram extraction reliability: unreleased local fix (2026-10-20)
 
 - Read-only production evidence for job `2AMIcSr54b9YMwMI_SNLLJ7M` confirms two successful

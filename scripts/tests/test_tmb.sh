@@ -776,8 +776,13 @@ state_before_interrupt="$(cat "$STATE_FILE")"
 printf '# modified-before-interrupt\n' >>"$FIXTURE/config.yaml"
 rm -f "$INT_MARKER" "$COUNTER_FILE"
 : >"$COUNTER_FILE"
-TMB_TEST_FAKE_DOCKER_INT=1 TMB_TEST_FAKE_DOCKER_INT_AT=4 \
-  run_tmb restore "$archive" >"$TEST_ROOT/int-restore.out" 2>&1 &
+# A background shell may inherit SIGINT ignored (notably with Bash 5.3), which
+# non-interactive bash cannot undo with a trap. Reset it before exec so this
+# fixture actually exercises the restore transaction's operator-interrupt path.
+TMB_ROOT_DIR="$FIXTURE" PATH="$FAKE_BIN:$PATH" \
+  TMB_TEST_FAKE_DOCKER_INT=1 TMB_TEST_FAKE_DOCKER_INT_AT=4 \
+  python -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp("bash", ["bash", *sys.argv[1:]])' \
+  "$TMB_SCRIPT" restore "$archive" >"$TEST_ROOT/int-restore.out" 2>&1 &
 restore_pid=$!
 waited=0
 while [[ ! -f "$INT_MARKER" && $waited -lt 20 ]]; do

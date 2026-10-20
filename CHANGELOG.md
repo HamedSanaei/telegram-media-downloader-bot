@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.4.0-rc.15 - 2026-10-20
 
 - Upgrade gallery-dl from 1.32.8 to 1.32.17, including Instagram Story/Highlight and GraphQL fixes.
 - Keep shared and personal cookie sources read-only in gallery-dl and yt-dlp, including
@@ -11,6 +11,11 @@
   transient network/server failures and rate limits without logging provider payloads or secrets.
 - Retry observed transient gallery failures only, with capped exponential backoff, jitter and
   observable provider cooldowns; preserve terminal causes and existing private-access checks.
+- Raise the aiohttp security floor to 3.14.4 and freeze 3.14.5, resolving the dependency-audit
+  findings CVE-2026-111064, GHSA-2g87-pp6c-29x5 and CVE-2026-111063 while retaining aiogram
+  compatibility and the pinned gallery-dl 1.32.17 release.
+- Make the restore-interruption fixture reset inherited SIGINT before launching Bash, so the
+  real rollback path is exercised consistently without weakening its assertions.
 
 
 ## v1.4.0-rc.13 - 2026-10-14
