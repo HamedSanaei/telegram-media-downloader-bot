@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import re
 import sys
+from importlib.util import find_spec
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from telegram_media_bot.bootstrap.config import GalleryDlSection
 from telegram_media_bot.domain.credential_resolution import CredentialKind, ResolvedCredential
-from telegram_media_bot.domain.errors import GalleryDlUnsupportedUrlError
+from telegram_media_bot.domain.errors import (
+    GalleryDlUnavailableError,
+    GalleryDlUnsupportedUrlError,
+)
 
 _PROVIDER_PATTERNS = {
     "instagram": re.compile(
@@ -143,6 +147,11 @@ class GalleryDlCommandBuilder:
             "--sleep-request",
             str(self._settings.sleep_request_seconds),
         ]
+        if provider == "instagram":
+            spec = find_spec("telegram_media_bot_gallerydl")
+            if spec is None or spec.origin is None:
+                raise GalleryDlUnavailableError("packaged Instagram extractor is unavailable")
+            args.extend(("--extractors", str(Path(spec.origin).parent)))
         if credential is not None and cookie_file is not None:
             raise ValueError("credential and cookie_file cannot both be supplied")
         if credential is None:

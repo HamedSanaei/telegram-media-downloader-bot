@@ -12,7 +12,7 @@ uv run python scripts/check_text_integrity.py
 uv run python scripts/generate_file_manifest.py --check
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy src tests
+uv run mypy src tests plugins/telegram_media_bot_gallerydl
 uv run pre-commit run detect-secrets --all-files
 uv run pip check
 # Ordinary non-contract Python tests with coverage (still ~70s in CI).

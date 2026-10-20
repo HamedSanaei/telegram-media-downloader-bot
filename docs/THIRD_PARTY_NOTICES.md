@@ -1,10 +1,14 @@
 # Third-party notices
 
-This application remains distributed under its own MIT license. Its immutable runtime installs
+The main application is distributed under its MIT license. Its immutable runtime installs
 `gallery-dl` 1.32.17 as a separately executed Python program from
-<https://github.com/mikf/gallery-dl>. The upstream project identifies that distribution as
-GPL-2.0. No gallery-dl source code is copied into this repository and application code communicates
-with it only through a controlled subprocess boundary.
+<https://codeberg.org/mikf/gallery-dl>, whose distribution is GPL-2.0-only.
+The external compatibility extractor source at
+`plugins/telegram_media_bot_gallerydl/instagram_profile.py`
+is distributed under GPL-2.0-only and is loaded only inside that separate vendor subprocess.
+Its complete source accompanies the wheel, source distribution and runtime image. No upstream
+source is copied into this repository; the main application communicates through its controlled
+subprocess boundary and does not import the compatibility extractor.
 
 The corresponding GPL-2.0 license text is distributed at
 `docs/licenses/gallery-dl-GPL-2.0.txt`. Upstream notices and package metadata remain present in the

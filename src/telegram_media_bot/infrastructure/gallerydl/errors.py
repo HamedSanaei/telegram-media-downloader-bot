@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 import re
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -26,6 +28,33 @@ _HTTP_STATUS_PATTERN = re.compile(
 _RETRY_AFTER_PATTERN = re.compile(
     r"\bretry-after[\"']?\s*[:=]\s*[\"']?([^\r\n\"']+)", re.IGNORECASE
 )
+_DIAGNOSTIC_PREFIX = "tmb-gallery-diagnostic: "
+_ERRORS: dict[str, tuple[type[MediaBotError], str]] = {
+    "adapter_unavailable": (GalleryDlUnavailableError, "gallery-dl is unavailable"),
+    "rate_limited": (GalleryDlRateLimitedError, "gallery provider rate limited the request"),
+    "session_rejected": (GalleryDlCookiesExpiredError, "configured gallery cookies were rejected"),
+    "challenge_required": (
+        GalleryDlAuthenticationRequiredError,
+        "gallery provider requires a session challenge",
+    ),
+    "authentication_required": (
+        GalleryDlAuthenticationRequiredError,
+        "gallery provider authentication is required",
+    ),
+    "access_denied": (GalleryDlAccessDeniedError, "gallery provider denied access to this content"),
+    "upstream_server": (GalleryDlTransientError, "gallery provider encountered a server failure"),
+    "network": (GalleryDlTransientError, "gallery provider request encountered a network failure"),
+    "extractor_incompatible": (
+        GalleryDlOutputChangedError,
+        "gallery extractor is incompatible with the provider response",
+    ),
+    "graphql_error": (GalleryDlExtractionError, "gallery provider returned a GraphQL error"),
+    "media_unavailable": (MediaUnavailableError, "gallery content is unavailable"),
+    "extraction_unknown": (
+        GalleryDlExtractionError,
+        "gallery extraction failed without a definitive provider cause",
+    ),
+}
 
 
 def map_process_failure(return_code: int, stderr: bytes) -> MediaBotError:
@@ -35,17 +64,73 @@ def map_process_failure(return_code: int, stderr: bytes) -> MediaBotError:
     output nor an unknown extractor exception establishes a transient failure.
     """
     text = stderr[: 256 * 1024].decode("utf-8", errors="replace").casefold()
-    http_status = _extract_http_status(text)
-    error: MediaBotError
-    category: str
+    if diagnostic := _extract_diagnostic(text):
+        category, http_status, retry_after = diagnostic
+    else:
+        http_status = _extract_http_status(text)
+        category = _classify_text(text, http_status)
+        retry_after = _extract_retry_after(text)
+    error_type, reason = _ERRORS[category]
+    error = error_type(reason)
+    error.http_status = http_status
+    error.adapter = "gallery-dl"
+    error.exit_code = return_code
+    error.diagnostic_category = category
+    error.retry_after_seconds = retry_after if error.retryable else None
+    error.failure_stage = (
+        FailureStage.AUTHENTICATION
+        if isinstance(error, (GalleryDlAuthenticationRequiredError, GalleryDlCookiesExpiredError))
+        else FailureStage.EXTRACTION
+    )
+    return error
+
+
+def format_process_diagnostic(error: MediaBotError) -> str:
+    """Preserve only normalized evidence before gallery-dl DataJob swallows exceptions."""
+    return _DIAGNOSTIC_PREFIX + json.dumps(
+        {
+            "category": error.diagnostic_category,
+            "http_status": error.http_status,
+            "retry_after_seconds": error.retry_after_seconds,
+        },
+        separators=(",", ":"),
+    )
+
+
+def _extract_diagnostic(text: str) -> tuple[str, int | None, float | None] | None:
+    for line in text.splitlines():
+        if not (payload := line.partition(_DIAGNOSTIC_PREFIX)[2]):
+            continue
+        try:
+            data = json.loads(payload)
+        except ValueError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        category = data.get("category")
+        status = data.get("http_status")
+        cooldown = data.get("retry_after_seconds")
+        if not isinstance(category, str) or category not in _ERRORS:
+            continue
+        if status is not None and (type(status) is not int or not 100 <= status <= 599):
+            continue
+        if cooldown is not None and (
+            type(cooldown) not in (int, float)
+            or not 0 <= cooldown <= 1_000_000_000
+            or not math.isfinite(cooldown)
+        ):
+            continue
+        return category, status, cooldown
+    return None
+
+
+def _classify_text(text: str, http_status: int | None) -> str:
     if "no module named gallery_dl" in text or "not recognized" in text:
-        error = GalleryDlUnavailableError("gallery-dl is unavailable")
-        category = "adapter_unavailable"
+        return "adapter_unavailable"
     elif http_status == 429 or _contains(
         text, "rate limit", "too many requests", "please wait a few minutes"
     ):
-        error = GalleryDlRateLimitedError("gallery provider rate limited the request")
-        category = "rate_limited"
+        return "rate_limited"
     elif _contains(
         text,
         "expired cookie",
@@ -56,13 +141,9 @@ def map_process_failure(return_code: int, stderr: bytes) -> MediaBotError:
         "session has expired",
         "session is invalid",
     ):
-        error = GalleryDlCookiesExpiredError("configured gallery cookies were rejected")
-        category = "session_rejected"
+        return "session_rejected"
     elif _contains(text, "checkpoint_required", "challenge_required", "redirect to challenge page"):
-        error = GalleryDlAuthenticationRequiredError(
-            "gallery provider requires a session challenge"
-        )
-        category = "challenge_required"
+        return "challenge_required"
     elif http_status == 401 or _contains(
         text,
         "login required",
@@ -74,14 +155,11 @@ def map_process_failure(return_code: int, stderr: bytes) -> MediaBotError:
         "please log in",
         "redirect to login page",
     ):
-        error = GalleryDlAuthenticationRequiredError("gallery provider authentication is required")
-        category = "authentication_required"
+        return "authentication_required"
     elif http_status == 403:
-        error = GalleryDlAccessDeniedError("gallery provider denied access to this content")
-        category = "access_denied"
+        return "access_denied"
     elif http_status is not None and 500 <= http_status <= 599:
-        error = GalleryDlTransientError("gallery provider encountered a server failure")
-        category = "upstream_server"
+        return "upstream_server"
     elif _contains(
         text,
         "connectionerror",
@@ -100,8 +178,7 @@ def map_process_failure(return_code: int, stderr: bytes) -> MediaBotError:
         "chunkedencodingerror",
         "name or service not known",
     ):
-        error = GalleryDlTransientError("gallery provider request encountered a network failure")
-        category = "network"
+        return "network"
     elif _contains(
         text,
         "keyerror",
@@ -116,19 +193,12 @@ def map_process_failure(return_code: int, stderr: bytes) -> MediaBotError:
         "unknown doc_id",
         "invalid doc_id",
         "persistedquerynotfound",
+    ) or (
+        "graphql" in text and _contains(text, "query not found", "document not found", "http 404")
     ):
-        error = GalleryDlOutputChangedError(
-            "gallery extractor is incompatible with the provider response"
-        )
-        category = "extractor_incompatible"
-    elif "graphql" in text and _contains(text, "query not found", "document not found", "http 404"):
-        error = GalleryDlOutputChangedError(
-            "gallery extractor query is incompatible with the provider"
-        )
-        category = "extractor_incompatible"
+        return "extractor_incompatible"
     elif "graphql" in text and _contains(text, "error", "failed", '"errors"'):
-        error = GalleryDlExtractionError("gallery provider returned a GraphQL error")
-        category = "graphql_error"
+        return "graphql_error"
     elif http_status in {404, 410} or _contains(
         text,
         "notfounderror:",
@@ -141,24 +211,9 @@ def map_process_failure(return_code: int, stderr: bytes) -> MediaBotError:
         "deleted",
         "requested resource does not exist",
     ):
-        error = MediaUnavailableError("gallery content is unavailable")
-        category = "media_unavailable"
+        return "media_unavailable"
     else:
-        error = GalleryDlExtractionError(
-            "gallery extraction failed without a definitive provider cause"
-        )
-        category = "extraction_unknown"
-    error.http_status = http_status
-    error.adapter = "gallery-dl"
-    error.exit_code = return_code
-    error.diagnostic_category = category
-    error.retry_after_seconds = _extract_retry_after(text) if error.retryable else None
-    error.failure_stage = (
-        FailureStage.AUTHENTICATION
-        if isinstance(error, (GalleryDlAuthenticationRequiredError, GalleryDlCookiesExpiredError))
-        else FailureStage.EXTRACTION
-    )
-    return error
+        return "extraction_unknown"
 
 
 def _contains(text: str, *markers: str) -> bool:

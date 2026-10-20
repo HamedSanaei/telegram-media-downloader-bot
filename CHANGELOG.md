@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.4.0-rc.16 - 2026-10-20
+
+- Supply Instagram's newly required profile-banner GraphQL variable through an isolated external
+  gallery-dl extractor plugin. Preserve upstream authentication, private access, ordering and media
+  selection; do not patch installed dependencies or add fallback endpoints.
+- Preserve normalized HTTP/authentication/network failure evidence before gallery-dl's JSON-Lines
+  inspection job discards exceptions and returns zero. Only fixed categories, numeric HTTP status
+  and validated cooldowns cross the subprocess boundary; raw provider payloads remain private.
+- Exercise the current GraphQL variable contract and real HTTP denial, rate-limit, server, network
+  and login-redirect failures against an offline server, retaining concurrent cookie integrity tests.
+- Retain secure aiohttp 3.14.5 and gallery-dl 1.32.17 from RC15; publish a new tag rather than
+  modifying the already published RC15 artifacts.
+- Publish complete prereleases as drafts with all verified assets before final publication, and
+  require GitHub's immutable-release state. Existing release artifacts are not rewritten.
+
 ## v1.4.0-rc.15 - 2026-10-20
 
 - Upgrade gallery-dl from 1.32.8 to 1.32.17, including Instagram Story/Highlight and GraphQL fixes.

@@ -902,3 +902,39 @@ Failure metadata may expose only bounded numeric process/HTTP/cooldown values an
 categories normalized by the adapter; this supersedes ADR-027's blanket diagnostic prohibition for
 those fields. Raw vendor output, dictionaries, headers, signed URLs and cookie material stay inside
 the adapter. Application policy never branches on raw vendor stderr or exit codes.
+
+## ADR-051: Isolate Instagram profile-query compatibility in external vendor extractors
+
+**Status:** accepted (2026-10-20)
+
+RC15's live canary established a remaining gallery-dl 1.32.17 provider-contract failure: the
+profile GraphQL endpoint returned HTTP 200 without `data`, code 1675012 and
+`missing_required_variable_value`, with `is_transient=false`, `requires_reauth=false` and
+`allow_user_retry=false`. The request contained session and GraphQL form tokens. The current
+frontend document requires `PolarisProfileInformTreatmentBannerEnabledrelayprovider`, absent
+from the pinned extractor. Supplying this unused UI flag as false restored profile and Story
+query `data` in a read-only no-download diagnostic. This is not evidence of expired credentials.
+
+Load project-owned GPL-2.0-only extractors through gallery-dl's supported external-module option
+from a packaged, non-user-controlled directory. A narrow API subclass adds that one variable only
+to the profile query. Upstream Story, Highlight, avatar, profile, Post and Reel implementations
+retain their authentication, privacy checks, media parsing, ordering and failure behavior.
+Do not modify installed dependency files, introduce alternate provider endpoints or bypass access.
+The main application still imports no gallery-dl objects; the external plugin is vendor-process-only.
+
+Real offline HTTP-denial tests also established that gallery-dl's JSON-Lines DataJob discards
+exceptions and returns zero. Preserve failure evidence before that boundary using the existing
+central classifier and a small diagnostic record containing only its fixed category, numeric HTTP
+status and validated Retry-After. The adapter validates types, ranges and finite cooldowns before
+reconstructing project exceptions. Never forward vendor exception text, response bodies, cookies,
+headers or signed URLs. Re-raise the original vendor exception; do not convert failure into success.
+
+The external source is a separate `telegram_media_bot_gallerydl` package under `plugins/`,
+not application source. Resolve its installed location without importing the plugin. Wheel/sdist
+checks require its GPL-tagged source, and strict quality typing includes the external package.
+The existing application no-gallery-import architecture test remains unchanged.
+
+Keep gallery-dl pinned to the latest verified stable 1.32.17. Re-evaluate removal of this compatibility
+module with the next reviewed upstream upgrade and retain the current provider-contract fixture.
+RC15 is already published; these behavioral changes require a separate validated release tag.
+

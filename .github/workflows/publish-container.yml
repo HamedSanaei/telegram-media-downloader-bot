@@ -205,9 +205,11 @@ jobs:
           grep -Eq \
             '^-rwxr-xr-x .* telegram-media-downloader-bot/scripts/tmb-current.sh$' \
             <<<"$archive_listing"
-      - name: Create GitHub Release
+      - name: Create GitHub Release draft and upload verified assets
+        id: release
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           tag_name: ${{ github.ref_name }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
@@ -220,3 +222,19 @@ jobs:
             telegram-media-downloader-bot.zip.sha256
             tmb-updater.sh
             tmb-updater.sh.sha256
+      - name: Publish complete immutable release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.id }}
+        run: |
+          set -euo pipefail
+          release_json="$(gh api --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" -F draft=false)"
+          python3 -c '
+          import json, sys
+          release = json.loads(sys.argv[1])
+          assert release["draft"] is False
+          assert release["immutable"] is True
+          print(json.dumps({key: release[key] for key in ("tag_name", "draft", "immutable")}))
+          ' "$release_json"

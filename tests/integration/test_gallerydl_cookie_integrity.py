@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import socket
 import sys
 import threading
 from collections.abc import Iterator, Sequence
@@ -19,6 +20,13 @@ from telegram_media_bot.domain.credential_resolution import (
     CredentialKind,
     CredentialPolicy,
     ResolvedCredential,
+)
+from telegram_media_bot.domain.errors import (
+    GalleryDlAccessDeniedError,
+    GalleryDlAuthenticationRequiredError,
+    GalleryDlRateLimitedError,
+    GalleryDlTransientError,
+    MediaBotError,
 )
 from telegram_media_bot.domain.models import DownloadMode, DownloadRequest, JobId, MediaKind
 from telegram_media_bot.infrastructure.gallerydl.adapter import GalleryDlEngine
@@ -38,6 +46,7 @@ class _FixtureServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", 0), _FixtureHandler)
         self.cookies_seen: list[str] = []
         self.requests_seen: list[str] = []
+        self.profile_failure: int | str | None = None
         self.lock = threading.Lock()
 
 
@@ -66,16 +75,60 @@ class _FixtureHandler(BaseHTTPRequestHandler):
             self._respond(payload, "application/javascript")
         elif path == "/story.mp4":
             self._respond(_VIDEO_BYTES, "video/mp4")
+        elif path == "/accounts/login/":
+            self._respond(b"<html>Fixture login required</html>", "text/html")
         else:
             self.send_error(404)
 
     def do_POST(self) -> None:
         path = self._record_request()
         body = self.rfile.read(int(self.headers.get("Content-Length", "0"))).decode()
-        operation = parse_qs(body).get("fb_api_req_friendly_name", [""])[0]
-        user = {"id": "123", "pk": "123", "username": "fixtureuser", "full_name": "Fixture"}
+        form = parse_qs(body)
+        operation = form.get("fb_api_req_friendly_name", [""])[0]
+        variables = json.loads(form.get("variables", ["{}"])[0])
+        user = {
+            "id": "123",
+            "pk": "123",
+            "username": "fixtureuser",
+            "full_name": "Fixture",
+            "is_private": False,
+        }
         if path == "/api/graphql" and operation == "PolarisProfilePageContentQuery":
-            response: dict[str, Any] = {"data": {"user": user}}
+            if self.server.profile_failure == "network":
+                self.connection.shutdown(socket.SHUT_RDWR)
+                self.close_connection = True
+                return
+            if self.server.profile_failure == "login":
+                self.send_response(302)
+                self.send_header("Location", "https://www.instagram.com/accounts/login/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if isinstance(self.server.profile_failure, int):
+                self.send_response(self.server.profile_failure)
+                self.send_header("Content-Length", "0")
+                if self.server.profile_failure in {429, 503}:
+                    self.send_header("Retry-After", "120")
+                self.end_headers()
+                return
+            # A non-null Boolean is now required by the actual provider document.
+            banner = "__relay_internal__pv__PolarisProfileInformTreatmentBannerEnabledrelayprovider"
+            response: dict[str, Any]
+            if type(variables.get(banner)) is not bool:
+                response = {
+                    "errors": [
+                        {
+                            "message": "A server error missing_required_variable_value occured.",
+                            "code": 1675012,
+                            "is_transient": False,
+                            "requires_reauth": False,
+                            "allow_user_retry": False,
+                        }
+                    ],
+                    "extensions": {"is_final": True},
+                }
+            else:
+                response = {"data": {"user": user}}
         elif path == "/graphql/query" and operation == "PolarisStoriesV3ReelPageGalleryQuery":
             item = {
                 "pk": "991",
@@ -278,3 +331,39 @@ def test_real_instagram_story_video_extraction_and_download_preserve_adapter_con
     assert runner.inspections == 1
     assert "cdn.fixture.invalid" not in repr(info)
     assert "ytdl:" not in repr(result)
+
+
+@pytest.mark.parametrize(
+    ("failure", "error_type", "retryable"),
+    [
+        (401, GalleryDlAuthenticationRequiredError, False),
+        (403, GalleryDlAccessDeniedError, False),
+        (429, GalleryDlRateLimitedError, True),
+        (503, GalleryDlTransientError, True),
+        ("network", GalleryDlTransientError, True),
+        ("login", GalleryDlAuthenticationRequiredError, False),
+    ],
+)
+def test_real_profile_failures_preserve_cause_without_extra_provider_requests(
+    settings: Settings,
+    local_gallery_server: _FixtureServer,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: int | str,
+    error_type: type[MediaBotError],
+    retryable: bool,
+) -> None:
+    local_gallery_server.profile_failure = failure
+    runner = _LocalRunner(local_gallery_server)
+    engine = GalleryDlEngine(settings, runner=runner)
+    monkeypatch.setattr(engine._validator, "validate", lambda url: url)
+
+    with pytest.raises(error_type) as caught:
+        engine.inspect(_STORY_URL)
+
+    assert caught.value.retryable is retryable
+    assert caught.value.http_status == (failure if isinstance(failure, int) else None)
+    assert caught.value.retry_after_seconds == (120 if failure in {429, 503} else None)
+    assert runner.inspections == 1
+    assert local_gallery_server.requests_seen.count("/api/graphql") == 1
+    assert "/graphql/query" not in local_gallery_server.requests_seen
+    assert "/story.mp4" not in local_gallery_server.requests_seen

@@ -14,6 +14,7 @@ FONT = "telegram_media_bot/assets/fonts/NotoSans-Regular.ttf"
 LICENSE = "telegram_media_bot/assets/fonts/OFL.txt"
 GALLERY_NOTICE = "telegram_media_bot/assets/licenses/THIRD_PARTY_NOTICES.md"
 GALLERY_LICENSE = "telegram_media_bot/assets/licenses/gallery-dl-GPL-2.0.txt"
+GALLERY_EXTRACTOR = "telegram_media_bot_gallerydl/instagram_profile.py"
 
 
 def main() -> int:
@@ -59,6 +60,8 @@ def _check_sdist(path: Path) -> None:
         if prefix is None:
             raise SystemExit(f"{FONT} is missing from sdist")
         _require_assets(names, prefix=prefix, include_gallery=False)
+        if not any(name.endswith("plugins/" + GALLERY_EXTRACTOR) for name in names):
+            raise SystemExit("External Instagram extractor source is missing from sdist")
         font = archive.extractfile(prefix + FONT)
         license_file = archive.extractfile(prefix + LICENSE)
         gallery_notice_name = next(
@@ -87,7 +90,9 @@ def _check_sdist(path: Path) -> None:
 
 def _require_assets(names: set[str], *, prefix: str, include_gallery: bool = True) -> None:
     required = (
-        (FONT, LICENSE, GALLERY_NOTICE, GALLERY_LICENSE) if include_gallery else (FONT, LICENSE)
+        (FONT, LICENSE, GALLERY_NOTICE, GALLERY_LICENSE, GALLERY_EXTRACTOR)
+        if include_gallery
+        else (FONT, LICENSE)
     )
     missing = [asset for asset in required if prefix + asset not in names]
     if missing:
@@ -129,6 +134,8 @@ license_file = files("telegram_media_bot.assets.fonts").joinpath("OFL.txt")
 licenses = files("telegram_media_bot.assets.licenses")
 gallery_notice = licenses.joinpath("THIRD_PARTY_NOTICES.md")
 gallery_license = licenses.joinpath("gallery-dl-GPL-2.0.txt")
+plugin = files("telegram_media_bot_gallerydl").joinpath("instagram_profile.py")
+assert plugin.is_file() and "SPDX-License-Identifier: GPL-2.0-only" in plugin.read_text(encoding="utf-8")
 assert font.is_file() and len(font.read_bytes()) > 0
 assert license_file.is_file() and "SIL OPEN FONT LICENSE" in license_file.read_text(encoding="utf-8")
 notice_text = gallery_notice.read_text(encoding="utf-8")

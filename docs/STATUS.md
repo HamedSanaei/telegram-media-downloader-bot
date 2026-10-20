@@ -2,6 +2,33 @@
 
 Last updated: 2026-10-20
 
+## RC16 live Instagram profile-contract correction (2026-10-20)
+
+- RC15 was published from `f90404a` after all ten hosted CI jobs passed and transactionally
+  deployed with verified application/Redis backups. Runtime version, digest, service health,
+  SQLite, Telegram connectivity and unchanged credentials were verified.
+- RC15 live canaries delivered a 14-image Post/Carousel in order and one Reel on attempt 1.
+  Single Story and All Stories still failed before download; no Story delivery was claimed.
+- Sanitized diagnostics establish HTTP 200 GraphQL code 1675012,
+  `missing_required_variable_value`, not a confirmed cookie/session failure. The frontend
+  requires a profile-banner variable absent from stable gallery-dl 1.32.17.
+- A no-download in-memory diagnostic supplying that unused UI flag restored profile and Stories
+  query `data`. RC16 packages the correction as external GPL-2.0-only vendor-process extractors,
+  preserving upstream authentication, private access, media enumeration, ordering and errors.
+- Real offline denial tests exposed upstream JSON-Lines exception swallowing. The plugin now
+  retains only centrally classified categories, numeric HTTP status and validated cooldowns;
+  raw exceptions, credentials, provider bodies and signed media URLs never enter project logs.
+- Keep the compatibility source in a separately packaged `plugins/telegram_media_bot_gallerydl`
+  component; preserve the strict application no-gallery-import test and type-check both components.
+  Immutable releases are enabled for future publications, with draft/upload/publish ordering and
+  an explicit immutable-state verification in the tag workflow.
+- Local validation passes: 1,879 non-contract tests, 12 platform/opt-in skips and 83.24% coverage;
+  secure dependency audit, lint/format, strict typing of 328 files, integrity/secret checks,
+  package/clean-install and Docker/runtime smokes. The real installed Story path retains one
+  metadata inspection, exact 2,507-byte H.264/AAC output and unchanged cookies.
+- Linux updater recovery plus 155 control-plane checks and Windows updater recovery pass.
+  RC16 publication, transactional deployment and live delivery require their own observed evidence.
+
 ## RC15 secure dependency and Instagram release preparation (2026-10-20)
 
 - Prepares `1.4.0-rc.15` from the existing `55c1a9c` Instagram reliability implementation rather

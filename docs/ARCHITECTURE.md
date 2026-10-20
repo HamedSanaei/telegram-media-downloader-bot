@@ -78,6 +78,14 @@ router and gallery download do not inspect again. Durable UI selections lack ext
 provenance and are never accepted as download inspections. Signed/expiring asset URLs remain
 adapter-local; the actual download still resolves them from the canonical provider URL.
 
+The pinned gallery-dl process loads a packaged external Instagram extractor plugin from an
+application-owned path. It supplies the provider's required profile-banner Boolean without changing
+vendor authentication, privacy checks, media enumeration or ordering. The plugin is GPL-2.0-only
+and runs exclusively in the vendor process, not the application. Before gallery-dl's JSON-Lines
+inspection job can swallow an exception, the plugin preserves only the adapter's fixed diagnostic
+category, numeric HTTP status and validated cooldown. The adapter validates that small diagnostic
+record; raw exception messages, provider bodies, headers and URLs do not enter project logs.
+
 A non-empty malformed event stream is an upstream output-contract failure. Empty output without
 definitive provider evidence is ambiguous, terminal extraction failure, not proof of deletion or
 session expiry. Explicit HTTP/auth/rate/network/GraphQL evidence retains typed failure semantics.

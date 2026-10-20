@@ -317,6 +317,30 @@ def test_failure_log_has_fixed_numeric_fields_without_provider_body_or_paths(
         assert forbidden not in diagnostic
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not-json",
+        "[]",
+        '{"category":"untrusted"}',
+        '{"category":"network","http_status":true}',
+        '{"category":"network","http_status":999}',
+        '{"category":"network","retry_after_seconds":-1}',
+        '{"category":"network","retry_after_seconds":true}',
+        '{"category":"network","retry_after_seconds":NaN}',
+        '{"category":"network","retry_after_seconds":Infinity}',
+        '{"category":"network","retry_after_seconds":' + "9" * 1000 + "}",
+    ],
+)
+def test_malformed_vendor_diagnostic_cannot_replace_observed_rate_limit(payload: str) -> None:
+    stderr = f"HTTP 429 Too Many Requests\n tmb-gallery-diagnostic: {payload}".encode()
+    error = map_process_failure(0, stderr)
+    assert isinstance(error, GalleryDlRateLimitedError)
+    assert error.http_status == 429
+    assert error.retryable
+    assert error.retry_after_seconds is None
+
+
 def test_bound_gallery_inspection_is_reused_without_another_extraction(
     settings: Settings, tmp_path: Path
 ) -> None:

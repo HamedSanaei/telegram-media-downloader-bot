@@ -1,5 +1,54 @@
 # Instagram download reliability investigation
 
+## Authorized release and live follow-up (2026-10-20)
+
+The sections below retain the original pre-publication investigation. Their no-deployment
+statements describe that earlier scope, not this explicitly authorized follow-up.
+
+RC15 was published from `f90404a5972459667564aeae9f696b2e10e2f445` after all ten hosted CI jobs
+passed in run `39446259695`; publication passed in run `39451282276`. The transactional updater
+activated the exact published image with application 1.4.0-rc.15, gallery-dl 1.32.17 and
+aiohttp 3.14.5. Verified application/Redis backups were retained; configuration and cookie bytes
+were unchanged. Bot, Worker, Local Bot API, Redis and the enabled companion were healthy.
+
+Live application canaries, with the original owner's normal access policy and worker queue,
+delivered a 14-image Post/Carousel in order (job `3nZLZC3sOuf9EaRsQVH4RVJw`, Telegram receipts
+2853–2866) and a Reel (job `UCIY5FXjvyfqcD6qotHWqMnB`, receipt 2867), each on attempt 1.
+Single Story `fLV8ChNny5DvBTwi7p-vw8tT` and All Stories `RFV362CflaApHfECwxAPUQxM` failed
+before download with extractor incompatibility, without retries or delivery receipts.
+
+Bounded read-only diagnostics found a separate current provider-contract defect. The profile
+GraphQL query returned HTTP 200 with `errors`/`extensions`, no `data`, numeric code 1675012 and
+`missing_required_variable_value`. Instagram explicitly marked it non-transient, without a
+reauthentication requirement or retry permission. Session cookies and GraphQL form tokens were
+present. The dynamically discovered document, rather than the pinned fallback document ID, was used.
+The current public frontend module requires
+`__relay_internal__pv__PolarisProfileInformTreatmentBannerEnabledrelayprovider`,
+which gallery-dl 1.32.17 omits. A frontend-only inspection prevented the GraphQL request locally;
+a separate no-download diagnostic supplying that unused banner flag as false restored profile
+and Stories `data` responses. No cookie or installed dependency file was modified.
+
+RC16 supplies that field through supported external gallery-dl extractors, not a different
+provider endpoint, credential fallback or authorization bypass. Post/Reel parsing and all
+upstream privacy checks remain intact. A real offline server now requires the same non-null
+Boolean, so the existing Story extraction/download and concurrent-cookie scenarios detect the
+missing-variable regression rather than accepting an outdated request shape.
+
+The same real-process tests exposed another upstream boundary defect: JSON-Lines `DataJob.run`
+captures extraction exceptions but neither emits them nor returns a failure status. The external
+plugin re-raises the original exception after preserving only centrally classified evidence.
+Its bounded diagnostic carries a fixed category, numeric HTTP status and validated cooldown.
+The adapter rejects malformed/nonfinite/out-of-range records and constructs only fixed project
+errors. No raw exception, provider body, cookie/header value, session identifier or signed URL
+is logged. Offline HTTP 401/403, 429 with cooldown, 503, disconnect and login redirect scenarios
+exercise this actual CLI path with one provider attempt; the original authorization and
+worker-owned retry policy remain unchanged.
+
+RC15 is not rewritten. RC16 requires a separate validated tag/image and transactional rollout.
+Successful query data is not successful Story download or Telegram delivery; final live
+availability and delivery must be reported from the deployed release, not inferred here.
+
+
 ## Scope and production evidence
 
 Investigated local `1.4.0-rc.14` and production job `2AMIcSr54b9YMwMI_SNLLJ7M` for
