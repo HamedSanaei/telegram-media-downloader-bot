@@ -1,6 +1,21 @@
 # Project status
 
-Last updated: 2026-10-20
+Last updated: 2026-10-23
+
+## Scheduled CI dependency security refresh (2026-10-23)
+
+- Scheduled run `39916717831` failed only in the live dependency audit (38 advisory entries);
+  quality, packaging, Docker and updater/installer lanes passed on unchanged commit `be09c8c`.
+- Refresh certifi to `2026.10.19`, Pillow to `13.0.0`, and virtualenv to `21.14.9`.
+  The latter requires packaging `>=26.3`, so the lock also advances packaging to `26.3`.
+  Pillow's requirement becomes `>=13.0,<14`; image validation and RGB/font chart APIs remain
+  unchanged. Download-engine versions and production configuration are not modified.
+- Add offline lockfile security-floor regression tests, retaining the live fail-closed pip-audit
+  gate and daily full validation. Windows and exact Linux CI audits report no known
+  vulnerabilities; all 23 focused tests pass. Full non-contract suites pass on Windows
+  (1,883 passed, 83.19% coverage) and WSL (1,890 passed, 83.29% coverage), as do the
+  frozen Docker build, chart smokes and clean package install. See the
+  [validation report](tasks/2026-10-23-ci-security-refresh.md) for final checks and scope.
 
 ## RC16 production activation and live Instagram validation (2026-10-20)
 

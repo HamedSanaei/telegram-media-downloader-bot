@@ -11,7 +11,7 @@ dependencies = [
   "aiogram>=3.20,<4",
   "arq>=0.27,<1",
   "gallery-dl==1.32.17",
-  "Pillow>=12.3,<13",
+  "Pillow>=13.0,<14",
   "pydantic>=2.11,<3",
   "PyYAML>=6.0.2,<7",
   "redis>=5.2,<7",
