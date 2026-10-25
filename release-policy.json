@@ -1,5 +1,9 @@
 {
   "blocked_releases": {
+    "1.4.0-rc.17": {
+      "reason": "Published container failed the package-version smoke test; no completed GitHub release exists.",
+      "replacement": "1.4.0-rc.18"
+    },
     "1.3.7": {
       "reason": "Critical Telegram durable-polling crash bug.",
       "replacement": "1.3.8"

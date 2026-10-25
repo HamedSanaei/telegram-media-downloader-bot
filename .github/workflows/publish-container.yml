@@ -47,6 +47,9 @@ jobs:
           version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
           if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", tag):
               raise SystemExit(f"Release tag is not valid SemVer: {tag}")
+          runtime_init = Path("src/telegram_media_bot/__init__.py").read_text(encoding="utf-8")
+          if f'__version__ = "{version}"' not in runtime_init:
+              raise SystemExit(f"Runtime __version__ must match package version {version}")
           if tag != f"v{version}":
               raise SystemExit(f"Tag {tag} does not match pyproject.toml version {version}")
           PY
