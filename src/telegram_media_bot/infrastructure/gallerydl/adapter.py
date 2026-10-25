@@ -93,6 +93,10 @@ class GalleryDlEngine:
             reject_private_networks=settings.security.reject_private_network_urls
         )
         self._zip = OrderedZipBuilder()
+        # A readiness check runs every 30s. Avoid re-spawning Python/gallery-dl
+        # for every probe while still rechecking failed results promptly.
+        self._health_lock = threading.Lock()
+        self._health_cache: tuple[float, ComponentHealth] | None = None
 
     @staticmethod
     def owns_mode(mode: DownloadMode) -> bool:
@@ -421,16 +425,26 @@ class GalleryDlEngine:
     def health(self) -> ComponentHealth:
         if not self._settings.gallery_dl.enabled:
             return ComponentHealth("gallery_dl", True, "disabled")
-        try:
-            result = self._runner.run(self._commands.version(), timeout_seconds=10)
-        except Exception as exc:
-            return ComponentHealth("gallery_dl", False, type(exc).__name__)
-        version = result.stdout.decode("utf-8", errors="replace").strip()
-        return ComponentHealth(
-            "gallery_dl",
-            result.return_code == 0 and version == GALLERY_DL_VERSION,
-            version,
-        )
+        with self._health_lock:
+            now = monotonic()
+            if self._health_cache is not None and now < self._health_cache[0]:
+                return self._health_cache[1]
+            try:
+                result = self._runner.run(self._commands.version(), timeout_seconds=10)
+            except Exception as exc:
+                health = ComponentHealth("gallery_dl", False, type(exc).__name__)
+            else:
+                version = result.stdout.decode("utf-8", errors="replace").strip()
+                health = ComponentHealth(
+                    "gallery_dl",
+                    result.return_code == 0 and version == GALLERY_DL_VERSION,
+                    version,
+                )
+            # Healthy immutable package versions rarely change at runtime. Failed
+            # checks expire faster so readiness recovers without a restart.
+            ttl_seconds = 300 if health.healthy else 30
+            self._health_cache = (monotonic() + ttl_seconds, health)
+            return health
 
     def _check_known_size(self, inspection: GalleryInspection, *, collection: bool = False) -> None:
         known = [asset.size_bytes for asset in inspection.assets]
