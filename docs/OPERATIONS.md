@@ -197,6 +197,12 @@ FFmpeg JSON logs report PID, exit code, configured threads, elapsed/processed du
 approximate percentage, and current output size. Cancellation terminates the FFmpeg process group;
 the worker-level concurrency gate and optional `TMB_WORKER_CPUS` quota protect shared hosts.
 
+The worker's Docker healthcheck uses curl against loopback `/ready`. On existing installations,
+check whether `docker-compose.override.yml` still replaces `services.worker.healthcheck.test`
+with the legacy Python command. Migrate that key only when rolling out the matching new base
+Compose file and image; retain operator timing/resource settings. See
+[worker healthcheck rollout and rollback](tasks/2026-11-03-worker-healthcheck.md).
+
 ## Telegram administration
 
 Personal Instagram connection requires its own explicitly provisioned HTTPS companion; admin IDs

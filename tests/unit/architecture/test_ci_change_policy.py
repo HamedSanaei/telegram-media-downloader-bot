@@ -85,6 +85,12 @@ def test_compose_change_activates_docker_and_updater() -> None:
     assert _lanes(p)["updater"] is True
 
 
+def test_worker_healthcheck_fixture_change_activates_docker_smoke() -> None:
+    lanes = _lanes(classify_paths(["scripts/tests/worker_healthcheck_probe.py"]))
+    assert lanes["docker"] is True
+    assert lanes["conservative"] is False
+
+
 def test_uv_lock_change_activates_dependency_and_package() -> None:
     lanes = _lanes(classify_paths(["uv.lock"]))
     assert lanes["dependency"] is True

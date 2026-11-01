@@ -103,6 +103,7 @@ def test_rendered_compose_config_assigns_unless_stopped_to_all_services() -> Non
     services = json.loads(rendered.stdout)["services"]
     for service_name in ("bot", "worker", "local-api", "redis"):
         assert services[service_name]["restart"] == "unless-stopped"
+    assert services["worker"]["healthcheck"]["test"][:2] == ["CMD", "curl"]
 
 
 def test_config_path_is_explicit_and_local_api_secrets_are_not_in_container_files() -> None:
@@ -117,6 +118,70 @@ def test_config_path_is_explicit_and_local_api_secrets_are_not_in_container_file
     for forbidden in ("api_hash", "api_id", "bot_token"):
         assert forbidden not in compose_text.casefold()
         assert forbidden not in dockerfile_text.casefold()
+
+
+def test_worker_compose_matches_the_image_readiness_probe() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+    instruction = dockerfile.split("HEALTHCHECK ", maxsplit=1)[1].splitlines()[1].strip()
+    assert instruction.startswith("CMD [")
+    probe = json.loads(instruction.removeprefix("CMD "))
+    assert probe == [
+        "curl",
+        "--disable",
+        "--noproxy",
+        "*",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "3",
+        "--output",
+        "/dev/null",
+        "http://127.0.0.1:8080/ready",
+    ]
+    assert compose["services"]["worker"]["healthcheck"] == {
+        "test": ["CMD", *probe],
+        "interval": "30s",
+        "timeout": "5s",
+        "start_period": "20s",
+        "retries": 3,
+    }
+    assert "apt-get install -y --no-install-recommends ca-certificates curl " in dockerfile
+
+
+def test_worker_inherits_curl_with_operator_timing_override(tmp_path: Path) -> None:
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not installed")
+
+    # A local override should preserve policy knobs, not replace the probe command.
+    override = tmp_path / "docker-compose.override.yml"
+    override.write_text(
+        "services:\n  worker:\n    cpus: 1.5\n    healthcheck:\n      timeout: 15s\n",
+        encoding="utf-8",
+    )
+    rendered = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            "docker-compose.yml",
+            "-f",
+            str(override),
+            "config",
+            "--format",
+            "json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    worker = json.loads(rendered.stdout)["services"]["worker"]
+    base = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+    assert worker["healthcheck"]["test"] == base["services"]["worker"]["healthcheck"]["test"]
+    assert worker["healthcheck"]["test"][:2] == ["CMD", "curl"]
+    assert worker["healthcheck"]["timeout"] == "15s"
+    assert float(worker["cpus"]) == 1.5
 
 
 TELEGRAM_BOT_API_IMAGE = "ghcr.io/hamedsanaei/telegram-bot-api"
@@ -254,6 +319,10 @@ def test_ci_builds_and_smoke_tests_runtime_with_shared_buildkit_cache() -> None:
         for run in runs
     )
     assert any("native_selection_smoke" in run for run in runs)
+    assert any(
+        ".Config.Healthcheck.Test" in run and "scripts/tests/worker_healthcheck_probe.py" in run
+        for run in runs
+    )
     assert any("native_ui_smoke" in run for run in runs)
     assert any("gallery_dl --config-ignore --version" in run for run in runs)
     assert any("infrastructure.gallerydl.smoke" in run for run in runs)

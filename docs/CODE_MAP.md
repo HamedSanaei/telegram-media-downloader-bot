@@ -2,6 +2,7 @@
 
 | Path | Responsibility |
 |---|---|
+| `Dockerfile`, `docker-compose.yml`, `scripts/tests/worker_healthcheck_probe.py` | Lightweight worker `/ready` probe; runtime-image failure/recovery smoke and optional cgroup CPU benchmark |
 | `tests/unit/architecture/test_dependency_security.py` | Offline regression checks for reviewed certifi/Pillow/virtualenv lockfile security floors and the supported Pillow major; complements, never replaces, live CI pip-audit |
 | `src/telegram_media_bot/domain/` | Stable models, enums, identifiers, exceptions, `best_original` native-only normalization, and transient operation-bound `MediaInspection` reuse with URL/credential/collection-bound checks |
 | `src/telegram_media_bot/domain/failures.py` | Typed structured `FailureContext` (adapter/extractor/source/fallback/HTTP status/retry history/stage/etc.) that survives to the terminal admin notification; bounded `FailureStage`; size-bounded Persian rendering that omits absent fields |

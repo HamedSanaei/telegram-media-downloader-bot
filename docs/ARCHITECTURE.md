@@ -354,7 +354,10 @@ elapsed-time heartbeats. Each successful multipart receipt is persisted before t
 
 The worker exposes internal-only `/health`, `/ready`, and Prometheus `/metrics` endpoints. Readiness
 covers Redis, SQLite, writable storage, Telegram, ffmpeg, and the engine. Compose does not publish
-the port to the host by default; the worker container health check consumes it internally.
+the port to the host by default; the worker container health check consumes it internally with
+exec-form curl, without launching Python or using an HTTP proxy. The endpoint is unchanged:
+critical dependency checks are live, except for the existing gallery-dl version probe cache
+(five minutes for success, 30 seconds for failure).
 
 Linux release updates run from an isolated script copy. While the current stack is still available,
 they download and checksum the source assets, validate the complete staged Bash/Compose/config

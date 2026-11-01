@@ -1,6 +1,16 @@
 # Project status
 
-Last updated: 2026-10-23
+Last updated: 2026-11-03
+
+## Lightweight Docker worker readiness probe (2026-11-03)
+
+- Replace periodic Python HTTP client startup with unprivileged exec-form curl against the same
+  loopback `/ready` endpoint. Preserve worker health policy and the existing gallery-dl cache.
+- Test the built image against success, unready, recovery, timeout and refusal, plus effective
+  Compose override inheritance. No worker CPU or concurrency defaults change.
+- Production overrides remain operator-owned; see the
+  [benchmark and rollout/rollback runbook](tasks/2026-11-03-worker-healthcheck.md).
+  Production has not been restarted or deployed.
 
 ## Scheduled CI dependency security refresh (2026-10-23)
 

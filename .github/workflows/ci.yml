@@ -243,6 +243,11 @@ jobs:
           touch usage-chart-artifacts/cookies.txt
           chmod 0644 usage-chart-artifacts/cookies.txt
           docker run --rm telegram-media-downloader-bot:ci telegram-media-bot --help
+          probe="$(docker image inspect --format '{{json .Config.Healthcheck.Test}}' telegram-media-downloader-bot:ci)"
+          docker run --rm -i --network none --read-only \
+            -e http_proxy=http://127.0.0.1:1 -e no_proxy= \
+            telegram-media-downloader-bot:ci python - "$probe" \
+            < scripts/tests/worker_healthcheck_probe.py
           docker run --rm telegram-media-downloader-bot:ci sh -c \
             'test "$(python -m gallery_dl --config-ignore --version)" = "1.32.17"'
           docker run --rm telegram-media-downloader-bot:ci \

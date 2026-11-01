@@ -122,6 +122,7 @@ _WORKFLOW_TOP_FILES = (
 )
 _DOCKER_TOP_FILES = (
     "Dockerfile",
+    "scripts/tests/worker_healthcheck_probe.py",
     ".dockerignore",
     "docker-compose.yml",
     "docker-compose.yaml",

@@ -22,7 +22,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates ffmpeg 7zip tini \
+    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg 7zip tini \
     && rm -rf /var/lib/apt/lists/* \
     && if command -v 7zz >/dev/null 2>&1; then \
          ln -sfn "$(command -v 7zz)" /usr/local/bin/7z; \
@@ -55,6 +55,6 @@ RUN groupadd --gid "${APP_GID}" appuser \
 
 USER appuser
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=3)" || exit 1
+    CMD ["curl", "--disable", "--noproxy", "*", "--fail", "--silent", "--show-error", "--max-time", "3", "--output", "/dev/null", "http://127.0.0.1:8080/ready"]
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["telegram-media-bot", "bot", "--config", "/app/config.yaml"]
