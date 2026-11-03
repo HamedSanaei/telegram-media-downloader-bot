@@ -130,6 +130,10 @@ configuration, `.env`, SQLite/WAL/SHM state, cookies, and other Local API state.
 atomically published, and partial files are deleted; Redis continues in its persistent Compose
 volume.
 
+Release v1.4.0-rc.17 is also withdrawn: its image failed the package-version smoke test.
+Use v1.4.0-rc.18 for that release line. This block applies to explicit requests and
+to aliases whose verified archive identifies itself as RC17.
+
 Release v1.3.7 is withdrawn and is not a valid install, update, or rollback target. The standalone
 installers/updaters reject both `v1.3.7`/`1.3.7` requests and any checksummed candidate archive whose
 package version is `1.3.7`. Requested-target rejection precedes network access; candidate rejection

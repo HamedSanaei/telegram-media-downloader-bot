@@ -11,7 +11,7 @@ IMAGE_REPOSITORY="ghcr.io/hamedsanaei/telegram-media-downloader-bot"
 [[ -n "${TMB_IMAGE_REPOSITORY:-}" ]] && IMAGE_REPOSITORY="$TMB_IMAGE_REPOSITORY"
 TMB_BIN_DIR="${TMB_BIN_DIR:-/usr/local/bin}"
 # Standalone bootstrap snapshot; tests enforce parity with release-policy.json.
-readonly -a BLOCKED_RELEASE_VERSIONS=("1.3.7")
+readonly -a BLOCKED_RELEASE_VERSIONS=("1.3.7" "1.4.0-rc.17")
 INSTALL_TEMPORARY_DIRECTORY=""
 INSTALL_STAGING_DIRECTORY=""
 INSTALL_RELEASE_VERSION=""
@@ -22,7 +22,11 @@ assert_release_allowed() {
   normalized="${version#v}"
   for blocked in "${BLOCKED_RELEASE_VERSIONS[@]}"; do
     if [[ "$normalized" == "$blocked" ]]; then
-      echo "Release $normalized is blocked because it contains a critical Telegram durable-polling crash bug. Use v1.3.8 or newer instead." >&2
+      if [[ "$normalized" == "1.4.0-rc.17" ]]; then
+        echo "Release $normalized is blocked: its published container failed the package-version smoke test. Use v1.4.0-rc.18 instead." >&2
+      else
+        echo "Release $normalized is blocked because it contains a critical Telegram durable-polling crash bug. Use v1.3.8 or newer instead." >&2
+      fi
       return 1
     fi
   done

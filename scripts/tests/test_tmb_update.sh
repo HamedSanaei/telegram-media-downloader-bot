@@ -925,6 +925,7 @@ run_cleanup_dry_run_case() {
 
 run_blocked_updater_requested_case() {
   local requested_tag="$1" case_name="${1#v}"
+  local expected_guidance="${2:-critical Telegram durable-polling crash bug}"
   local case_root="$TEST_ROOT/blocked-updater-requested-$case_name"
   local log="$case_root/operations.log" output="$case_root/update-output.log"
   prepare_case "$case_root"
@@ -944,7 +945,7 @@ run_blocked_updater_requested_case() {
   ) >"$output" 2>&1; then
     fail "requested blocked updater tag $requested_tag unexpectedly succeeded"
   fi
-  grep -q 'critical Telegram durable-polling crash bug' "$output" \
+  grep -Fq "$expected_guidance" "$output" \
     || fail "requested blocked updater tag $requested_tag lacked guidance"
   [[ ! -s "$log" ]] \
     || fail "requested blocked updater tag $requested_tag performed an external operation"
@@ -963,7 +964,8 @@ run_blocked_updater_requested_case() {
 }
 
 run_blocked_updater_candidate_case() {
-  local case_root="$TEST_ROOT/blocked-updater-candidate"
+  local version="${1:-1.3.7}" expected_guidance="${2:-critical Telegram durable-polling crash bug}"
+  local case_root="$TEST_ROOT/blocked-updater-candidate-$version"
   local log="$case_root/operations.log" output="$case_root/update-output.log"
   prepare_case "$case_root"
   cp "$case_root/.env" "$case_root/.env.expected"
@@ -977,11 +979,11 @@ run_blocked_updater_candidate_case() {
     PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
       TMB_BIN_DIR="$case_root/bin" TMB_CASE_ROOT="$case_root" \
       TMB_SOURCE_ROOT="$SOURCE_ROOT" TMB_RELEASE_TAG="candidate-alias" \
-      TMB_TEST_RELEASE_VERSION="1.3.7" bash scripts/tmb.sh update
+      TMB_TEST_RELEASE_VERSION="$version" bash scripts/tmb.sh update
   ) >"$output" 2>&1; then
     fail "blocked updater candidate version unexpectedly succeeded"
   fi
-  grep -q 'critical Telegram durable-polling crash bug' "$output" \
+  grep -Fq "$expected_guidance" "$output" \
     || fail "blocked updater candidate version lacked guidance"
   if grep -Eq 'docker .* (stop|pull|up|run) |^tar -czf' "$log"; then
     fail "blocked updater candidate reached image, backup, or service operations"
@@ -1002,6 +1004,7 @@ run_blocked_updater_candidate_case() {
 
 run_blocked_installer_requested_case() {
   local requested_tag="$1" case_name="${1#v}"
+  local expected_guidance="${2:-critical Telegram durable-polling crash bug}"
   local case_root="$TEST_ROOT/blocked-installer-requested-$case_name"
   local log="$case_root/operations.log" output="$case_root/install-output.log"
   prepare_case "$case_root"
@@ -1012,14 +1015,15 @@ run_blocked_installer_requested_case() {
     bash "$SOURCE_ROOT/install.sh" >"$output" 2>&1; then
     fail "requested blocked installer tag $requested_tag unexpectedly succeeded"
   fi
-  grep -q 'critical Telegram durable-polling crash bug' "$output" \
+  grep -Fq "$expected_guidance" "$output" \
     || fail "requested blocked installer tag $requested_tag lacked guidance"
   [[ ! -s "$log" ]] \
     || fail "requested blocked installer tag $requested_tag performed an external operation"
 }
 
 run_blocked_installer_candidate_case() {
-  local case_root="$TEST_ROOT/blocked-installer-candidate"
+  local version="${1:-1.3.7}" expected_guidance="${2:-critical Telegram durable-polling crash bug}"
+  local case_root="$TEST_ROOT/blocked-installer-candidate-$version"
   local log="$case_root/operations.log" output="$case_root/install-output.log"
   local install_root="$case_root/fresh-install"
   prepare_case "$case_root"
@@ -1032,12 +1036,12 @@ EOF
   if printf '%s\n\n' "$install_root" | \
     PATH="$case_root/fake-bin:$PATH" TMB_TEST_LOG="$log" \
       TMB_CASE_ROOT="$case_root" TMB_SOURCE_ROOT="$SOURCE_ROOT" \
-      TMB_RELEASE_TAG="candidate-alias" TMB_TEST_RELEASE_VERSION="1.3.7" \
+      TMB_RELEASE_TAG="candidate-alias" TMB_TEST_RELEASE_VERSION="$version" \
       TMB_BIN_DIR="$case_root/bin" bash "$SOURCE_ROOT/install.sh" \
       >"$output" 2>&1; then
     fail "blocked installer candidate version unexpectedly succeeded"
   fi
-  grep -q 'critical Telegram durable-polling crash bug' "$output" \
+  grep -Fq "$expected_guidance" "$output" \
     || fail "blocked installer candidate version lacked guidance"
   [[ ! -e "$install_root" ]] \
     || fail "blocked installer candidate created the application path"
@@ -1097,6 +1101,10 @@ run_blocked_updater_candidate_case
 run_blocked_installer_requested_case "v1.3.7"
 run_blocked_installer_requested_case "1.3.7"
 run_blocked_installer_candidate_case
+run_blocked_updater_requested_case "v1.4.0-rc.17" "Use v1.4.0-rc.18 instead."
+run_blocked_updater_candidate_case "1.4.0-rc.17" "Use v1.4.0-rc.18 instead."
+run_blocked_installer_requested_case "v1.4.0-rc.17" "Use v1.4.0-rc.18 instead."
+run_blocked_installer_candidate_case "1.4.0-rc.17" "Use v1.4.0-rc.18 instead."
 IMAGE_REPOSITORY_PLACEHOLDER="example.invalid/tmb"
 run_allowed_forward_update_case "1.3.7" "1.3.8"
 run_allowed_forward_update_case "1.3.8" "1.3.9"
