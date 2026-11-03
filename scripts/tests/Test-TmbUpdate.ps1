@@ -18,7 +18,8 @@ function Invoke-UpdateCase {
         [string]$InstalledVersion = "1.0.2",
         [string]$CandidateVersion = "1.0.3",
         [string]$RequestedTag = "",
-        [bool]$ExpectBlocked = $false
+        [bool]$ExpectBlocked = $false,
+        [string]$ExpectedGuidance = "critical Telegram durable-polling crash bug"
     )
     $CaseRoot = Join-Path $TestRoot $Name
     $ScriptDirectory = Join-Path $CaseRoot "scripts"
@@ -262,7 +263,7 @@ telegram:
             )) -match "local-api-v1-state"
         ) "preflight failure changed durable Local API state"
         if ($ExpectBlocked) {
-            Assert-True ($CaughtMessage -match "critical Telegram durable-polling crash bug") `
+            Assert-True ($CaughtMessage -match [regex]::Escape($ExpectedGuidance)) `
                 "blocked release lacked clear operator guidance"
         }
         return
@@ -336,7 +337,8 @@ function Invoke-InstallerBlockedCase {
     param(
         [string]$Name,
         [string]$RequestedTag,
-        [string]$CandidateVersion = "1.0.3"
+        [string]$CandidateVersion = "1.0.3",
+        [string]$ExpectedGuidance = "critical Telegram durable-polling crash bug"
     )
     $CaseRoot = Join-Path $TestRoot $Name
     $OperationLog = Join-Path $CaseRoot "operations.log"
@@ -411,7 +413,7 @@ function Invoke-InstallerBlockedCase {
         $env:TMB_RELEASE_TAG = $PreviousRequestedTag
     }
 
-    Assert-True ($CaughtMessage -match "critical Telegram durable-polling crash bug") `
+    Assert-True ($CaughtMessage -match [regex]::Escape($ExpectedGuidance)) `
         "blocked installer release lacked clear operator guidance"
     $InstallRoot = Join-Path $CaseRoot "local-app-data/TelegramMediaDownloaderBot"
     Assert-True (-not (Test-Path -LiteralPath $InstallRoot)) `
@@ -442,6 +444,17 @@ try {
         -RequestedTag "1.3.7"
     Invoke-InstallerBlockedCase -Name "installer-blocked-candidate" `
         -RequestedTag "candidate-alias" -CandidateVersion "1.3.7"
+    $Rc17Guidance = "Use v1.4.0-rc.18 instead."
+    Invoke-UpdateCase -Name "blocked-rc17-tag" -FailChecksum $false `
+        -RequestedTag "v1.4.0-rc.17" -ExpectBlocked $true -ExpectedGuidance $Rc17Guidance
+    Invoke-UpdateCase -Name "blocked-rc17-alias" -FailChecksum $false `
+        -RequestedTag "candidate-alias" -CandidateVersion "1.4.0-rc.17" `
+        -ExpectBlocked $true -ExpectedGuidance $Rc17Guidance
+    Invoke-InstallerBlockedCase -Name "installer-blocked-rc17-tag" `
+        -RequestedTag "v1.4.0-rc.17" -ExpectedGuidance $Rc17Guidance
+    Invoke-InstallerBlockedCase -Name "installer-blocked-rc17-alias" `
+        -RequestedTag "candidate-alias" -CandidateVersion "1.4.0-rc.17" `
+        -ExpectedGuidance $Rc17Guidance
     Invoke-UpdateCase -Name "allowed-1.3.7-to-1.3.8" -FailChecksum $false `
         -InstalledVersion "1.3.7" -CandidateVersion "1.3.8" -RequestedTag "v1.3.8"
     Invoke-UpdateCase -Name "allowed-1.3.8-to-1.3.9" -FailChecksum $false `

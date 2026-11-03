@@ -18,18 +18,20 @@ load_release_policy = _POLICY_MODULE.load_release_policy
 normalize_release_version = _POLICY_MODULE.normalize_release_version
 
 
-def test_withdrawn_release_policy_blocks_only_1_3_7() -> None:
+def test_withdrawn_release_policy_blocks_1_3_7_and_rc17() -> None:
     policy = load_release_policy()
 
     assert normalize_release_version("v1.3.7") == "1.3.7"
     assert blocked_release("1.3.7", policy) is not None
     assert blocked_release("v1.3.7", policy) is not None
-    for allowed in ("1.3.6", "v1.3.8", "1.3.9", "v2.0.0"):
+    for allowed in ("1.3.6", "v1.3.8", "1.3.9", "v1.4.0-rc.18", "v2.0.0"):
         assert blocked_release(allowed, policy) is None
         assert_release_allowed(allowed, policy)
 
     with pytest.raises(ValueError, match=r"Release 1\.3\.7 is blocked"):
         assert_release_allowed("v1.3.7", policy)
+    with pytest.raises(ValueError, match=r"Release 1\.4\.0-rc\.17 is blocked: .*v1\.4\.0-rc\.18"):
+        assert_release_allowed("v1.4.0-rc.17", policy)
 
 
 def test_standalone_bootstrap_policy_snapshots_match_canonical_policy() -> None:

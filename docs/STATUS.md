@@ -12,6 +12,14 @@ Last updated: 2026-11-03
   [benchmark and rollout/rollback runbook](tasks/2026-11-03-worker-healthcheck.md).
   Production has not been restarted or deployed.
 
+## CI baseline repair (2026-11-03)
+
+- Sync the four standalone installer/updater denylist snapshots with the existing RC17
+  withdrawal; keep RC18 available and test both explicit tags and package-version aliases.
+- Upgrade only the locked audit dependency `msgpack` to 1.2.3 for CVE-2026-114613.
+  No audit exclusions, runtime version bump or deployment. See the
+  [repair report](tasks/2026-11-03-ci-baseline-repair.md).
+
 ## Scheduled CI dependency security refresh (2026-10-23)
 
 - Scheduled run `39916717831` failed only in the live dependency audit (38 advisory entries);

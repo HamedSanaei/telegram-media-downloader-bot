@@ -11,7 +11,7 @@ $ReleaseRoot = "https://github.com/HamedSanaei/telegram-media-downloader-bot/rel
 $ArchiveName = "telegram-media-downloader-bot.zip"
 $ImageRepository = "ghcr.io/hamedsanaei/telegram-media-downloader-bot"
 # Standalone bootstrap snapshot; tests enforce parity with release-policy.json.
-$BlockedReleaseVersions = @("1.3.7")
+$BlockedReleaseVersions = @("1.3.7", "1.4.0-rc.17")
 Set-Location $RootDirectory
 
 function Assert-ReleaseAllowed {
@@ -25,6 +25,9 @@ function Assert-ReleaseAllowed {
     }
     foreach ($Blocked in $BlockedReleaseVersions) {
         if ([string]::Equals($Normalized, $Blocked, [System.StringComparison]::Ordinal)) {
+            if ($Normalized -eq "1.4.0-rc.17") {
+                throw "Release $Normalized is blocked: its published container failed the package-version smoke test. Use v1.4.0-rc.18 instead."
+            }
             throw "Release $Normalized is blocked because it contains a critical Telegram durable-polling crash bug. Use v1.3.8 or newer instead."
         }
     }

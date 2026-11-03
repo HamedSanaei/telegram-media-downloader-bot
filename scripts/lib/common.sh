@@ -30,7 +30,7 @@ PROJECT_SERVICES=(bot worker local-api redis)
 FILESYSTEM_WRITER_SERVICES=(bot worker local-api)
 # Standalone bootstrap snapshot; tests enforce parity with release-policy.json.
 # shellcheck disable=SC2034
-readonly -a BLOCKED_RELEASE_VERSIONS=("1.3.7")
+readonly -a BLOCKED_RELEASE_VERSIONS=("1.3.7" "1.4.0-rc.17")
 cd "$ROOT_DIR" || exit 1
 
 # TTY / confirmation ---------------------------------------------------

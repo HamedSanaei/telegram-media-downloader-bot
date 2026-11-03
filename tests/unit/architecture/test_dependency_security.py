@@ -13,7 +13,12 @@ from packaging.version import Version
 
 @pytest.mark.parametrize(
     ("name", "minimum"),
-    [("certifi", "2026.10.19"), ("pillow", "13.0.0"), ("virtualenv", "21.14.9")],
+    [
+        ("certifi", "2026.10.19"),
+        ("msgpack", "1.2.3"),
+        ("pillow", "13.0.0"),
+        ("virtualenv", "21.14.9"),
+    ],
 )
 def test_lockfile_preserves_reviewed_security_floors(name: str, minimum: str) -> None:
     lock = tomllib.loads(Path("uv.lock").read_text(encoding="utf-8"))
