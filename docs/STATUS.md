@@ -2,6 +2,14 @@
 
 Last updated: 2026-11-03
 
+## v1.3.9 stable release preparation (2026-11-03)
+
+- Package and runtime metadata select 1.3.9 for the current RC18-derived source, including
+  the worker curl readiness probe and the CI baseline repair. No other dependency version
+  changes in release preparation. See [release scope and checks](tasks/2026-11-03-release-1.3.9.md).
+- Publish through the normal tag workflow only after validation. Publication does not deploy
+  to production or change any local Compose override or CPU quota.
+
 ## Lightweight Docker worker readiness probe (2026-11-03)
 
 - Replace periodic Python HTTP client startup with unprivileged exec-form curl against the same

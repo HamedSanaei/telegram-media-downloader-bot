@@ -5,7 +5,7 @@
 > v1.3.8 or newer. An existing v1.3.7 installation remains eligible to update forward to v1.3.8
 > or any later allowed release.
 
-The v1.3 runtime image installs the exact locked `gallery-dl==1.32.8` package and preserves its
+The v1.3.9 runtime image installs the exact locked `gallery-dl==1.32.17` package and preserves its
 GPL-2.0 notice. Upgrading from v1.0.x does not rewrite `config.yaml`, `.env`, SQLite/WAL, Redis,
 cookies, downloads, backups, or Telegram Local Bot API state. A null `gallery_dl.cookies.instagram`
 automatically reuses the deployed `yt_dlp.cookies_file`, as do TikTok, Twitter/X, and Pinterest.

@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.3.9 - 2026-11-03
+
+- Publish the current, validated RC18 code line as a stable release with the subsequent
+  CI baseline repair and worker healthcheck optimization.
+- Use non-root exec-form curl for worker `/ready` probes without changing readiness semantics.
+  Retain the gallery-dl version cache and document how to migrate an operator Compose override.
+- Bring the Instagram, Highlight delivery, personal-session, logger and transactional management
+  improvements from the release candidates to the stable channel.
+- Keep RC17 blocked in both installers and both updaters; use the security-fixed locked
+  audit dependency msgpack 1.2.3.
+
+See the [worker rollout and rollback guide](docs/tasks/2026-11-03-worker-healthcheck.md) before
+upgrading an installation with its own worker healthcheck override. The version number is
+lower than the 1.4.0 release candidates; RC operators should choose their target explicitly.
+
 ## v1.4.0-rc.16 - 2026-10-20
 
 - Supply Instagram's newly required profile-banner GraphQL variable through an isolated external
