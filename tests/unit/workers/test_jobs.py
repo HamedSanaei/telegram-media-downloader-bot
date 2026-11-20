@@ -2432,3 +2432,178 @@ async def test_download_workspace_reset_cannot_delete_the_owner_credential_lease
     assert runtime["repository"].get_job(record.job_id).status is JobStatus.SUCCEEDED
     assert credential_paths
     assert all(not path.parent.exists() for path in credential_paths)
+
+
+@pytest.fixture
+def admission_runtime(private_runtime: dict[str, Any]) -> dict[str, Any]:
+    from telegram_media_bot.application.services.instagram_admission import (
+        InstagramAdmissionService,
+    )
+    from telegram_media_bot.infrastructure.persistence.sqlite_instagram_admission import (
+        SqliteInstagramAdmissionRepository,
+    )
+
+    class Lock:
+        def acquire(self, identity: str, token: str) -> bool:
+            return True
+
+        def release(self, identity: str, token: str) -> None:
+            pass
+
+    store = SqliteInstagramAdmissionRepository(private_runtime["settings"].database_path())
+    store.initialize()
+    private_runtime["instagram_admission"] = InstagramAdmissionService(
+        store, Lock(), spacing_seconds=0
+    )
+    return private_runtime
+
+
+async def test_two_telegram_users_share_operator_circuit(admission_runtime: dict[str, Any]) -> None:
+    from telegram_media_bot.domain.instagram_admission import InstagramAdmissionError
+    from telegram_media_bot.infrastructure.security.instagram_admission import instagram_identity
+    from telegram_media_bot.workers.jobs import _await_credential_attempt
+
+    runtime = admission_runtime
+    provider_calls: list[int] = []
+    for user in (123, 124):
+        record, _ = JobService(runtime["repository"]).create_inspection(
+            chat_id=user, user_id=user, url="https://www.instagram.com/p/shared/"
+        )
+
+        def operation(credential: ResolvedCredential | None, current_user: int = user) -> str:
+            assert (
+                credential is not None and credential.context.kind is CredentialKind.OPERATOR_PUBLIC
+            )
+            identity, kind = instagram_identity(credential, None, None)
+            with runtime["instagram_admission"].operation(identity, kind):
+                provider_calls.append(current_user)
+                raise RateLimitedError("fixture", retry_after_seconds=10000)
+
+        with pytest.raises(InstagramAdmissionError):
+            await _await_credential_attempt(
+                runtime,
+                record,
+                runtime["settings"].storage.downloads_path() / str(record.job_id),
+                operation,
+            )
+    assert provider_calls == [123]
+
+
+@pytest.mark.parametrize("private", [False, True])
+async def test_paused_personal_session_never_switches_to_operator_or_probes_again(
+    admission_runtime: dict[str, Any],
+    private: bool,
+) -> None:
+    from telegram_media_bot.domain.instagram_admission import InstagramAdmissionError
+    from telegram_media_bot.infrastructure.security.instagram_admission import (
+        instagram_identity,
+        personal_instagram_identity,
+    )
+    from telegram_media_bot.workers.jobs import _await_credential_attempt
+
+    runtime = admission_runtime
+    record = (
+        _private_job(runtime, inspect=True)
+        if private
+        else JobService(runtime["repository"]).create_inspection(
+            chat_id=20, user_id=20, url="https://www.instagram.com/p/paused/"
+        )[0]
+    )
+    calls: list[CredentialKind] = []
+
+    def operation(credential: ResolvedCredential | None) -> str:
+        assert credential is not None
+        identity, kind = instagram_identity(credential, None, None)
+        with runtime["instagram_admission"].operation(identity, kind):
+            calls.append(credential.context.kind)
+            raise AuthenticationRequiredError("fixture", diagnostic_category="challenge_required")
+
+    for _ in range(2):
+        with pytest.raises(InstagramAdmissionError):
+            await _await_credential_attempt(
+                runtime,
+                record,
+                runtime["settings"].storage.downloads_path() / str(record.job_id),
+                operation,
+            )
+    assert calls == [CredentialKind.USER_INSTAGRAM]
+    assert not runtime["repository"].get_job(record.job_id).fallback_used
+    # The vault remains owner-bound; the circuit is a separate operational authority.
+    assert runtime["vault"].get_view(20).state is InstagramCredentialState.CONNECTED
+    runtime["vault"].store_session(20, b"new-generation")
+    assert runtime["credential_resolver"].connected_generation(20) == 2
+    identity = personal_instagram_identity(20, 2)
+    with runtime["instagram_admission"].operation(identity, "personal"):
+        pass
+    assert not list(runtime["settings"].storage.downloads_path().rglob("cookies.txt"))
+
+
+async def test_public_fallback_checks_operator_pause_before_any_provider_call(
+    admission_runtime: dict[str, Any],
+) -> None:
+    from telegram_media_bot.domain.errors import CredentialExpiredError
+    from telegram_media_bot.domain.instagram_admission import InstagramAdmissionError
+    from telegram_media_bot.infrastructure.security.instagram_admission import instagram_identity
+    from telegram_media_bot.workers.jobs import _await_credential_attempt
+
+    runtime = admission_runtime
+    admission = runtime["instagram_admission"]
+    identity, kind = instagram_identity(ResolvedCredential.operator_public(), None, None)
+    with pytest.raises(InstagramAdmissionError), admission.operation(identity, kind):
+        raise RateLimitedError("fixture")
+    record, _ = JobService(runtime["repository"]).create_inspection(
+        chat_id=20, user_id=20, url="https://www.instagram.com/p/fallback/"
+    )
+    provider_calls = []
+
+    def operation(credential: ResolvedCredential | None) -> str:
+        assert credential is not None
+        if credential.context.kind is CredentialKind.USER_INSTAGRAM:
+            # A local preflight failure may select fallback, unlike an observed provider circuit.
+            raise CredentialExpiredError("expired before provider")
+        with admission.operation(*instagram_identity(credential, None, None)):
+            provider_calls.append(True)
+        return "media"
+
+    with pytest.raises(InstagramAdmissionError):
+        await _await_credential_attempt(
+            runtime,
+            record,
+            runtime["settings"].storage.downloads_path() / str(record.job_id),
+            operation,
+        )
+    assert not provider_calls
+
+
+def test_operator_attempt_pins_one_handle_across_inspection_and_transfer(
+    admission_runtime: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    from telegram_media_bot.infrastructure.security.instagram_admission import instagram_identity
+    from telegram_media_bot.workers.jobs import _run_operator_attempt
+
+    runtime = admission_runtime
+    source = tmp_path / "canonical.txt"
+    payload = "# Netscape HTTP Cookie File\n.instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\told-session-fixture\n"
+    source.write_text(payload, encoding="utf-8")
+    raw = runtime["settings"].model_dump()
+    raw["yt_dlp"]["cookies_file"] = source
+    runtime["settings"] = Settings.model_validate(raw)
+    paths: list[Path] = []
+
+    def operation(credential: ResolvedCredential | None) -> str:
+        assert credential is not None and credential.materialized_cookie_path is not None
+        path = Path(credential.materialized_cookie_path)
+        paths.append(path)
+        identity = instagram_identity(credential, None, source)
+        source.write_text(
+            payload.replace("old-session-fixture", "new-session-fixture"), encoding="utf-8"
+        )
+        assert instagram_identity(credential, None, source) == identity
+        assert path.read_text(encoding="utf-8") == payload
+        assert instagram_identity(None, None, source) != identity
+        return "downloaded"
+
+    workspace = runtime["settings"].storage.downloads_path() / "job"
+    assert _run_operator_attempt(runtime, workspace, operation) == "downloaded"
+    assert not paths[0].exists()

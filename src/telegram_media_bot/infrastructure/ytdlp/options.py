@@ -204,6 +204,8 @@ class YtDlpOptionsFactory:
             selected_cookie_file = None
         elif credential.context.kind is CredentialKind.USER_INSTAGRAM:
             selected_cookie_file = credential.cookie_override()
+        elif credential.materialized_cookie_path is not None:
+            selected_cookie_file = credential.materialized_cookie_path
         else:
             selected_cookie_file = self._settings.effective_cookie_file()
         if selected_cookie_file:

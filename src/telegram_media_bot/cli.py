@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import shutil
 import signal
@@ -9,6 +10,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import asdict
 from datetime import UTC, datetime
 from enum import StrEnum
 from getpass import getpass
@@ -23,6 +25,7 @@ from arq.worker import run_worker
 from telegram_media_bot.bootstrap.config import Settings, default_config_path, load_settings
 from telegram_media_bot.bootstrap.logging import configure_logging
 from telegram_media_bot.domain.errors import ConfigurationError, DeliveryError, LocalBotApiError
+from telegram_media_bot.domain.instagram_admission import InstagramAdmissionError
 from telegram_media_bot.infrastructure.archive.multipart_zip import resolve_seven_zip
 from telegram_media_bot.infrastructure.persistence.sqlite_repository import SqliteJobRepository
 from telegram_media_bot.infrastructure.storage.workspace import sweep_workspaces
@@ -62,6 +65,25 @@ def build_parser() -> argparse.ArgumentParser:
     instagram_setup.add_argument("--public-base-url", help="Operator-owned HTTPS origin, no path")
     instagram_setup.add_argument(
         "--check", action="store_true", help="Configuration-only check; never logs in"
+    )
+    admission_status = subparsers.add_parser(
+        "instagram-admission-status",
+        help="Show secret-free credential pauses, budgets and admission waiters",
+    )
+    admission_status.add_argument("--config", type=Path, default=None)
+    admission_review = subparsers.add_parser(
+        "instagram-admission-review",
+        help="Explicitly resume a reviewed Instagram session; preserves quotas",
+    )
+    admission_review.add_argument("--config", type=Path, default=None)
+    admission_review.add_argument(
+        "identity", help="Opaque identity from instagram-admission-status"
+    )
+    admission_review.add_argument(
+        "--workers-stopped",
+        action="store_true",
+        required=True,
+        help="Confirm all workers are stopped before clearing an interrupted operation",
     )
 
     config_check = subparsers.add_parser("config-check", help="Validate configuration")
@@ -244,6 +266,67 @@ def main() -> None:
             from telegram_media_bot.workers.settings import WorkerSettings
 
             run_worker(WorkerSettings)
+        elif args.command in {"instagram-admission-status", "instagram-admission-review"}:
+            from telegram_media_bot.infrastructure.persistence.sqlite_instagram_admission import (
+                SqliteInstagramAdmissionRepository,
+            )
+
+            settings = load_settings(args.config, require_token=False)
+            store = SqliteInstagramAdmissionRepository(settings.database_path())
+            store.initialize()
+            now = datetime.now(UTC).timestamp()
+            if args.command == "instagram-admission-status":
+                from telegram_media_bot.infrastructure.security.instagram_admission import (
+                    instagram_identity,
+                )
+
+                try:
+                    operator_identity: str | None = instagram_identity(
+                        None, None, settings.effective_cookie_file()
+                    )[0]
+                    identity_state = "available"
+                except InstagramAdmissionError:
+                    operator_identity = None
+                    identity_state = "credential_identity_unavailable"
+                print(
+                    json.dumps(
+                        {
+                            "current_operator_identity": operator_identity,
+                            "identity_state": identity_state,
+                            "credentials": [
+                                asdict(s)
+                                for s in store.snapshot(
+                                    now=now,
+                                    burst_window=settings.media.instagram.admission.burst_window_seconds,
+                                )
+                            ],
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            else:
+                from telegram_media_bot.infrastructure.security.instagram_admission import (
+                    RedisInstagramPermitLock,
+                )
+
+                states = store.snapshot(
+                    now=now, burst_window=settings.media.instagram.admission.burst_window_seconds
+                )
+                selected = next(
+                    (state for state in states if state.identity == args.identity), None
+                )
+                if selected is None or (
+                    selected.pause_until is not None and selected.pause_until > now
+                ):
+                    raise InstagramAdmissionError("review_refused")
+                lock = RedisInstagramPermitLock.create(settings.redis.url)
+                try:
+                    lock.clear_reviewed(args.identity)
+                finally:
+                    lock.close()
+                if not store.review(args.identity, now=now, clear_interrupted=True):
+                    raise InstagramAdmissionError("review_refused")
+                print("Reviewed session resumed; historical quotas retained.")
         elif args.command == "instagram-setup":
             from telegram_media_bot.bootstrap.instagram import instagram_connection_issues
             from telegram_media_bot.bootstrap.instagram_setup import (
@@ -358,7 +441,7 @@ def main() -> None:
                     bool(getattr(args, "yes", False)),
                 )
             )
-    except (ConfigurationError, DeliveryError, LocalBotApiError) as exc:
+    except (ConfigurationError, DeliveryError, LocalBotApiError, InstagramAdmissionError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 

@@ -1,6 +1,19 @@
 # Project status
 
-Last updated: 2026-11-03
+Last updated: 2026-11-20
+
+## Credential-wide Instagram admission (2026-11-20)
+
+- Add one distributed permit and conservative rolling budgets per shared operator session or
+  personal owner/generation, across gallery-dl, yt-dlp, Stories, Highlights and retry/fallback.
+  SQLite/WAL persists quota charges and circuits; Redis loss cannot reset protection.
+- Pause account-wide after 429/Retry-After or challenge/reauthentication, with no provider-error
+  account fallback. Preserve private authorization, same-operation inspection reuse and read-only
+  cookies; pin shared-cookie snapshots during concurrent administrator replacement.
+- Add sanitized status/review CLI, metrics/Logger visibility, offline multi-process regression
+  coverage and [incident response](INSTAGRAM_SESSION_SAFETY.md). See
+  [implementation and validation](tasks/2026-11-20-instagram-session-admission.md).
+  No production deployment or live account stress test is part of this change.
 
 ## v1.3.9 stable release preparation (2026-11-03)
 

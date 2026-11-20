@@ -206,12 +206,13 @@ def test_process_failures_have_evidence_based_non_secret_diagnostics(
 
 
 @pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
-def test_retry_after_delta_is_retained_only_for_transient_errors(status: int) -> None:
+def test_retry_after_delta_is_retained_without_making_access_denial_retryable(status: int) -> None:
     error = map_process_failure(1, f"HTTP {status}\nRetry-After: 125".encode())
     assert error.retry_after_seconds == 125
     assert error.retryable
     denied = map_process_failure(1, b"HTTP 403\nRetry-After: 125")
-    assert denied.retry_after_seconds is None
+    assert denied.retry_after_seconds == 125
+    assert not denied.retryable
     assert not denied.retryable
 
 

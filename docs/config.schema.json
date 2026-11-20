@@ -422,6 +422,9 @@
           "minimum": 1,
           "title": "Max Highlight Items",
           "type": "integer"
+        },
+        "admission": {
+          "$ref": "#/$defs/InstagramAdmissionSection"
         }
       },
       "title": "InstagramSection",
@@ -1617,6 +1620,55 @@
         }
       },
       "title": "YtDlpSection",
+      "type": "object"
+    },
+    "InstagramAdmissionSection": {
+      "additionalProperties": false,
+      "properties": {
+        "min_spacing_seconds": {
+          "default": 30,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Min Spacing Seconds",
+          "type": "integer"
+        },
+        "burst_window_seconds": {
+          "default": 3600,
+          "maximum": 86400,
+          "minimum": 60,
+          "title": "Burst Window Seconds",
+          "type": "integer"
+        },
+        "burst_operations": {
+          "default": 6,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Burst Operations",
+          "type": "integer"
+        },
+        "daily_operations": {
+          "default": 30,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Daily Operations",
+          "type": "integer"
+        },
+        "rate_limit_cooldown_seconds": {
+          "default": 3600,
+          "maximum": 604800,
+          "minimum": 900,
+          "title": "Rate Limit Cooldown Seconds",
+          "type": "integer"
+        },
+        "max_wait_seconds": {
+          "default": 120,
+          "maximum": 600,
+          "minimum": 1,
+          "title": "Max Wait Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "InstagramAdmissionSection",
       "type": "object"
     }
   },

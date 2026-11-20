@@ -14,6 +14,7 @@ from yt_dlp import YoutubeDL as _UpstreamYoutubeDL
 from yt_dlp.version import __version__ as ytdlp_version
 
 from telegram_media_bot.application.ports.download_engine import CancellationCheck, ProgressSink
+from telegram_media_bot.application.services.instagram_admission import InstagramAdmissionService
 from telegram_media_bot.application.services.url_canonicalization import (
     MediaUrlIntent,
     canonicalize_media_url,
@@ -45,6 +46,7 @@ from telegram_media_bot.domain.models import (
     SizeConfidence,
 )
 from telegram_media_bot.infrastructure.image_validation import validate_image
+from telegram_media_bot.infrastructure.security.instagram_admission import instagram_operation
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
 from telegram_media_bot.infrastructure.ytdlp.error_mapper import map_ytdlp_error
 from telegram_media_bot.infrastructure.ytdlp.mapper import (
@@ -107,14 +109,18 @@ def _sum_known(values: list[int | None]) -> int | None:
 class YtDlpEngine:
     """The only application adapter that directly knows yt-dlp types and options."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self, settings: Settings, *, admission: InstagramAdmissionService | None = None
+    ) -> None:
         self._settings = settings
+        self._instagram_admission = admission
         self._options = YtDlpOptionsFactory(settings)
         self._url_validator = PublicUrlValidator(
             reject_private_networks=settings.security.reject_private_network_urls
         )
         self._transcode_gate = TranscodeGate(settings.media.transcode.max_concurrent)
 
+    @instagram_operation
     def inspect(
         self,
         url: str,
@@ -132,6 +138,7 @@ class YtDlpEngine:
                 credential=credential,
                 cookie_file=cookie_file,
             )
+            _instagram_request_options(options, intent)
             try:
                 with YoutubeDL(options) as ydl:
                     raw = ydl.extract_info(intent.canonical_url, download=False)
@@ -176,6 +183,7 @@ class YtDlpEngine:
             ),
         )
 
+    @instagram_operation
     def download(
         self,
         request: DownloadRequest,
@@ -242,6 +250,7 @@ class YtDlpEngine:
                 credential=credential,
                 cookie_file=cookie_file,
             )
+            _instagram_request_options(options, intent)
             with YoutubeDL(options) as ydl:
                 base_selector = ydl.format_selector
                 if not callable(base_selector):
@@ -560,6 +569,7 @@ class YtDlpEngine:
             raise MediaUnavailableError("Instagram video slot plan is invalid")
         return expected_video_indices
 
+    @instagram_operation
     def _resolve_instagram_video_children(
         self,
         url: str,
@@ -577,6 +587,7 @@ class YtDlpEngine:
                 credential=credential,
                 cookie_file=cookie_file,
             )
+            _instagram_request_options(options, intent)
             # This path deliberately inspects the extractor's raw playlist. Processing the
             # entries would ask yt-dlp to treat Instagram photo children as videos.
             try:
@@ -1073,6 +1084,18 @@ class YtDlpEngine:
         for path in files:
             path.unlink(missing_ok=True)
         return archive
+
+
+def _instagram_request_options(options: dict[str, Any], intent: MediaUrlIntent) -> None:
+    if intent.instagram_kind is not None:
+        options.update(
+            retries=0,
+            fragment_retries=0,
+            extractor_retries=0,
+            file_access_retries=0,
+            concurrent_fragment_downloads=1,
+            sleep_interval_requests=1,
+        )
 
 
 def _selected_format_ids(info: Mapping[str, Any]) -> tuple[str, ...]:

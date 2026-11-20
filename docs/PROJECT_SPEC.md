@@ -155,6 +155,17 @@ and provider rate limits are retried, with bounded jittered backoff and observab
 
 ### Authoritative credential matrix
 
+Credential routing is additionally constrained by credential-wide Instagram admission (ADR-052).
+All users sharing an operator session share one permit, spacing and rolling quotas. Personal
+credentials are isolated by owner/generation. Provider 429/Retry-After and challenge/reauthentication
+pause every new/queued operation for that credential and prohibit automatic account switching.
+Earlier typed-auth fallback descriptions apply only when no provider circuit was raised, such as
+local credential preflight failure. Both inspection and transfer consume budget; selection metadata
+does not replace fresh authorization or credential validation. See
+[Instagram session safety](INSTAGRAM_SESSION_SAFETY.md); protection reduces risk without guaranteeing
+that a provider accepts automated access. Unexpected account changes require independent incident
+investigation.
+
 | User | VIP | Instagram connected | Content | Credential policy |
 |---|---|---|---|---|
 | User | No | No | Public | Shared canonical operator cookie |

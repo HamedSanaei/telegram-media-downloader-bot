@@ -120,6 +120,18 @@ jobs:
     needs: [change-detection]
     if: always()
     runs-on: ubuntu-latest
+    services:
+      instagram-admission-redis:
+        image: redis:7-alpine
+        ports:
+          - 56379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_INSTAGRAM_REDIS_URL: redis://127.0.0.1:56379/0
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

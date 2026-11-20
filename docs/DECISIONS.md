@@ -938,3 +938,32 @@ Keep gallery-dl pinned to the latest verified stable 1.32.17. Re-evaluate remova
 module with the next reviewed upstream upgrade and retain the current provider-contract fixture.
 RC15 is already published; these behavioral changes require a separate validated release tag.
 
+## ADR-052: Credential-wide Instagram permits and durable provider circuits
+
+**Status:** accepted (2026-11-20)
+
+Per-Telegram-user quotas and process-local extractor semaphores cannot protect a shared provider
+session. Every worker gallery/yt-dlp Instagram extraction operation therefore acquires a Redis
+token-owned permit and a durable SQLite admission in the same shared control plane as jobs. One
+active operation per credential, minimum start spacing and rolling burst/day quotas apply to
+inspection, transfer, retries, Highlights/Stories and native video children. Failed operations
+remain charged. These are operation budgets; no exact HTTP-request quota or account-safety guarantee
+is claimed. Multi-host SQLite remains unsupported.
+
+429 and observed Retry-After persist a credential-wide pause at least as long as the provider floor,
+including floors beyond 900 seconds. Explicit challenge/checkpoint/reauthentication and invalid
+deadlines require review. No automatic probes or provider-error credential fallback are allowed.
+This narrows ADR-047/050 typed-auth fallback: a local pre-extraction credential failure can still
+select the public operator, which must independently pass its gate. Private authorization never
+falls back. SQLite owns quotas, circuits and interrupted-operation quarantine; losing Redis state
+cannot reset them. A crash leaves an active marker until offline review with all workers stopped.
+Review cannot erase quotas or shorten an unexpired timed pause.
+
+Personal identities bind owner/generation. Operator identities follow a fingerprint of Instagram
+session records, independent of paths and unrelated-cookie metadata. Private temporary snapshots
+pin both identity and extraction bytes during canonical-cookie replacement. Cookie sources remain
+read-only; existing job cleanup removes crash residue. No secret enters a coordination key or
+observability field. CLI state includes opaque identities; metrics/logs/Logger alerts use bounded
+aggregate decisions, reasons and counts. Incident response treats unexpected account changes as a
+separate possible compromise and never recommends rotating accounts/IPs to evade restrictions.
+

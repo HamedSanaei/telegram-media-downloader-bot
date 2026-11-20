@@ -283,6 +283,21 @@ class FormatSection(StrictModel):
         return cast(str, getattr(self, mode.value))
 
 
+class InstagramAdmissionSection(StrictModel):
+    min_spacing_seconds: int = Field(default=30, ge=1, le=3600)
+    burst_window_seconds: int = Field(default=3600, ge=60, le=86400)
+    burst_operations: int = Field(default=6, ge=1, le=100)
+    daily_operations: int = Field(default=30, ge=1, le=1000)
+    rate_limit_cooldown_seconds: int = Field(default=3600, ge=900, le=604800)
+    max_wait_seconds: int = Field(default=120, ge=1, le=600)
+
+    @model_validator(mode="after")
+    def validate_budgets(self) -> InstagramAdmissionSection:
+        if self.burst_operations > self.daily_operations:
+            raise ValueError("burst_operations must not exceed daily_operations")
+        return self
+
+
 class InstagramSection(StrictModel):
     auto_download: bool = True
     force_mp4: bool = True
@@ -292,6 +307,7 @@ class InstagramSection(StrictModel):
     #: Batch safeguards for bulk Stories/Highlight downloads (per job, not per item).
     max_stories_per_batch: int = Field(default=100, ge=1, le=500)
     max_highlight_items: int = Field(default=100, ge=1, le=500)
+    admission: InstagramAdmissionSection = Field(default_factory=InstagramAdmissionSection)
 
 
 class TranscodeSection(StrictModel):

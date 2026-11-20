@@ -47,6 +47,10 @@
 | `src/telegram_media_bot/assets/fonts/` | Package-bundled Noto Sans runtime font and SIL OFL 1.1 license |
 | `src/telegram_media_bot/infrastructure/security/telegram_membership.py` | Telegram membership gateway with positive/negative Redis cache |
 | `src/telegram_media_bot/infrastructure/security/` | Public URL/DNS validation, Redis rate limiting, and membership cache |
+| `src/telegram_media_bot/domain/instagram_admission.py`, `application/ports/instagram_admission.py`, `application/services/instagram_admission.py` | Typed credential-wide operation permits, rolling quotas, cancellation and provider circuits independent of job/user rate limits |
+| `src/telegram_media_bot/infrastructure/security/instagram_admission.py` | Token-owned Redis permits, opaque credential identities, private operator-cookie snapshots and shared gallery/yt-dlp entry-point guards |
+| `src/telegram_media_bot/infrastructure/persistence/sqlite_instagram_admission.py` | Additive durable rolling operation history, pauses, admission waiters and crash quarantine; explicit offline review preserves quotas |
+| `tests/integration/test_instagram_admission_integration.py` | Offline multi-process permit/circuit tests including real isolated Redis in CI, guarded adapter routing, request amplification and cookie-rotation pinning |
 | `src/telegram_media_bot/infrastructure/cookies/` | Strict Netscape parsing, supported-service detection, deterministic scoped merge, restricted backup, atomic canonical-file replacement, and network-free static health checks; no provider probe adapter exists |
 | `src/telegram_media_bot/infrastructure/persistence/sqlite_cookie_health.py` | Durable Cookie Health state (status/static/active/last-notified/reminder) surviving restarts |
 | `src/telegram_media_bot/infrastructure/observability/` | Health HTTP server and Prometheus metrics registry |

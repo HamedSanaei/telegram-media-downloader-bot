@@ -76,7 +76,9 @@ def map_process_failure(return_code: int, stderr: bytes) -> MediaBotError:
     error.adapter = "gallery-dl"
     error.exit_code = return_code
     error.diagnostic_category = category
-    error.retry_after_seconds = retry_after if error.retryable else None
+    # Circuit breakers must retain provider deadlines even on non-retryable authentication
+    # failures. Retry policy still checks retryable before considering this floor.
+    error.retry_after_seconds = retry_after
     error.failure_stage = (
         FailureStage.AUTHENTICATION
         if isinstance(error, (GalleryDlAuthenticationRequiredError, GalleryDlCookiesExpiredError))

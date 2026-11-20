@@ -43,6 +43,10 @@ from telegram_media_bot.application.services.diagnostic_sanitizer import (
 )
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.error_policy import error_category
+from telegram_media_bot.application.services.instagram_admission import (
+    InstagramAdmissionService,
+    instagram_cancellation,
+)
 from telegram_media_bot.application.services.instagram_delivery import (
     requires_instagram_image_confirmation,
 )
@@ -108,6 +112,7 @@ from telegram_media_bot.domain.failures import (
     FailureStage,
     render_failure_notification,
 )
+from telegram_media_bot.domain.instagram_admission import InstagramAdmissionError
 from telegram_media_bot.domain.models import (
     COLLECTION_MODES,
     ContainerPolicy,
@@ -136,6 +141,10 @@ from telegram_media_bot.domain.models import (
 from telegram_media_bot.domain.subscriptions import Capability
 from telegram_media_bot.infrastructure.observability.metrics import MetricsRegistry
 from telegram_media_bot.infrastructure.persistence.sqlite_audit import SqliteAuditRepository
+from telegram_media_bot.infrastructure.security.instagram_admission import (
+    personal_instagram_identity,
+    pin_operator_credential,
+)
 from telegram_media_bot.infrastructure.storage.workspace import (
     cleanup_job_workspace,
     sweep_workspaces,
@@ -1575,7 +1584,12 @@ async def _handle_controlled_failure(
         stage=_failure_stage_for_exception(exc),
         started=None,
     )
-    _emit_terminal_failure_event(ctx, context=context, status=JobStatus.FAILED)
+    if not isinstance(exc, InstagramAdmissionError) or exc.diagnostic_category in {
+        "state_unavailable",
+        "coordination_unavailable",
+        "credential_identity_unavailable",
+    }:
+        _emit_terminal_failure_event(ctx, context=context, status=JobStatus.FAILED)
     if (
         not _job_marked_private(record)
         and getattr(exc, "credential_kind", None) != "user_instagram"
@@ -1698,6 +1712,11 @@ async def _record_failed_usage(
 
 
 def _controlled_failure_text(exc: MediaBotError, *, private_attempt: bool = False) -> str:
+    if isinstance(exc, InstagramAdmissionError):
+        if exc.retry_after_seconds is not None:
+            minutes = max(1, int((exc.retry_after_seconds + 59) // 60))
+            return f"برای محافظت از نشست اینستاگرام، درخواست فعلاً متوقف شد. حداقل {minutes} دقیقه بعد دوباره تلاش کنید."
+        return "استفاده از این نشست اینستاگرام برای محافظت از حساب متوقف شده است؛ مدیر باید وضعیت نشست و ورودهای حساب را بررسی کند."
     if private_attempt:
         if isinstance(
             exc, (CredentialError, AuthenticationRequiredError, GalleryDlCookiesExpiredError)
@@ -1962,9 +1981,13 @@ async def _await_credential_attempt[AttemptResult](
     cleanup_workspace: bool = False,
 ) -> AttemptResult:
     notices: list[bool] = []
-    try:
-        return await _await_blocking_attempt(
-            lambda: _run_credential_attempt(
+
+    def run_attempt() -> AttemptResult:
+        with instagram_cancellation(
+            lambda: cast(JobRepository, ctx["repository"]).is_cancel_requested(record.job_id),
+            workspace=workspace,
+        ):
+            return _run_credential_attempt(
                 ctx,
                 record,
                 workspace,
@@ -1972,7 +1995,9 @@ async def _await_credential_attempt[AttemptResult](
                 notify_invalid=lambda: notices.append(True),
                 cleanup_workspace=cleanup_workspace,
             )
-        )
+
+    try:
+        return await _await_blocking_attempt(run_attempt)
     finally:
         if notices:
             # Credential state commits once per owner/generation; unrelated users are untouched.
@@ -2003,13 +2028,23 @@ def _run_credential_attempt[AttemptResult](
             return operation(_public_job_credential(ctx, record))
         repository = cast(JobRepository, ctx["repository"])
         generation = resolver.connected_generation(record.user_id) if resolver is not None else None
+        admission = ctx.get("instagram_admission")
+        if isinstance(admission, InstagramAdmissionService) and generation is not None:
+            pause = admission.repository.check_pause(
+                personal_instagram_identity(record.user_id, generation),
+                now=datetime.now(UTC).timestamp(),
+            )
+            if not pause.allowed:
+                raise InstagramAdmissionError(
+                    pause.reason, retry_after_seconds=pause.retry_after_seconds
+                )
         record = repository.select_public_instagram_credential(
             record.job_id, user_generation=generation
         )
         if record.cancel_requested or record.status is JobStatus.CANCELLED:
             raise JobCancelledError("Credential attempt was cancelled")
         if record.credential_attempt_phase is CredentialAttemptPhase.OPERATOR_ATTEMPT:
-            return _run_operator_attempt(operation)
+            return _run_operator_attempt(ctx, workspace, operation)
         context = CredentialContext(
             kind=CredentialKind.USER_INSTAGRAM,
             policy=CredentialPolicy.USER_FIRST_PUBLIC_FALLBACK,
@@ -2054,13 +2089,24 @@ def _run_credential_attempt[AttemptResult](
             terminal_status="attempt_finished",
             cleanup_reason="public_session_fallback",
         )
-        return _run_operator_attempt(operation)
+        return _run_operator_attempt(ctx, workspace, operation)
 
 
 def _run_operator_attempt[AttemptResult](
+    ctx: dict[str, Any],
+    workspace: Path,
     operation: Callable[[ResolvedCredential | None], AttemptResult],
 ) -> AttemptResult:
     try:
+        if isinstance(ctx.get("instagram_admission"), InstagramAdmissionService):
+            # Keep one credential handle across this attempt's inspection and transfer.
+            with pin_operator_credential(
+                ResolvedCredential.operator_public(),
+                None,
+                cast(Settings, ctx["settings"]).effective_cookie_file(),
+                workspace,
+            ) as credential:
+                return operation(credential)
         return operation(ResolvedCredential.operator_public())
     except MediaBotError as exc:
         exc.credential_kind = CredentialKind.OPERATOR_PUBLIC.value

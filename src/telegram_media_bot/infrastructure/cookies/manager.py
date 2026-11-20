@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import stat
 import tempfile
@@ -105,6 +106,24 @@ class NetscapeCookieManager:
     def export_combined(self) -> bytes:
         with self._lock:
             return self._read_store_snapshot()[0]
+
+    def instagram_session_fingerprint(self) -> str | None:
+        """Return an opaque session identity using the strict, silent cookie parser.
+
+        Ignore expiry/CSRF/unrelated records so an in-place metadata update cannot reset a
+        paused session. No cookie material is returned, logged or persisted by this method.
+        """
+        lines = _parse_document(self.export_combined(), upload=False)
+        sessions = sorted(
+            {
+                record.content.split("\t")[6]
+                for line in lines
+                if (record := line.record) is not None
+                and record.service is CookieService.INSTAGRAM
+                and record.name == "sessionid"
+            }
+        )
+        return hashlib.sha256("\n".join(sessions).encode("utf-8")).hexdigest() if sessions else None
 
     def static_health(
         self,

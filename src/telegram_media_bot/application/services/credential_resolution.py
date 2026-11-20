@@ -59,7 +59,9 @@ class CredentialResolver:
                 workspace=workspace,
                 expected_generation=context.user_generation,
             ) as path:
-                yield ResolvedCredential(context, materialized_cookie_path=str(path))
+                yield ResolvedCredential(
+                    context, materialized_cookie_path=str(path), owner_user_id=owner_user_id
+                )
             return
         if context.kind is CredentialKind.OPERATOR_PUBLIC:
             # Operator cookies are read from the canonical operator file by the engine; the

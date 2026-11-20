@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import errno
+import re
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 
 from telegram_media_bot.domain.errors import (
     AuthenticationRequiredError,
@@ -50,6 +53,23 @@ def map_ytdlp_error(exc: Exception) -> Exception:
         return _map_local_runtime_error(local_error)
     message = str(exc).casefold()
     http_status = _extract_http_status(exc)
+    if http_status == 429 or "too many requests" in message or "http error 429" in message:
+        return RateLimitedError(
+            "Remote source rate limited the request",
+            http_status=http_status or 429,
+            retry_after_seconds=_retry_after(exc),
+            diagnostic_category="rate_limited",
+        )
+    if (
+        "challenge_required" in message
+        or "checkpoint_required" in message
+        or "redirect to challenge" in message
+    ):
+        return AuthenticationRequiredError(
+            "Provider requires session review",
+            http_status=http_status,
+            diagnostic_category="challenge_required",
+        )
     if "unsupported url" in message or "is not a valid url" in message:
         return InvalidUrlError("URL is not supported")
     if "requested format is not available" in message:
@@ -58,10 +78,6 @@ def map_ytdlp_error(exc: Exception) -> Exception:
         return AuthenticationRequiredError("Authentication is required", http_status=http_status)
     if "geo" in message and ("restrict" in message or "country" in message):
         return GeoRestrictedError("Media is geographically restricted", http_status=http_status)
-    if "too many requests" in message or "http error 429" in message:
-        return RateLimitedError(
-            "Remote source rate limited the request", http_status=http_status or 429
-        )
     if "larger than max-filesize" in message or "file is larger" in message:
         return MediaTooLargeError("Media exceeds configured size limit")
     if "playlist" in message and "not" in message:
@@ -71,6 +87,24 @@ def map_ytdlp_error(exc: Exception) -> Exception:
     if "unavailable" in message or "private" in message or "removed" in message:
         return MediaUnavailableError("Media is unavailable", http_status=http_status)
     return DownloadFailedError("Media download failed", http_status=http_status)
+
+
+def _retry_after(exc: Exception) -> float | None:
+    for candidate in _chained_exceptions(exc):
+        headers = getattr(candidate, "headers", None)
+        if headers is None or not hasattr(headers, "get"):
+            continue
+        value = str(headers.get("Retry-After", "")).strip()
+        if re.fullmatch(r"[0-9]+", value):
+            digits = value.lstrip("0") or "0"
+            return float(digits) if len(digits) <= 9 else 1_000_000_000.0
+        try:
+            date = parsedate_to_datetime(value)
+            if date.tzinfo is not None:
+                return max(0.0, (date - datetime.now(UTC)).total_seconds())
+        except ValueError, TypeError, OverflowError:
+            pass
+    return None
 
 
 def _find_local_filesystem_error(exc: BaseException) -> OSError | None:

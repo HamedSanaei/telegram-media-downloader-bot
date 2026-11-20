@@ -27,6 +27,7 @@ Identify the relevant decision here, then read its complete text in `docs/DECISI
 | VIP/subscription/payment idempotency (T014/T015) | accepted ADR-032 |
 | planned per-user Instagram credential vault | proposed ADR-033 |
 | public/private Instagram credential policy | ADR-034 |
+| Instagram credential-wide quotas, provider pauses and offline recovery | ADR-052 |
 | planned account-link/payment web boundary | proposed ADR-035 |
 | typed audit events and durable logger outbox | ADR-036 (accepted) |
 | config/runtime logger destination ownership | ADR-037 (accepted) |

@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any, cast
+from uuid import uuid4
 
 import structlog
 from aiogram import Bot
@@ -28,10 +29,16 @@ from telegram_media_bot.application.services.delivery_output_audit import (
 )
 from telegram_media_bot.application.services.download_service import DownloadService
 from telegram_media_bot.application.services.entitlements import EntitlementService
+from telegram_media_bot.application.services.instagram_admission import InstagramAdmissionService
 from telegram_media_bot.application.services.job_recovery_service import JobRecoveryService
 from telegram_media_bot.bootstrap.config import Settings, load_settings
 from telegram_media_bot.bootstrap.payments import build_payment_runtime
-from telegram_media_bot.domain.audit import LoggerHealthSnapshot
+from telegram_media_bot.domain.audit import (
+    AuditCategory,
+    AuditEventType,
+    AuditSeverity,
+    LoggerHealthSnapshot,
+)
 from telegram_media_bot.domain.credential_resolution import ResolvedCredential
 from telegram_media_bot.domain.models import (
     ComponentHealth,
@@ -64,6 +71,9 @@ from telegram_media_bot.infrastructure.persistence.sqlite_effects import SqliteE
 from telegram_media_bot.infrastructure.persistence.sqlite_inbound_updates import (
     SqliteInboundUpdateRepository,
 )
+from telegram_media_bot.infrastructure.persistence.sqlite_instagram_admission import (
+    SqliteInstagramAdmissionRepository,
+)
 from telegram_media_bot.infrastructure.persistence.sqlite_instagram_credentials import (
     SqliteInstagramCredentialRepository,
 )
@@ -73,6 +83,7 @@ from telegram_media_bot.infrastructure.persistence.sqlite_subscriptions import (
     SqliteSubscriptionRepository,
 )
 from telegram_media_bot.infrastructure.queue.arq_queue import ArqJobQueue
+from telegram_media_bot.infrastructure.security.instagram_admission import RedisInstagramPermitLock
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
 from telegram_media_bot.infrastructure.storage.workspace import (
     cleanup_job_workspace,
@@ -159,8 +170,42 @@ async def startup(ctx: dict[str, Any]) -> None:
         await asyncio.to_thread(effect_store.initialize)
         cookie_health_store = SqliteCookieHealthRepository(settings.database_path())
         await asyncio.to_thread(cookie_health_store.initialize)
-        ytdlp_engine = YtDlpEngine(settings)
-        gallery_engine = GalleryDlEngine(settings)
+        metrics = MetricsRegistry()
+        admission_store = SqliteInstagramAdmissionRepository(settings.database_path())
+        await asyncio.to_thread(admission_store.initialize)
+        admission_lock = RedisInstagramPermitLock.create(settings.redis.url)
+        limits = settings.media.instagram.admission
+
+        def observe_admission(outcome: str, reason: str) -> None:
+            metrics.record_instagram_admission(outcome, reason)
+            logger.info("instagram_admission", outcome=outcome, reason=reason)
+            if outcome == "paused":
+                audit.emit(
+                    event_type=AuditEventType.TERMINAL_OPERATIONAL_ERROR,
+                    category=AuditCategory.ERROR,
+                    severity=AuditSeverity.WARNING,
+                    correlation_id="instagram-pause-" + uuid4().hex,
+                    message="Instagram session paused: "
+                    + reason
+                    + ". Inspect instagram-admission-status; no automatic account fallback.",
+                    provider="instagram",
+                )
+
+        admission = InstagramAdmissionService(
+            admission_store,
+            admission_lock,
+            spacing_seconds=limits.min_spacing_seconds,
+            burst_window_seconds=limits.burst_window_seconds,
+            burst_limit=limits.burst_operations,
+            daily_limit=limits.daily_operations,
+            rate_limit_cooldown_seconds=limits.rate_limit_cooldown_seconds,
+            max_wait_seconds=limits.max_wait_seconds,
+            observer=observe_admission,
+        )
+        ctx["instagram_admission"] = admission
+        ctx["instagram_admission_lock"] = admission_lock
+        ytdlp_engine = YtDlpEngine(settings, admission=admission)
+        gallery_engine = GalleryDlEngine(settings, admission=admission)
         gallery_health = await asyncio.to_thread(gallery_engine.health)
         cookie_file = settings.effective_cookie_file()
         gallery_cookie_readability = {
@@ -189,7 +234,6 @@ async def startup(ctx: dict[str, Any]) -> None:
             instagram_max_stories=settings.media.instagram.max_stories_per_batch,
             instagram_max_highlight_items=settings.media.instagram.max_highlight_items,
         )
-        metrics = MetricsRegistry()
         audit_processor = (
             AuditOutboxProcessor(
                 audit_store,
@@ -441,6 +485,9 @@ async def startup(ctx: dict[str, Any]) -> None:
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
+    admission_lock = ctx.get("instagram_admission_lock")
+    if isinstance(admission_lock, RedisInstagramPermitLock):
+        await asyncio.to_thread(admission_lock.close)
     server = ctx.get("health_server")
     if isinstance(server, HealthServer):
         await server.close()
@@ -478,6 +525,24 @@ async def _health_report(ctx: dict[str, Any]) -> HealthReport:
             ),
         ),
     ]
+    admission = ctx.get("instagram_admission")
+    if isinstance(admission, InstagramAdmissionService):
+        try:
+            summary = await asyncio.to_thread(
+                admission.repository.summary, now=datetime.now(UTC).timestamp()
+            )
+            detail = (
+                f"credentials={summary.credentials};paused={summary.paused};"
+                f"active={summary.active};waiting={summary.waiting}"
+            )
+            cast(MetricsRegistry, ctx["metrics"]).set_instagram_admission_state(
+                paused=summary.paused,
+                active=summary.active,
+                waiting=summary.waiting,
+            )
+        except Exception:
+            detail = "state_unavailable;instagram_fail_closed"
+        checks.append(ComponentHealth("instagram_admission", True, detail))
     runtime = ctx.get("telegram_runtime")
     if settings.telegram.local_bot_api.enabled and isinstance(runtime, TelegramRuntime):
         local_reachable = await asyncio.to_thread(LocalBotApiManager(settings).endpoint_reachable)

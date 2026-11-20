@@ -162,6 +162,8 @@ class GalleryDlCommandBuilder:
             selected_cookie = None
         elif credential.context.kind is CredentialKind.USER_INSTAGRAM:
             selected_cookie = credential.cookie_override()
+        elif credential.materialized_cookie_path is not None:
+            selected_cookie = credential.materialized_cookie_path
         else:
             selected_cookie = self._settings.cookie_for(provider, self._canonical_cookie_file)
         if selected_cookie is not None:

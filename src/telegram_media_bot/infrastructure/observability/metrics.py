@@ -36,6 +36,20 @@ class MetricsRegistry:
         self._audit_pending = 0
         self._audit_uncertain = 0
         self._audit_oldest_pending_seconds = 0
+        self._instagram_admission: dict[tuple[str, str], int] = defaultdict(int)
+        self._instagram_state = {"paused": 0, "active": 0, "waiting": 0}
+
+    def record_instagram_admission(self, outcome: str, reason: str) -> None:
+        with self._lock:
+            self._instagram_admission[(_label(outcome), _label(reason))] += 1
+
+    def set_instagram_admission_state(self, *, paused: int, active: int, waiting: int) -> None:
+        with self._lock:
+            self._instagram_state = {
+                "paused": max(0, paused),
+                "active": max(0, active),
+                "waiting": max(0, waiting),
+            }
 
     def record_audit_delivery(self, *, outcome: str, category: str) -> None:
         with self._lock:
@@ -156,6 +170,8 @@ class MetricsRegistry:
             audit_pending = self._audit_pending
             audit_uncertain = self._audit_uncertain
             audit_oldest_pending_seconds = self._audit_oldest_pending_seconds
+            instagram_admission = dict(self._instagram_admission)
+            instagram_state = dict(self._instagram_state)
         lines = [
             "# HELP media_bot_jobs_total Completed jobs by outcome, source and error category.",
             "# TYPE media_bot_jobs_total counter",
@@ -173,6 +189,23 @@ class MetricsRegistry:
         for (outcome, category), value in sorted(audit_delivery.items()):
             lines.append(
                 f'media_bot_audit_delivery_total{{outcome="{outcome}",category="{category}"}} {value}'
+            )
+        lines.extend(
+            (
+                "# HELP media_bot_instagram_admission_total Credential-scoped operation admission decisions.",
+                "# TYPE media_bot_instagram_admission_total counter",
+            )
+        )
+        for (outcome, reason), value in sorted(instagram_admission.items()):
+            lines.append(
+                f'media_bot_instagram_admission_total{{outcome="{outcome}",reason="{reason}"}} {value}'
+            )
+        for state, value in sorted(instagram_state.items()):
+            lines.extend(
+                (
+                    f"# TYPE media_bot_instagram_{state} gauge",
+                    f"media_bot_instagram_{state} {value}",
+                )
             )
         lines.extend(
             (

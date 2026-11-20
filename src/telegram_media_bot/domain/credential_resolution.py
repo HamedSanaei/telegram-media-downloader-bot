@@ -106,6 +106,8 @@ class ResolvedCredential:
     context: CredentialContext
     #: On USER_INSTAGRAM, a short-lived materialized cookie path leased to this attempt.
     materialized_cookie_path: str | None = None
+    #: Owner binding for opaque credential-scoped admission; never used as authorization.
+    owner_user_id: int | None = None
 
     @classmethod
     def operator_public(cls) -> ResolvedCredential:

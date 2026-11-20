@@ -17,6 +17,7 @@ from telegram_media_bot.application.ports.download_engine import (
     CancellationCheck,
     ProgressSink,
 )
+from telegram_media_bot.application.services.instagram_admission import InstagramAdmissionService
 from telegram_media_bot.application.services.url_canonicalization import canonicalize_media_url
 from telegram_media_bot.bootstrap.config import Settings
 from telegram_media_bot.domain.credential_resolution import ResolvedCredential
@@ -62,6 +63,7 @@ from telegram_media_bot.infrastructure.gallerydl.parser import (
 )
 from telegram_media_bot.infrastructure.gallerydl.runner import GalleryDlRunner
 from telegram_media_bot.infrastructure.image_validation import validate_image
+from telegram_media_bot.infrastructure.security.instagram_admission import instagram_operation
 from telegram_media_bot.infrastructure.security.url_safety import PublicUrlValidator
 from telegram_media_bot.infrastructure.ytdlp.transcoder import is_inline_video_streamable
 
@@ -81,8 +83,15 @@ _GALLERY_MODES = {
 
 
 class GalleryDlEngine:
-    def __init__(self, settings: Settings, runner: GalleryDlRunner | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        runner: GalleryDlRunner | None = None,
+        *,
+        admission: InstagramAdmissionService | None = None,
+    ) -> None:
         self._settings = settings
+        self._instagram_admission = admission
         self._runner = runner or GalleryDlRunner()
         self._commands = GalleryDlCommandBuilder(
             settings.gallery_dl,
@@ -106,6 +115,7 @@ class GalleryDlEngine:
     def is_gallery_social_url(url: str) -> bool:
         return is_gallery_social_url(url)
 
+    @instagram_operation
     def inspect(
         self,
         url: str,
@@ -195,6 +205,7 @@ class GalleryDlEngine:
             cookie_file=cookie_file,
         )
 
+    @instagram_operation
     def download_inspected(
         self,
         request: DownloadRequest,
@@ -383,6 +394,7 @@ class GalleryDlEngine:
             image_delivery_mode=request.image_delivery_mode,
         )
 
+    @instagram_operation
     def fetch_highlight_tray(
         self,
         username: str,

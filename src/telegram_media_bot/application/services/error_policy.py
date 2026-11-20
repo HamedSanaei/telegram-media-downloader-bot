@@ -19,10 +19,13 @@ from telegram_media_bot.domain.errors import (
     RateLimitedError,
     UnsupportedSourceError,
 )
+from telegram_media_bot.domain.instagram_admission import InstagramAdmissionError
 from telegram_media_bot.domain.models import ErrorCategory
 
 
 def error_category(exc: BaseException) -> ErrorCategory:
+    if isinstance(exc, InstagramAdmissionError):
+        return ErrorCategory.RATE_LIMITED
     if isinstance(exc, GalleryDlCookiesExpiredError):
         return ErrorCategory.GALLERY_COOKIES_EXPIRED
     if isinstance(exc, GalleryDlExtractionError):

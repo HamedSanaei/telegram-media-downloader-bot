@@ -241,6 +241,16 @@ evidence is discarded on the next static refresh and can never override local st
 
 ## File isolation
 
+Instagram worker extraction also passes credential-wide admission (ADR-052): a Redis token-owned
+permit plus SQLite/WAL rolling budgets, active-operation quarantine and persistent provider circuit.
+Both UI inspection and the authorized download inspection/transfer are charged; yt-dlp children and
+Highlight trays share the same gate. 429/Retry-After pauses last at least the provider deadline;
+challenge/reauthentication requires review. Provider circuit errors cannot trigger account fallback.
+Local pre-extraction public fallback still checks the operator's independent circuit. Private access
+remains owner-only. Operator cookies are pinned in private job-root snapshots outside media output
+so rotation cannot change the admitted identity. See [configuration, observability and recovery](
+INSTAGRAM_SESSION_SAFETY.md). A crash/Redis expiry never silently clears a durable active marker.
+
 Each job uses:
 
 ```text

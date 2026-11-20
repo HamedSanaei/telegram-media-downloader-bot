@@ -135,6 +135,16 @@ media:
     # Per-job batch safeguards for bulk Stories/Highlight downloads (not per item).
     max_stories_per_batch: 100
     max_highlight_items: 100
+    # Shared across all Telegram users/workers per Instagram credential. Each inspection,
+    # transfer, tray lookup and yt-dlp video child is charged separately (not per HTTP request).
+    # One active operation per credential; challenge/re-login requires operator review.
+    admission:
+      min_spacing_seconds: 30
+      burst_window_seconds: 3600
+      burst_operations: 6
+      daily_operations: 30
+      rate_limit_cooldown_seconds: 3600
+      max_wait_seconds: 120
   transcode:
     # Global safety switch for explicitly requested codec conversion.
     enabled: true
