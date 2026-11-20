@@ -2,6 +2,14 @@
 
 Last updated: 2026-11-20
 
+## v1.3.10-rc.1 prerelease preparation (2026-11-20)
+
+- Package metadata and runtime version are set to v1.3.10-rc.1 after Instagram
+  credential-scoped admission in d21dbe7. Update the lockfile and file manifest,
+  run release gates, and publish the prerelease via the immutable tag workflow.
+- Server rollout is a separate verified operation using transactional updater and rollback;
+  protect existing Instagram cookies and durable state.
+
 ## Credential-wide Instagram admission (2026-11-20)
 
 - Add one distributed permit and conservative rolling budgets per shared operator session or

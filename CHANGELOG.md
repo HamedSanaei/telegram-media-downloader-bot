@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.3.10-rc.1 - 2026-11-20
+
+- Add credential-wide Instagram operation limits coordinated across workers, with durable
+  rolling quotas and per-session spacing to reduce repeated account challenges.
+- Persist rate-limit, Retry-After and challenge circuits; preserve private authorization and
+  read-only cookies in gallery-dl and yt-dlp, including public fallback paths.
+- Include offline multi-process admission tests, sanitized operator diagnostics and
+  an Instagram account-security incident runbook.
+- This prerelease requires validation on the Finland deployment; datacenter IP restrictions
+  cannot be ruled out and unexpected account-email changes require separate investigation.
+
 ## v1.3.9 - 2026-11-03
 
 - Publish the current, validated RC18 code line as a stable release with the subsequent
